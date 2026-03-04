@@ -3969,8 +3969,8 @@ export default function DegenCommandCenter(){
       return[{addr,name,events:[evt]},...prev].slice(0,200);
     });
   };
-  const clickAddr=(addr)=>{const t=tokens.find(x=>x.addr===addr);if(t)setSelectedToken(t);};
-  const selectByName=(name)=>{const t=tokens.find(x=>x.name===name);if(t)setSelectedToken(t);};
+  const clickAddr=(addr,stub=null)=>{const t=tokens.find(x=>x.addr===addr);if(t){setSelectedToken(t);}else if(stub){setSelectedToken({...stub,addr,alive:false,health:0,threat:"DEAD",threatColor:"#5a5a7a",qualChecks:[],devWallet:0,buys:stub.buys||0,sells:stub.sells||0});}};
+  const selectByName=(name,stub=null)=>{const t=tokens.find(x=>x.name===name);if(t){setSelectedToken(t);}else if(stub){setSelectedToken({...stub,alive:false,health:0,threat:"DEAD",threatColor:"#5a5a7a",qualChecks:[],devWallet:0,buys:stub.buys||0,sells:stub.sells||0});}};
   const viewWalletDetail=(walletAddr)=>{setLeftTab("REPORT");setSelectedWallet(walletAddr);setReportView("detail");};
   const [leftTab,setLeftTab]=useState("SCANNER");
   const [showMenu,setShowMenu]=useState(false);
@@ -5229,13 +5229,18 @@ export default function DegenCommandCenter(){
                 const computedPnl=qualTrades.reduce((s,tr)=>s+(tr.pnl||0),0);
                 const totalBought=qualTrades.reduce((s,tr)=>s+(tr.sol||0),0);
                 const totalSold=qualTrades.reduce((s,tr)=>s+(tr.sold||0),0);
+                const unrealizedPnl=qualTrades.filter(t=>t.type==="HOLD").reduce((s,tr)=>s+(tr.pnl||0),0);
+                const adjustedPnl=computedPnl+unrealizedPnl;
+                // Elite: 5+ wins on 12K+ coins, 65%+ rate, wins >= losses*2, 1.5+ SOL realized, adjusted PnL > 0.5
+                const isElite=qualWins>=5&&rate>=65&&qualWins>=(qualLosses*2)&&total>=6&&computedPnl>=1.5&&adjustedPnl>0.5;
                 return{addr,wins:qualWins,losses:qualLosses,holds:qualHolds,total,rate,
-                  bigWins:w.bigWins||0,totalBought,totalSold,totalPnl:computedPnl,
+                  bigWins:w.bigWins||0,totalBought,totalSold,totalPnl:computedPnl,adjustedPnl,isElite,
                   tokens:qualTrades.filter(t=>t.type==="WIN").map(t=>t.token),
                   lossTokens:qualTrades.filter(t=>t.type==="LOSS").map(t=>t.token),
                   holdTokens:qualTrades.filter(t=>t.type==="HOLD").map(t=>t.token),
-                  trades:qualTrades}; // only qualifying trades shown
+                  trades:qualTrades};
               }).filter(Boolean).sort((a,b)=>b.totalPnl-a.totalPnl):[];
+              const elite=allWallets.filter(w=>w.isElite);
               const genius=allWallets.filter(w=>w.rate>=80&&w.total>=2);
               const sharp=allWallets.filter(w=>w.rate>=60&&w.rate<80&&w.total>=2);
               const decent=allWallets.filter(w=>w.rate>=40&&w.rate<60&&w.total>=2);
@@ -5247,8 +5252,8 @@ export default function DegenCommandCenter(){
               if(reportView==="detail"&&selectedWallet){
                 const w=allWallets.find(w2=>w2.addr===selectedWallet);
                 if(!w)return <div style={{color:NEON.dimText,fontSize:11,textAlign:"center",padding:20}}>Wallet not found</div>;
-                const tierColor=w.rate>=80?"#ffd740":w.rate>=60?"#00e5ff":w.rate>=40?"#ffa500":w.rate>=20?"#ba68c8":"#ff5252";
-                const tierLabel=w.rate>=80?"GENIUS":w.rate>=60?"SHARP":w.rate>=40?"DECENT":w.rate>=20?"LUCKY":w.total>0?"DEGEN":"PENDING";
+                const tierColor=w.isElite?"#00ff88":w.rate>=80?"#ffd740":w.rate>=60?"#00e5ff":w.rate>=40?"#ffa500":w.rate>=20?"#ba68c8":"#ff5252";
+                const tierLabel=w.isElite?"🧠 SMART":w.rate>=80?"GENIUS":w.rate>=60?"SHARP":w.rate>=40?"DECENT":w.rate>=20?"LUCKY":w.total>0?"DEGEN":"PENDING";
                 // Only count significant trades for display
                 const sigTrades=w.trades.filter(tr=>{const p=tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol);return(tr.type==="WIN"&&p>=0.15)||(tr.type==="LOSS"&&p<=-0.15)||tr.type==="HOLD";});
                 const sigWins=sigTrades.filter(t=>t.type==="WIN").length;
@@ -5293,12 +5298,18 @@ export default function DegenCommandCenter(){
                     {sigHolds>0&&(()=>{
                       const holdTrades=w.trades.filter(tr=>tr.type==="HOLD");
                       const totalUnrealized=holdTrades.reduce((s,tr)=>{
-                        const p=tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol);
-                        return s+p;
+                        const entryMc=tr.entryMcap||0;
+                        const currentMc=tr.mcap||0;
+                        const mcPct=entryMc>0?(currentMc-entryMc)/entryMc:0;
+                        const stillExposed=Math.max(0,(tr.sol||0)-(tr.sold||0));
+                        const banked=(tr.sold||0)-(tr.sol||0);
+                        // Unrealized = banked SOL + estimated remaining position value change
+                        return s+banked+(stillExposed*mcPct);
                       },0);
                       const deeplyUnder=holdTrades.filter(tr=>{
-                        const p=tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol);
-                        return p<-0.15;
+                        const entryMc=tr.entryMcap||0;
+                        const currentMc=tr.mcap||0;
+                        return entryMc>0&&currentMc<entryMc*0.7; // >30% below entry
                       });
                       return(<div style={{marginBottom:6,padding:"6px 8px",borderRadius:5,
                         background:totalUnrealized>=0?"rgba(57,255,20,0.04)":"rgba(255,7,58,0.06)",
@@ -5309,19 +5320,36 @@ export default function DegenCommandCenter(){
                             {totalUnrealized>=0?"+":""}{totalUnrealized.toFixed(2)} SOL</span>
                         </div>
                         {holdTrades.map((tr,hi)=>{
-                          const p=tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol);
-                          return(<div key={hi} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
-                            padding:"2px 4px",marginBottom:1,borderRadius:3,fontSize:9,
-                            background:p>=0?"rgba(57,255,20,0.03)":"rgba(255,7,58,0.04)"}}>
-                            <div style={{display:"flex",alignItems:"center",gap:4}}>
-                              <span onClick={()=>selectByName(tr.token)} style={{color:NEON.text,cursor:"pointer",fontWeight:700,
-                                textDecoration:"underline",textDecorationStyle:"dotted",textUnderlineOffset:2}}>{tr.token}</span>
-                              <span onClick={()=>clickAddr(tr.addr)} style={{fontSize:7,color:NEON.cyan,cursor:"pointer",
-                                background:"rgba(0,255,255,0.06)",padding:"0px 3px",borderRadius:2,fontFamily:"monospace"}}>CA</span>
+                          const banked=(tr.sold||0)-(tr.sol||0); // net SOL from partial exits
+                          const entryMc=tr.entryMcap||0;
+                          const currentMc=tr.mcap||0;
+                          const mcPct=entryMc>0?((currentMc-entryMc)/entryMc*100):0;
+                          const hasPartialExit=(tr.sold||0)>0;
+                          const stillExposed=Math.max(0,(tr.sol||0)-(tr.sold||0));
+                          return(<div key={hi} style={{padding:"4px 6px",marginBottom:3,borderRadius:4,fontSize:9,
+                            background:mcPct>=0?"rgba(57,255,20,0.03)":"rgba(255,7,58,0.06)",
+                            border:`1px solid ${mcPct>=0?"rgba(57,255,20,0.1)":"rgba(255,7,58,0.15)"}`}}>
+                            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
+                              <div style={{display:"flex",alignItems:"center",gap:4}}>
+                                <span onClick={()=>selectByName(tr.token,{name:tr.token,addr:tr.addr,mcap:tr.mcap||0,athMcap:tr.athMcap||0,vol:0,holders:0,platform:"PumpFun",qualScore:0,riskScore:0,liquidity:0,topHolderPct:0})}
+                                  style={{color:NEON.text,cursor:"pointer",fontWeight:700,
+                                    textDecoration:"underline",textDecorationStyle:"dotted",textUnderlineOffset:2}}>{tr.token}</span>
+                                <span onClick={()=>clickAddr(tr.addr,{name:tr.token,addr:tr.addr,mcap:tr.mcap||0,athMcap:tr.athMcap||0,vol:0,holders:0,platform:"PumpFun",qualScore:0,riskScore:0,liquidity:0,topHolderPct:0})}
+                                  style={{fontSize:7,color:NEON.cyan,cursor:"pointer",
+                                    background:"rgba(0,255,255,0.06)",padding:"0px 3px",borderRadius:2,fontFamily:"monospace"}}>CA</span>
+                              </div>
+                              <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                                {hasPartialExit&&<span style={{fontSize:8,color:banked>=0?NEON.green:NEON.red}}>
+                                  {banked>=0?"banked +":"":""}{banked.toFixed(2)} SOL</span>}
+                                <span style={{fontSize:10,fontWeight:900,color:mcPct>=0?NEON.green:NEON.red}}>
+                                  {mcPct>=0?"▲":"▼"}{Math.abs(mcPct).toFixed(0)}%</span>
+                              </div>
                             </div>
-                            <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                              <span style={{color:NEON.dimText,fontSize:8}}>in <span style={{color:NEON.cyan}}>${formatNum(tr.entryMcap||0)}</span></span>
-                              <span style={{fontSize:10,fontWeight:900,color:p>=0?NEON.green:NEON.red}}>{p>=0?"+":""}{p.toFixed(2)}</span>
+                            <div style={{display:"flex",gap:10,fontSize:8,color:NEON.dimText}}>
+                              <span>Entry <span style={{color:NEON.cyan}}>${formatNum(entryMc)}</span></span>
+                              <span>Now <span style={{color:mcPct>=0?NEON.green:NEON.red}}>${formatNum(currentMc)}</span></span>
+                              <span>ATH <span style={{color:"#ffd740"}}>${formatNum(tr.athMcap||0)}</span></span>
+                              {stillExposed>0.05&&<span style={{color:NEON.orange}}>~{stillExposed.toFixed(2)} SOL at risk</span>}
                             </div>
                           </div>);
                         })}
@@ -5351,11 +5379,11 @@ export default function DegenCommandCenter(){
                         <div style={{display:"flex",alignItems:"center",gap:5}}>
                           <span style={{color:typeColor,fontWeight:900,fontSize:8,background:`${typeColor}15`,
                             padding:"1px 5px",borderRadius:3}}>{tr.type}</span>
-                          <span onClick={()=>selectByName(tr.token)}
+                          <span onClick={()=>selectByName(tr.token,{name:tr.token,addr:tr.addr,mcap:tr.mcap||0,athMcap:tr.athMcap||0,vol:0,holders:0,platform:"PumpFun",qualScore:0,riskScore:0,liquidity:0,topHolderPct:0})}
                             style={{color:NEON.text,fontWeight:700,cursor:"pointer",
                               textDecoration:"underline",textDecorationStyle:"dotted",textUnderlineOffset:2}}
                             title="Click to view token">{tr.token}</span>
-                          <span onClick={()=>clickAddr(tr.addr)}
+                          <span onClick={()=>clickAddr(tr.addr,{name:tr.token,addr:tr.addr,mcap:tr.mcap||0,athMcap:tr.athMcap||0,vol:0,holders:0,platform:"PumpFun",qualScore:0,riskScore:0,liquidity:0,topHolderPct:0})}
                             style={{fontSize:8,color:NEON.cyan,cursor:"pointer",opacity:0.6,
                               background:"rgba(0,255,255,0.06)",padding:"1px 4px",borderRadius:3,
                               fontFamily:"monospace"}}
@@ -5383,8 +5411,8 @@ export default function DegenCommandCenter(){
               }
 
               if(reportView==="list"&&reportTier){
-                const tierWallets=reportTier==="GENIUS"?genius:reportTier==="SHARP"?sharp:reportTier==="DECENT"?decent:reportTier==="LUCKY"?lucky:reportTier==="DEGEN"?degen:reportTier==="PENDING"?unrated:all3plus;
-                const tierColor2=reportTier==="GENIUS"?"#ffd740":reportTier==="SHARP"?"#00e5ff":reportTier==="DECENT"?"#ffa500":reportTier==="LUCKY"?"#ba68c8":reportTier==="PENDING"?"#666":"#ff5252";
+                const tierWallets=reportTier==="SMART"?elite:reportTier==="GENIUS"?genius:reportTier==="SHARP"?sharp:reportTier==="DECENT"?decent:reportTier==="LUCKY"?lucky:reportTier==="DEGEN"?degen:reportTier==="PENDING"?unrated:all3plus;
+                const tierColor2=reportTier==="SMART"?"#00ff88":reportTier==="GENIUS"?"#ffd740":reportTier==="SHARP"?"#00e5ff":reportTier==="DECENT"?"#ffa500":reportTier==="LUCKY"?"#ba68c8":reportTier==="PENDING"?"#666":"#ff5252";
                 return(<div>
                   <div onClick={()=>{setReportView("tiers");setReportTier(null);}}
                     style={{cursor:"pointer",fontSize:10,color:NEON.cyan,padding:"4px 0",marginBottom:6}}>← BACK TO TIERS</div>
@@ -5417,7 +5445,8 @@ export default function DegenCommandCenter(){
                 <div style={{fontSize:12,fontWeight:900,color:"#ffa500",fontFamily:"Orbitron",letterSpacing:1,
                   textAlign:"center",marginBottom:10}}>SMART WALLETS</div>
                 {[
-                  {tier:"GENIUS",label:"🧠 GENIUS",desc:"80-100% win rate",wallets:genius,color:"#ffd740",bg:"rgba(255,215,64,0.06)"},
+                  {tier:"SMART",label:"🧠 SMART WALLETS",desc:"5+ wins · 65%+ rate · 1.5 SOL profit · 12K+ coins only",wallets:elite,color:"#00ff88",bg:"rgba(0,255,136,0.07)",glow:true},
+                  {tier:"GENIUS",label:"🎯 GENIUS",desc:"80-100% win rate",wallets:genius,color:"#ffd740",bg:"rgba(255,215,64,0.06)"},
                   {tier:"SHARP",label:"⚡ SHARP",desc:"60-79% win rate",wallets:sharp,color:"#00e5ff",bg:"rgba(0,229,255,0.04)"},
                   {tier:"DECENT",label:"📊 DECENT",desc:"40-59% win rate",wallets:decent,color:"#ffa500",bg:"rgba(255,165,0,0.04)"},
                   {tier:"LUCKY",label:"🍀 LUCKY",desc:"20-39% win rate",wallets:lucky,color:"#ba68c8",bg:"rgba(186,104,200,0.04)"},
@@ -5426,7 +5455,8 @@ export default function DegenCommandCenter(){
                 ].map((t2,ti2)=>(
                   <div key={ti2} onClick={()=>{setReportTier(t2.tier);setReportView("list");}}
                     style={{cursor:"pointer",marginBottom:6,borderRadius:6,overflow:"hidden",
-                      border:`1px solid ${t2.color}22`,background:t2.bg,
+                      border:`1px solid ${t2.color}${t2.glow?"55":"22"}`,background:t2.bg,
+                      boxShadow:t2.glow&&t2.wallets.length>0?`0 0 12px ${t2.color}25`:undefined,
                       transition:"background 0.2s"}}>
                     <div style={{padding:"8px 10px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                       <div>

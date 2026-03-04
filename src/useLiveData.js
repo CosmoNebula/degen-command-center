@@ -253,12 +253,15 @@ export function useLiveData() {
           // Compute unrealized loss drag from open holds
           const unrealizedPnl = ws ? (ws.trades||[]).filter(tr=>tr.type==="HOLD")
             .reduce((s,tr)=>s+(tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol)),0) : 0;
-          const wsTotal = ws ? (ws.wins + ws.losses) : 0;
-          const wsRate = wsTotal > 0 ? ws.wins / wsTotal : 0;
-          // Adjusted PnL = realized gains + unrealized drag
+          // Only count qualifying trades (coin ATH >= 12K) for smart wallet gate
+          const qualWinCount = ws ? (ws.trades||[]).filter(tr=>tr.type==="WIN"&&(tr.athMcap||0)>=12000).length : 0;
+          const qualLossCount = ws ? (ws.trades||[]).filter(tr=>tr.type==="LOSS"&&(tr.athMcap||0)>=12000).length : 0;
+          const qualTotal = qualWinCount + qualLossCount;
+          const qualRate = qualTotal > 0 ? qualWinCount / qualTotal : 0;
           const adjustedPnl = ws ? (ws.totalPnl||0) + unrealizedPnl : 0;
-          // Smart if: 3+ wins, 60%+ rate, wins > losses, 4+ total trades, decent buy size, AND adjusted PnL positive
-          if (ws && ws.wins >= 3 && wsRate >= 0.60 && ws.wins > (ws.losses||0) && wsTotal >= 4 && sol > 0.3 && adjustedPnl > 0) {
+          // Elite criteria: 5+ qualifying wins, 65%+ rate on 12K+ coins, wins >= losses*2, 1.5+ SOL realized, adjusted PnL > 0.5
+          const isElite = ws && qualWinCount >= 5 && qualRate >= 0.65 && qualWinCount >= (qualLossCount*2) && qualTotal >= 6 && (ws.totalPnl||0) >= 1.5 && adjustedPnl > 0.5 && sol > 0.3;
+          if (isElite) {
             td.smartWallets.add(wallet);
             const alertKey = `${wallet.slice(0,8)}-${mint}`;
             if (!copyTradeAlerts.current.has(alertKey)) {
@@ -1934,11 +1937,13 @@ export function useLiveData() {
           ...s, tokensScanned: prev.length, qualified, dead,
           bestToken: best || s.bestToken, bestPct: bestPct || s.bestPct,
           smartWallets: Object.values(walletScores.current).filter(w => {
-            const total = w.wins + (w.losses || 0);
-            const unrealized = (w.trades||[]).filter(tr=>tr.type==="HOLD")
-              .reduce((s,tr)=>s+(tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol)),0);
-            const adjustedPnl = (w.totalPnl||0) + unrealized;
-            return w.wins >= 3 && total >= 4 && (w.wins / total) >= 0.60 && w.wins > (w.losses || 0) && adjustedPnl > 0;
+            const qualWins=(w.trades||[]).filter(tr=>tr.type==="WIN"&&(tr.athMcap||0)>=12000).length;
+            const qualLosses=(w.trades||[]).filter(tr=>tr.type==="LOSS"&&(tr.athMcap||0)>=12000).length;
+            const qualTotal=qualWins+qualLosses;
+            const qualRate=qualTotal>0?qualWins/qualTotal:0;
+            const unrealized=(w.trades||[]).filter(tr=>tr.type==="HOLD").reduce((s,tr)=>s+(tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol)),0);
+            const adjustedPnl=(w.totalPnl||0)+unrealized;
+            return qualWins>=5&&qualRate>=0.65&&qualWins>=(qualLosses*2)&&qualTotal>=6&&(w.totalPnl||0)>=1.5&&adjustedPnl>0.5;
           }).length,
           solPrice: SOL_USD, mcapCorr: MCAP_CORRECTION,
         }));
