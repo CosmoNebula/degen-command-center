@@ -5393,7 +5393,7 @@ export default function DegenCommandCenter(){
                     </div>);
                   })()}
                   {/* ── UNREALIZED SECTION ── */}
-                    {sigHolds>0&&(()=>{
+                  {sigHolds>0&&(()=>{
                       const holdTrades=w.trades.filter(tr=>tr.type==="HOLD");
                       const totalUnrealized=holdTrades.reduce((s,tr)=>{
                         const entryMc=tr.entryMcap||0;
@@ -5401,13 +5401,12 @@ export default function DegenCommandCenter(){
                         const mcPct=entryMc>0?(currentMc-entryMc)/entryMc:0;
                         const stillExposed=Math.max(0,(tr.sol||0)-(tr.sold||0));
                         const banked=(tr.sold||0)-(tr.sol||0);
-                        // Unrealized = banked SOL + estimated remaining position value change
                         return s+banked+(stillExposed*mcPct);
                       },0);
                       const deeplyUnder=holdTrades.filter(tr=>{
                         const entryMc=tr.entryMcap||0;
                         const currentMc=tr.mcap||0;
-                        return entryMc>0&&currentMc<entryMc*0.7; // >30% below entry
+                        return entryMc>0&&currentMc<entryMc*0.7;
                       });
                       return(<div style={{marginBottom:6,padding:"6px 8px",borderRadius:5,
                         background:totalUnrealized>=0?"rgba(57,255,20,0.04)":"rgba(255,7,58,0.06)",
@@ -5418,7 +5417,7 @@ export default function DegenCommandCenter(){
                             {totalUnrealized>=0?"+":""}{totalUnrealized.toFixed(2)} SOL</span>
                         </div>
                         {holdTrades.map((tr,hi)=>{
-                          const banked=(tr.sold||0)-(tr.sol||0); // net SOL from partial exits
+                          const banked=(tr.sold||0)-(tr.sol||0);
                           const entryMc=tr.entryMcap||0;
                           const currentMc=tr.mcap||0;
                           const mcPct=entryMc>0?((currentMc-entryMc)/entryMc*100):0;
@@ -5454,8 +5453,7 @@ export default function DegenCommandCenter(){
                         {deeplyUnder.length>0&&<div style={{fontSize:8,color:NEON.red,marginTop:3,opacity:0.8}}>
                           ⚠ {deeplyUnder.length} hold{deeplyUnder.length>1?"s":""} deeply underwater — check real win rate</div>}
                       </div>);
-                    })()}
-                  </div>
+                  })()}
                   <div style={{fontSize:10,fontWeight:900,color:"#ffa500",fontFamily:"Orbitron",letterSpacing:0.5,marginBottom:4}}>TRADES</div>
                   {w.trades.length===0&&<div style={{color:NEON.dimText,fontSize:10,padding:8}}>No trade details recorded yet</div>}
                   {w.trades.slice().reverse().filter(tr=>{
