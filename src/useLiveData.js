@@ -1785,8 +1785,13 @@ export function useLiveData() {
             // "Closed" = wallet sold back ≥50% of cost basis in SOL (handles partial exits)
             const positionClosed = (data.sold || 0) >= data.bought * 0.5;
 
+            // exitMcap must be declared BEFORE walletWin check (uses it for 12K gate)
+            const exitMcap = positionClosed
+              ? (data.exitMcap || t.mcap || 0)   // use mcap captured at actual sell time
+              : (t.mcap || 0);                    // for holds, use current mcap
+            const entryMcap = data.entryMcap || 0;
+
             // WIN: sold enough, came out profitable by ≥0.15 SOL, AND exit mcap was ≥$12K
-            // (if they sold below $12K it doesn't count — coin pumping later is irrelevant)
             const walletWin = positionClosed && pnl >= 0.15 && exitMcap >= 12000;
             // LOSS: token dead and wallet didn't win AND lost ≥0.15 SOL, OR closed at ≥0.15 SOL loss
             const walletLoss = !walletWin && (
@@ -1795,11 +1800,6 @@ export function useLiveData() {
             );
             // HOLD: alive token, position still open, outcome not yet determined
             const walletHold = !walletWin && !walletLoss && tokenAlive;
-
-            const exitMcap = walletLoss || walletWin
-              ? (data.exitMcap || t.mcap || 0)   // use mcap captured at actual sell time
-              : (t.mcap || 0);                    // for holds, use current mcap
-            const entryMcap = data.entryMcap || 0;
 
             // ── WIN ──
             if (walletWin && !ws.winAddrs.has(t.addr)) {
