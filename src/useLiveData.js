@@ -250,6 +250,16 @@ export function useLiveData() {
           const ws = walletScores.current[wallet];
           // Update lastActivity on actual trade (not scoring loop)
           if (ws) ws.lastActivity = now;
+
+          // ─── TRACK ACTIVE POSITION so it shows in wallet detail immediately ───
+          if (ws) {
+            if (!ws.activeBuys) ws.activeBuys = {};
+            const entryMcNow = tdMcapUsd(td);
+            if (!ws.activeBuys[mint]) {
+              ws.activeBuys[mint] = { token: mintToId.current[mint]||mint.slice(0,8), addr: mint, sol: 0, entryMcap: entryMcNow||0, time: now };
+            }
+            ws.activeBuys[mint].sol += sol;
+          }
           // Compute unrealized loss drag from open holds
           const unrealizedPnl = ws ? (ws.trades||[]).filter(tr=>tr.type==="HOLD")
             .reduce((s,tr)=>s+(tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol)),0) : 0;
@@ -259,8 +269,8 @@ export function useLiveData() {
           const qualTotal = qualWinCount + qualLossCount;
           const qualRate = qualTotal > 0 ? qualWinCount / qualTotal : 0;
           const adjustedPnl = ws ? (ws.totalPnl||0) + unrealizedPnl : 0;
-          // Elite criteria: 5+ qualifying wins, 65%+ rate on 12K+ coins, wins >= losses*2, 1.5+ SOL realized, adjusted PnL > 0.5
-          const isElite = ws && qualWinCount >= 5 && qualRate >= 0.65 && qualWinCount >= (qualLossCount*2) && qualTotal >= 6 && (ws.totalPnl||0) >= 1.5 && adjustedPnl > 0.5 && sol > 0.3;
+          // Elite criteria: 7+ qualifying wins, 70%+ rate on 12K+ coins, wins >= losses*3, 2.0+ SOL realized, adjusted PnL > 1.0
+          const isElite = ws && qualWinCount >= 7 && qualRate >= 0.70 && qualWinCount >= (qualLossCount*3) && qualTotal >= 8 && (ws.totalPnl||0) >= 2.0 && adjustedPnl > 1.0 && sol > 0.3;
           if (isElite) {
             td.smartWallets.add(wallet);
             const alertKey = `${wallet.slice(0,8)}-${mint}`;
@@ -1765,8 +1775,9 @@ export function useLiveData() {
             // "Closed" = wallet sold back ≥50% of cost basis in SOL (handles partial exits)
             const positionClosed = (data.sold || 0) >= data.bought * 0.5;
 
-            // WIN: sold enough, came out profitable by ≥0.15 SOL (filters noise/scalps)
-            const walletWin = positionClosed && pnl >= 0.15;
+            // WIN: sold enough, came out profitable by ≥0.15 SOL, AND exit mcap was ≥$12K
+            // (if they sold below $12K it doesn't count — coin pumping later is irrelevant)
+            const walletWin = positionClosed && pnl >= 0.15 && exitMcap >= 12000;
             // LOSS: token dead and wallet didn't win AND lost ≥0.15 SOL, OR closed at ≥0.15 SOL loss
             const walletLoss = !walletWin && (
               (tokenDead && pnl <= -0.15) ||
@@ -1804,6 +1815,11 @@ export function useLiveData() {
               if (exitMcap > 100000) ws.bigWins = (ws.bigWins || 0) + 1;
               if (ws.wins === 3) console.log(`[SMART$] 🧠 Wallet ${w.slice(0,8)} hit 3 wins: ${ws.tokens.join(", ")}`);
               if (ws.wins === 6) console.log(`[SMART$] 🧠🧠 Wallet ${w.slice(0,8)} hit 6 WINS: ${ws.tokens.join(", ")}`);
+              // ─── RESET position so next buy cycle on same coin is tracked independently ───
+              td.wallets[w] = { bought: 0, sold: 0, firstBuyTime: null, lastSellTime: null, entryMcap: 0, exitMcap: 0 };
+              ws.winAddrs.delete(t.addr); // allow fresh cycle on same coin
+              // Clear active buy — now in resolved trades
+              if (ws.activeBuys) delete ws.activeBuys[t.addr];
             }
 
             // ── LOSS ──
@@ -1827,6 +1843,11 @@ export function useLiveData() {
               ws.totalBought += data.bought;
               ws.totalSold += (data.sold || 0);
               ws.totalPnl += pnl;
+              // ─── RESET position so next buy cycle on same coin is tracked independently ───
+              td.wallets[w] = { bought: 0, sold: 0, firstBuyTime: null, lastSellTime: null, entryMcap: 0, exitMcap: 0 };
+              ws.lossAddrs.delete(t.addr); // allow fresh cycle on same coin
+              // Clear active buy — now in resolved trades
+              if (ws.activeBuys) delete ws.activeBuys[t.addr];
             }
 
             // ── HOLD ──
@@ -1943,7 +1964,7 @@ export function useLiveData() {
             const qualRate=qualTotal>0?qualWins/qualTotal:0;
             const unrealized=(w.trades||[]).filter(tr=>tr.type==="HOLD").reduce((s,tr)=>s+(tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol)),0);
             const adjustedPnl=(w.totalPnl||0)+unrealized;
-            return qualWins>=5&&qualRate>=0.65&&qualWins>=(qualLosses*2)&&qualTotal>=6&&(w.totalPnl||0)>=1.5&&adjustedPnl>0.5;
+            return qualWins>=7&&qualRate>=0.70&&qualWins>=(qualLosses*3)&&qualTotal>=8&&(w.totalPnl||0)>=2.0&&adjustedPnl>1.0;
           }).length,
           solPrice: SOL_USD, mcapCorr: MCAP_CORRECTION,
         }));
