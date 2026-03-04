@@ -3703,17 +3703,21 @@ function KillFeed({events,onSelectByName}){
   const glowMap={rug:"#ff073a",moon:"#ffe600",deploy:"#00ffff",migration:"#39ff14",lock:"#ffd740",system:"#bf00ff",whale:"#ffd740",dolphin:"#00d4ff"};
   const quality=events.filter(e=>["whale","dolphin","system","moon","migration"].includes(e.type));
   if(quality.length===0)return null;
+  // Show only most recent 8, each scrolls once
+  const recent=quality.slice(0,8);
   return(<div style={{position:"absolute",top:0,left:0,right:0,zIndex:15,pointerEvents:"auto",overflow:"hidden",height:36,
     background:"linear-gradient(180deg,rgba(5,3,14,0.9),rgba(5,3,14,0.5),transparent)",borderRadius:"6px 6px 0 0"}}>
     <div style={{position:"absolute",left:0,top:0,bottom:0,width:50,background:"linear-gradient(90deg,rgba(5,3,14,0.95),transparent)",zIndex:2}}/>
     <div style={{position:"absolute",right:0,top:0,bottom:0,width:50,background:"linear-gradient(270deg,rgba(5,3,14,0.95),transparent)",zIndex:2}}/>
-    <div style={{display:"flex",gap:60,animation:`marquee ${Math.max(18,quality.length*5)}s linear infinite`,whiteSpace:"nowrap",paddingTop:9,alignItems:"center"}}>
-      {quality.concat(quality).map((e,i)=>{
-        const c=colorMap[e.type]||NEON.cyan;const g=glowMap[e.type]||"#00ffff";
-        return(<span key={i} style={{fontSize:13,fontWeight:900,letterSpacing:1.5,fontFamily:"'Orbitron',sans-serif",
-          color:c,textShadow:`0 0 6px ${g}, 0 0 16px ${g}40`,opacity:0.92,cursor:e.name?"pointer":"default"}}
+    {recent.map((e,i)=>{
+      const c=colorMap[e.type]||NEON.cyan;const g=glowMap[e.type]||"#00ffff";
+      const delay=i*3.5;
+      return(<div key={(e._ts||0)+"-"+i} style={{position:"absolute",top:8,left:0,right:0,whiteSpace:"nowrap",
+        animation:`kfSlide 8s linear ${delay}s both`,pointerEvents:"auto"}}>
+        <span style={{fontSize:13,fontWeight:900,letterSpacing:1.5,fontFamily:"'Orbitron',sans-serif",
+          color:c,textShadow:`0 0 6px ${g}, 0 0 16px ${g}40`,opacity:0.92,cursor:e.name?"pointer":"default",paddingLeft:8}}
           onClick={()=>{if(e.name&&onSelectByName)onSelectByName(e.name);}}
-        >{e.text}</span>)})}</div></div>);
+        >{e.text}</span></div>)})}</div>);
 }
 
 function IntelPanel({token,onLock,onClose}){
@@ -3996,6 +4000,7 @@ export default function DegenCommandCenter(){
   setGraveyardRef.current=setGraveyard;
   useEffect(()=>{graveyardTokensRef.current=tokens},[tokens]);
   const addKillFeed=useCallback(event=>{
+    event._ts=Date.now();
     setKillFeed(p=>[event,...p.filter(e=>!e._startup)].slice(0,30));
     if(event.type==="rug"&&event.addr){
       setMigrations(p=>p.filter(m=>m.mint!==event.addr));
@@ -4797,6 +4802,7 @@ export default function DegenCommandCenter(){
         @keyframes newToken{from{background:rgba(255,7,58,0.06)}to{background:transparent}}
         @keyframes promoted{from{background:rgba(57,255,20,0.1)}to{background:transparent}}
         @keyframes marquee{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+        @keyframes kfSlide{0%{transform:translateX(110%);opacity:0}5%{opacity:1}95%{opacity:1}100%{transform:translateX(-110%);opacity:0}}
         @keyframes headerPulse{0%,100%{opacity:0.3}50%{opacity:0.7}}
         .token-row{transition:background 0.15s}.token-row:hover{background:rgba(255,0,255,0.05)!important}
         .btn-f{background:rgba(255,255,255,0.03);border:1px solid rgba(255,0,255,0.15);color:${NEON.dimText};
