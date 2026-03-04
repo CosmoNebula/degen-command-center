@@ -255,7 +255,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
     crewBubble:null,crewTimer:0,crewName:null,crewSlot:0,
     chatCooldown:0,morphMode:"normal",morphFrame:0,
   });
-  const fatMonkeyRef=useRef({active:false,x:-0.1,frame:0,smokeRings:[],musicNotes:[],nextSpawn:Date.now()+rand(180,420)*1000,walkDir:1,smokeTimer:0});
+  const fatMonkeyRef=useRef({active:false,x:-0.1,frame:0,smokeRings:[],musicNotes:[],nextSpawn:Date.now()+rand(180,420)*1000,walkDir:1,smokeTimer:0,tripActive:false,tripFrame:0,tripMsg:false,tripMsgFrame:0});
   const jaycShipRef=useRef({active:false,y:-0.3,frame:0,bills:[],aliens:[],nextSpawn:Date.now()+rand(240,480)*1000,opacity:0});
   const jayCRef=useRef({onGround:false,beamPhase:0,x:0.55,y:0.95,flexPhase:0,targetY:0.95,beamUp:false,opacity:0,beltHolder:"claude"});
   const lightModeRef=useRef({active:false,frame:0,maxFrames:180});
@@ -1019,7 +1019,24 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         onKillFeedRef.current?.({type:"system",text:"🐒 FAT MONKEY & THE GRATEFUL DEAD HAVE ENTERED THE BATTLEFIELD 🌹🎶💨"});
       }
       if(fm.active){
-        fm.x+=0.002*fm.walkDir;fm.frame++;fm.smokeTimer++;
+        fm.frame++;fm.smokeTimer++;
+        // Meeting detection — when Claude monkey and FM get close
+        const claudeX=aiAvatarRef.current.x;
+        if(!fm.tripActive&&Math.abs(fm.x-claudeX)<0.12&&fm.frame>30){
+          fm.tripActive=true;fm.tripFrame=0;fm.walkDir=0; // stop walking
+          onKillFeedRef.current?.({type:"system",text:"🍄🌈 THE TRIP HAS BEGUN... LUCY IN THE SKY WITH DIAMONDS 💎✨🌀"});
+        }
+        if(fm.tripActive){
+          fm.tripFrame++;
+          if(fm.tripFrame>600){// ~10 seconds of trip
+            fm.tripActive=false;fm.walkDir=0;fm.tripMsg=true;fm.tripMsgFrame=0;
+            // Force exit
+            fm.active=false;fm.nextSpawn=now2+rand(900,1500)*1000;
+            onKillFeedRef.current?.({type:"system",text:"🐒 Fat Monkey & the Dead have faded into the cosmos... ✌️🌀💫"});
+          }
+        }else{
+          fm.x+=0.002*fm.walkDir;
+        }
         // 8-BIT PIXEL ART MONKEY — side profile, slim, retro style
         const feetY=0.93*H,headY=0.68*H;
         const mH=feetY-headY;
@@ -1279,15 +1296,172 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
           // VISUAL ONLY — smoke rings don't kill tokens anymore
         });
         fm.smokeRings=fm.smokeRings.filter(r=>r.life>0);
-        if(fm.x>1.15||now2-fm.startTime>45000){
+
+        // ═══════════ THE TRIP — PSYCHEDELIC SEQUENCE ═══════════
+        if(fm.tripActive){
+          const tf=fm.tripFrame;
+          const tripAlpha=Math.min(1,tf/30); // fade in
+          ctx.save();
+
+          // ── FULL SCREEN TIE-DYE BACKGROUND ──
+          const tdTime=tf*0.02;
+          for(let ty=0;ty<H;ty+=8){
+            for(let tx=0;tx<W;tx+=8){
+              const dist3=Math.sqrt((tx-W/2)**2+(ty-H/2)**2)/Math.max(W,H);
+              const angle2=Math.atan2(ty-H/2,tx-W/2);
+              const swirl=angle2+dist3*8+tdTime*3;
+              const wave=Math.sin(swirl)*0.5+0.5;
+              const wave2=Math.sin(swirl*1.7+2)*0.5+0.5;
+              const wave3=Math.sin(swirl*0.6+4)*0.5+0.5;
+              const r=Math.round(wave*255);
+              const g=Math.round(wave2*180);
+              const b2=Math.round(wave3*255);
+              ctx.fillStyle=`rgba(${r},${g},${b2},${tripAlpha*0.35})`;
+              ctx.fillRect(tx,ty,8,8);
+            }
+          }
+
+          // ── KALEIDOSCOPE MANDALA ──
+          const cx2=W/2,cy2=H/2;
+          for(let ring=0;ring<5;ring++){
+            const rr=(ring+1)*Math.min(W,H)*0.08+Math.sin(tf*0.03+ring)*20;
+            for(let seg=0;seg<12;seg++){
+              const sa=seg*Math.PI/6+tf*0.01*(ring%2===0?1:-1);
+              const sx=cx2+Math.cos(sa)*rr;
+              const sy=cy2+Math.sin(sa)*rr;
+              const hue=(seg*30+ring*60+tf*2)%360;
+              ctx.fillStyle=`hsla(${hue},100%,60%,${tripAlpha*0.4})`;
+              ctx.beginPath();ctx.arc(sx,sy,12+ring*4+Math.sin(tf*0.05)*5,0,Math.PI*2);ctx.fill();
+            }
+          }
+
+          // ── FLOATING MUSHROOMS ──
+          for(let mi=0;mi<8;mi++){
+            const mx2=((mi*137+tf*0.3)%(W+100))-50;
+            const my2=H*0.3+Math.sin(tf*0.02+mi*2.1)*H*0.25;
+            const ms=20+Math.sin(tf*0.04+mi)*8;
+            const mHue=(tf*3+mi*45)%360;
+            ctx.save();ctx.translate(mx2,my2);ctx.rotate(Math.sin(tf*0.015+mi)*0.3);
+            // Cap
+            ctx.fillStyle=`hsla(${mHue},80%,50%,${tripAlpha*0.7})`;
+            ctx.beginPath();ctx.ellipse(0,-ms*0.3,ms,ms*0.6,0,Math.PI,0);ctx.fill();
+            // Spots
+            for(let sp=0;sp<3;sp++){
+              ctx.fillStyle=`rgba(255,255,255,${tripAlpha*0.6})`;
+              ctx.beginPath();ctx.arc((-1+sp)*ms*0.3,-ms*0.4,ms*0.12,0,Math.PI*2);ctx.fill();
+            }
+            // Stem
+            ctx.fillStyle=`rgba(255,240,220,${tripAlpha*0.7})`;
+            ctx.fillRect(-ms*0.15,-ms*0.3,ms*0.3,ms*0.7);
+            ctx.restore();
+          }
+
+          // ── LUCY IN THE SKY — diamonds raining down ──
+          for(let di=0;di<12;di++){
+            const dx3=((di*89+tf*1.5)%(W+60))-30;
+            const dy3=((di*73+tf*2)%(H+60))-30;
+            const ds=8+Math.sin(tf*0.06+di)*4;
+            const dHue=(tf*4+di*30)%360;
+            ctx.save();ctx.translate(dx3,dy3);ctx.rotate(tf*0.03+di);
+            ctx.fillStyle=`hsla(${dHue},90%,70%,${tripAlpha*0.6})`;
+            ctx.shadowColor=`hsla(${dHue},100%,80%,0.8)`;ctx.shadowBlur=15;
+            // Diamond shape
+            ctx.beginPath();ctx.moveTo(0,-ds);ctx.lineTo(ds*0.6,0);ctx.lineTo(0,ds*0.4);ctx.lineTo(-ds*0.6,0);ctx.closePath();ctx.fill();
+            ctx.shadowBlur=0;ctx.restore();
+          }
+
+          // ── FRACTAL SPIRALS ──
+          for(let sp=0;sp<3;sp++){
+            const scx=W*(0.2+sp*0.3);
+            const scy=H*(0.3+Math.sin(tf*0.01+sp*2)*0.2);
+            ctx.strokeStyle=`hsla(${(tf*5+sp*120)%360},100%,65%,${tripAlpha*0.3})`;
+            ctx.lineWidth=2;
+            ctx.beginPath();
+            for(let t2=0;t2<80;t2++){
+              const sa2=t2*0.15+tf*0.02;
+              const sr=t2*1.5+Math.sin(tf*0.03)*10;
+              const spx=scx+Math.cos(sa2)*sr;
+              const spy=scy+Math.sin(sa2)*sr;
+              t2===0?ctx.moveTo(spx,spy):ctx.lineTo(spx,spy);
+            }
+            ctx.stroke();
+          }
+
+          // ── BREATHING CONCENTRIC RINGS ──
+          for(let ri2=0;ri2<8;ri2++){
+            const rr2=(ri2+1)*30+Math.sin(tf*0.04+ri2*0.8)*20;
+            const rHue=(tf*3+ri2*45)%360;
+            ctx.strokeStyle=`hsla(${rHue},100%,60%,${tripAlpha*0.25})`;
+            ctx.lineWidth=3+Math.sin(tf*0.05+ri2)*2;
+            ctx.beginPath();ctx.arc(cx2,cy2,rr2,0,Math.PI*2);ctx.stroke();
+          }
+
+          // ── PEACE SIGNS & DEAD BEARS floating ──
+          const tripSymbols=["☮","✿","☯","🐻","💀","🌹","♾","👁","🍄","💎"];
+          for(let si=0;si<15;si++){
+            const sx2=((si*97+tf*0.8+Math.sin(si*3+tf*0.01)*50)%(W+40))-20;
+            const sy2=((si*131+tf*0.5+Math.cos(si*2+tf*0.015)*40)%(H+40))-20;
+            const sHue=(tf*2+si*25)%360;
+            ctx.font=`${16+Math.sin(tf*0.04+si)*6}px serif`;
+            ctx.fillStyle=`hsla(${sHue},100%,70%,${tripAlpha*0.7})`;
+            ctx.fillText(tripSymbols[si%tripSymbols.length],sx2,sy2);
+          }
+
+          // ── MORPHING COLOR WAVES at edges ──
+          for(let ew=0;ew<4;ew++){
+            const ewY=ew*H/4;
+            const ewGrad=ctx.createLinearGradient(0,ewY,W,ewY+H/4);
+            const h1=(tf*4+ew*90)%360;
+            const h2=(tf*4+ew*90+180)%360;
+            ewGrad.addColorStop(0,`hsla(${h1},100%,50%,${tripAlpha*0.1})`);
+            ewGrad.addColorStop(0.5,`hsla(${(h1+h2)/2},100%,70%,${tripAlpha*0.15})`);
+            ewGrad.addColorStop(1,`hsla(${h2},100%,50%,${tripAlpha*0.1})`);
+            ctx.fillStyle=ewGrad;
+            ctx.fillRect(0,ewY,W,H/4);
+          }
+
+          ctx.restore();
+        }
+
+        if(!fm.tripActive&&(fm.x>1.15||now2-fm.startTime>60000)){
           fm.active=false;fm.nextSpawn=now2+rand(900,1500)*1000;
           if(fm.x>1.15)onKillFeedRef.current?.({type:"system",text:"🐒 Fat Monkey has left the battlefield... 💨✌️🎶"});
         }
       }
 
+        if(fm.tripMsg){fm.tripMsgFrame++;if(fm.tripMsgFrame>180)fm.tripMsg=false;}
+
+        // ── TRIP EXIT MESSAGE ──
+        if(fm.tripMsg){
+          const tmf=fm.tripMsgFrame;
+          const tmAlpha=tmf<20?tmf/20:tmf>150?Math.max(0,(180-tmf)/30):1;
+          ctx.save();ctx.globalAlpha=tmAlpha;
+          const msgY=H*0.45;
+          const msgH=H*0.15;
+          ctx.fillStyle=`rgba(0,0,0,${tmAlpha*0.6})`;
+          ctx.fillRect(0,msgY-msgH/2,W,msgH);
+          ctx.textAlign="center";
+          const tfs=Math.round(Math.min(W*0.05,36));
+          ctx.font=`bold ${tfs}px 'Orbitron'`;
+          const msgText="WHAT A LONG STRANGE TRIP IT'S BEEN";
+          for(let ci=0;ci<msgText.length;ci++){
+            const ch=msgText[ci];
+            const cHue=(tmf*3+ci*12)%360;
+            ctx.fillStyle=`hsla(${cHue},100%,65%,${tmAlpha})`;
+            ctx.shadowColor=`hsla(${cHue},100%,50%,0.8)`;ctx.shadowBlur=10;
+            const cw=ctx.measureText(msgText).width;
+            const startX=W/2-cw/2;
+            const charX=startX+ctx.measureText(msgText.substring(0,ci)).width;
+            ctx.textAlign="left";
+            ctx.fillText(ch,charX,msgY+tfs*0.15+Math.sin(tmf*0.08+ci*0.3)*4);
+          }
+          ctx.shadowBlur=0;ctx.textAlign="left";
+          ctx.globalAlpha=1;ctx.restore();
+        }
+
       // ═══════════ EASTER EGG: J-Ai-C MOTHERSHIP (8-BIT) ═══════════
       const jc=jaycShipRef.current;
-      if(!jc.active&&now2>jc.nextSpawn&&!fatMonkeyRef.current.active){
+      if(!jc.active&&now2>jc.nextSpawn&&!fatMonkeyRef.current.active&&!fatMonkeyRef.current.tripMsg){
         jc.active=true;jc.y=-0.6;jc.frame=0;jc.bills=[];jc.opacity=0;jc.startTime=now2;jc.phase="descend";
         for(let i=0;i<5;i++){jc.aliens.push({blink:randInt(0,200),lookDir:Math.random()>0.5?1:-1});}
         onKillFeedRef.current?.({type:"system",text:"👾 J-Ai-C DREADNOUGHT INCOMING... 6 LEGENDS. 1 SHIP. NO SURVIVORS. 💀💰⚡"});
@@ -1979,9 +2153,11 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         if(wt.tier==="golden"){
           whalesRef.current.push({x:-0.35,y:0.08+rand(0,0.2),frame:0,tokenName:wt.name,sol:wt.sol,
             golden:true,trail:[]});
+          onKillFeedRef.current?.({type:"whale",name:wt.name,text:`🐋 GOLDEN WHALE — ${wt.sol} SOL into ${wt.name}! MASSIVE BUY 💰🔥`,addr:wt.addr});
         }else{
           whalesRef.current.push({x:-0.35,y:0.1+rand(0,0.4),frame:0,tokenName:wt.name,sol:wt.sol,
             golden:false,tierIdx:Math.min(7,Math.floor((wt.sol-10)/3.75)),trail:[]});
+          onKillFeedRef.current?.({type:"whale",name:wt.name,text:`🐳 WHALE BUY — ${wt.sol} SOL into ${wt.name} 💰`,addr:wt.addr});
         }
       }
 
@@ -2052,6 +2228,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
           pod.dolphins.push({offX:di2*0.04+rand(-0.01,0.01),offY:rand(-0.04,0.04),phase:rand(0,6.28),blowFrame:Math.floor(rand(0,60))});
         }
         dolphinsRef.current.push(pod);
+        onKillFeedRef.current?.({type:"dolphin",name:dt.tokenName,text:`🐬 DOLPHIN POD — ${dt.count} buys swarming ${dt.tokenName}! 🌊`,addr:dt.addr});
       }
 
       // ─── RENDER DOLPHIN PODS ───
@@ -2258,9 +2435,19 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         const fmAct=fatMonkeyRef.current.active;
         const jcAct=jaycShipRef.current.active;
         if(fmAct){
-          // Teleport behind last band member (MICKEY) — well behind the group
-          const fmTargetX=Math.max(0.05,Math.min(0.92,fatMonkeyRef.current.x-0.22));
-          if(ai.morphMode==="monkey"&&ai.morphFrame<5){ai.x=fmTargetX;ai.y=0.78;}
+          // Teleport to RIGHT side — walk toward Fat Monkey
+          const fmX2=fatMonkeyRef.current.x;
+          const tripOn=fatMonkeyRef.current.tripActive;
+          let fmTargetX;
+          if(ai.morphMode==="monkey"&&ai.morphFrame<5){
+            ai.x=1.1;ai.y=0.78; // start far right
+            fmTargetX=1.1;
+          }else if(tripOn){
+            fmTargetX=0.5; // stay in the middle during trip
+          }else{
+            // Walk toward FM until they meet
+            fmTargetX=Math.max(fmX2+0.08,ai.x-0.002);
+          }
           ai.targetX=fmTargetX;
           ai.targetY=0.78;ai.focusToken=null;ai.gestureTarget=1;
           ai.focusTimer=30;
@@ -3329,23 +3516,22 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
     background:"linear-gradient(180deg,rgba(10,5,25,1) 0%,rgba(5,3,14,1) 50%,rgba(20,5,15,1) 100%)",borderRadius:6}}/>;
 }
 
-function KillFeed({events}){
-  const colorMap={rug:NEON.red,moon:NEON.yellow,deploy:NEON.cyan,migration:"#39ff14",lock:NEON.yellow,system:NEON.purple};
-  const glowMap={rug:"#ff073a",moon:"#ffe600",deploy:"#00ffff",migration:"#39ff14",lock:"#ffd740",system:"#bf00ff"};
-  return(<div style={{position:"absolute",top:0,left:0,right:0,zIndex:15,pointerEvents:"none",overflow:"hidden",height:38,
-    background:"linear-gradient(180deg,rgba(5,3,14,0.85),rgba(5,3,14,0.4),transparent)",borderRadius:"6px 6px 0 0"}}>
-    {/* Fade edges */}
-    <div style={{position:"absolute",left:0,top:0,bottom:0,width:60,background:"linear-gradient(90deg,rgba(5,3,14,0.9),transparent)",zIndex:2}}/>
-    <div style={{position:"absolute",right:0,top:0,bottom:0,width:60,background:"linear-gradient(270deg,rgba(5,3,14,0.9),transparent)",zIndex:2}}/>
-    <div style={{display:"flex",gap:80,animation:"marquee 40s linear infinite",whiteSpace:"nowrap",paddingTop:10,alignItems:"center"}}>
-      {events.concat(events).map((e,i)=>{
+function KillFeed({events,onSelectByName}){
+  const colorMap={rug:NEON.red,moon:NEON.yellow,deploy:NEON.cyan,migration:"#39ff14",lock:NEON.yellow,system:NEON.purple,whale:"#ffd740",dolphin:"#00d4ff"};
+  const glowMap={rug:"#ff073a",moon:"#ffe600",deploy:"#00ffff",migration:"#39ff14",lock:"#ffd740",system:"#bf00ff",whale:"#ffd740",dolphin:"#00d4ff"};
+  const quality=events.filter(e=>["whale","dolphin","system","moon","migration"].includes(e.type));
+  if(quality.length===0)return null;
+  return(<div style={{position:"absolute",top:0,left:0,right:0,zIndex:15,pointerEvents:"auto",overflow:"hidden",height:36,
+    background:"linear-gradient(180deg,rgba(5,3,14,0.9),rgba(5,3,14,0.5),transparent)",borderRadius:"6px 6px 0 0"}}>
+    <div style={{position:"absolute",left:0,top:0,bottom:0,width:50,background:"linear-gradient(90deg,rgba(5,3,14,0.95),transparent)",zIndex:2}}/>
+    <div style={{position:"absolute",right:0,top:0,bottom:0,width:50,background:"linear-gradient(270deg,rgba(5,3,14,0.95),transparent)",zIndex:2}}/>
+    <div style={{display:"flex",gap:60,animation:`marquee ${Math.max(18,quality.length*5)}s linear infinite`,whiteSpace:"nowrap",paddingTop:9,alignItems:"center"}}>
+      {quality.concat(quality).map((e,i)=>{
         const c=colorMap[e.type]||NEON.cyan;const g=glowMap[e.type]||"#00ffff";
-        return(<span key={i} style={{fontSize:16,fontWeight:900,letterSpacing:2,fontFamily:"'Orbitron',sans-serif",
-          color:c,textShadow:`0 0 8px ${g}, 0 0 20px ${g}40, 0 0 40px ${g}20`,
-          opacity:0.9,
-        }}>{e.text}</span>)})}
-    </div>
-  </div>);
+        return(<span key={i} style={{fontSize:13,fontWeight:900,letterSpacing:1.5,fontFamily:"'Orbitron',sans-serif",
+          color:c,textShadow:`0 0 6px ${g}, 0 0 16px ${g}40`,opacity:0.92,cursor:e.name?"pointer":"default"}}
+          onClick={()=>{if(e.name&&onSelectByName)onSelectByName(e.name);}}
+        >{e.text}</span>)})}</div></div>);
 }
 
 function IntelPanel({token,onLock,onClose}){
@@ -3595,6 +3781,7 @@ export default function DegenCommandCenter(){
     });
   };
   const clickAddr=(addr)=>{const t=tokens.find(x=>x.addr===addr);if(t)setSelectedToken(t);};
+  const selectByName=(name)=>{const t=tokens.find(x=>x.name===name);if(t)setSelectedToken(t);};
   const [leftTab,setLeftTab]=useState("SCANNER");
   const [showMenu,setShowMenu]=useState(false);
   const [intelEvents,setIntelEvents]=useState([]);
@@ -4974,6 +5161,7 @@ export default function DegenCommandCenter(){
           <BattlefieldMap tokens={tokens} lockedTokens={lockedTokens} onSelect={selectToken}
             selectedId={selectedToken?.id} onKillFeed={addKillFeed} onAlienUpdate={setAlienStats}
             onMenuToggle={()=>setShowMenu(p=>!p)} whaleTrigger={whaleTriggerRef} dolphinTrigger={dolphinTriggerRef}/>
+          <KillFeed events={killFeed} onSelectByName={selectByName}/>
           {/* ═══ INTEL PANEL — bottom of battlefield on token select ═══ */}
           {selectedToken&&(()=>{
             const token=selectedToken;
