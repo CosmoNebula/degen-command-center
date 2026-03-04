@@ -439,9 +439,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
       [[-8,-5,4],[9,3,3.5],[-3,9,3],[6,-7,2]].forEach(([a,b,c])=>{ctx.beginPath();ctx.arc(a,b,c,0,Math.PI*2);ctx.fill()});
       ctx.strokeStyle="rgba(255,230,0,0.12)";ctx.lineWidth=0.5;ctx.setLineDash([3,6]);
       ctx.beginPath();ctx.ellipse(0,0,moonR+16,moonR+9,f*0.01,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);
-      // MENU text on moon
-      ctx.font="bold 10px 'Orbitron'";ctx.fillStyle=`rgba(255,230,0,${0.6+Math.sin(f*0.04)*0.2})`;
-      ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText("MENU",0,0);
+      // Moon click reserved for future interaction — no text
       ctx.textBaseline="alphabetic";
       ctx.shadowBlur=0;ctx.restore();
       ctx.font="bold 14px 'Orbitron'";ctx.fillStyle=`rgba(255,230,0,${0.3+Math.sin(f*0.03)*0.15})`;
@@ -4837,7 +4835,7 @@ export default function DegenCommandCenter(){
           <h1 style={{fontFamily:"'Orbitron',sans-serif",fontSize:16,fontWeight:900,lineHeight:1.2,
             background:`linear-gradient(90deg,${NEON.magenta},${NEON.pink},${NEON.cyan})`,
             WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",letterSpacing:3}}>◈ DEGEN COMMAND CENTER</h1>
-          <div style={{fontSize:11,color:NEON.dimText,letterSpacing:2,marginTop:1}}>🌸 SOLANA BATTLEFIELD v6.0 🌸</div>
+          <div style={{fontSize:11,color:NEON.dimText,letterSpacing:2,marginTop:1}}>🌸 SOLANA BATTLEFIELD v7.0 🌸</div>
         </div>
         {/* ═══ CORRESPONDENT MARQUEE — expands when active ═══ */}
         <div style={{flex:1,margin:"0 14px",height:corrDisplay.visible?52:32,overflow:"hidden",position:"relative",
@@ -5359,6 +5357,7 @@ export default function DegenCommandCenter(){
                         <div style={{fontSize:12,fontWeight:900,color:NEON.cyan,fontFamily:"Orbitron"}}>{w.totalSold.toFixed(2)}</div>
                         <div style={{fontSize:7,color:NEON.dimText}}>SOL OUT</div></div>
                     </div>
+                  </div>
                   {/* ── ACTIVE POSITIONS (open buys not yet resolved) ── */}
                   {(()=>{
                     const rawWs=wsRef?.current?.[w.addr];
