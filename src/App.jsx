@@ -2184,6 +2184,20 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
           ctx.fillText(["0","1","◇","△","⬡","⊕","∿","∞","λ","Ω"][ci2%10],cx2+cWave*0.4,gy2);ctx.textAlign="left";
         }
       }
+      // Cloak outer edge outlines — thin bright lines on leftmost and rightmost strands
+      for(let edge=0;edge<2;edge++){
+        const ei=edge===0?0:23;
+        const cPhase=ai.cloakPhase+ei*0.35;
+        const cSpread=(ei-12)*2.0*S;
+        const cx2=hx+cSpread+Math.sin(cPhase*1.8+ei)*2.5*S;
+        const cWave=Math.sin(cPhase+ei*0.25)*4*S;
+        const cStartY=cloakTop+Math.abs(ei-12)*0.8*S;
+        const cEndY=cloakBot+Math.sin(cPhase)*5*S+cWave+Math.abs(ei-12)*1.5*S;
+        ctx.strokeStyle="rgba(220,230,255,0.12)";ctx.lineWidth=0.8;
+        ctx.beginPath();ctx.moveTo(cx2,cStartY);
+        ctx.bezierCurveTo(cx2+cWave*0.3,cStartY+(cEndY-cStartY)*0.33,cx2+cWave,cStartY+(cEndY-cStartY)*0.66,cx2+cWave*1.3,cEndY);
+        ctx.stroke();
+      }
 
       // ═══ LEGS ═══
       const legBase=hy+22*S+floatY+breathOff;
