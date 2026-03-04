@@ -5234,6 +5234,11 @@ export default function DegenCommandCenter(){
                 if(!w)return <div style={{color:NEON.dimText,fontSize:11,textAlign:"center",padding:20}}>Wallet not found</div>;
                 const tierColor=w.rate>=80?"#ffd740":w.rate>=60?"#00e5ff":w.rate>=40?"#ffa500":w.rate>=20?"#ba68c8":"#ff5252";
                 const tierLabel=w.rate>=80?"GENIUS":w.rate>=60?"SHARP":w.rate>=40?"DECENT":w.rate>=20?"LUCKY":w.total>0?"DEGEN":"PENDING";
+                // Only count significant trades for display
+                const sigTrades=w.trades.filter(tr=>{const p=tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol);return(tr.type==="WIN"&&p>=0.15)||(tr.type==="LOSS"&&p<=-0.15)||tr.type==="HOLD";});
+                const sigWins=sigTrades.filter(t=>t.type==="WIN").length;
+                const sigLosses=sigTrades.filter(t=>t.type==="LOSS").length;
+                const sigHolds=sigTrades.filter(t=>t.type==="HOLD").length;
                 return(<div>
                   <div onClick={()=>{setReportView("list");setSelectedWallet(null);}}
                     style={{cursor:"pointer",fontSize:10,color:NEON.cyan,padding:"4px 0",marginBottom:6}}>← BACK TO LIST</div>
@@ -5248,13 +5253,13 @@ export default function DegenCommandCenter(){
                         borderRadius:4,padding:"4px 8px",textAlign:"center",marginBottom:8}}>📋 COPY ADDRESS</div>
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:4,marginBottom:4}}>
                       <div style={{background:"rgba(0,255,0,0.05)",borderRadius:4,padding:"4px",textAlign:"center"}}>
-                        <div style={{fontSize:16,fontWeight:900,color:NEON.green,fontFamily:"Orbitron"}}>{w.wins}</div>
+                        <div style={{fontSize:16,fontWeight:900,color:NEON.green,fontFamily:"Orbitron"}}>{sigWins}</div>
                         <div style={{fontSize:7,color:NEON.dimText}}>WINS</div></div>
                       <div style={{background:"rgba(255,0,0,0.05)",borderRadius:4,padding:"4px",textAlign:"center"}}>
-                        <div style={{fontSize:16,fontWeight:900,color:NEON.red,fontFamily:"Orbitron"}}>{w.losses}</div>
+                        <div style={{fontSize:16,fontWeight:900,color:NEON.red,fontFamily:"Orbitron"}}>{sigLosses}</div>
                         <div style={{fontSize:7,color:NEON.dimText}}>LOSSES</div></div>
                       <div style={{background:"rgba(255,200,0,0.05)",borderRadius:4,padding:"4px",textAlign:"center"}}>
-                        <div style={{fontSize:16,fontWeight:900,color:"#ffa500",fontFamily:"Orbitron"}}>{w.holds}</div>
+                        <div style={{fontSize:16,fontWeight:900,color:"#ffa500",fontFamily:"Orbitron"}}>{sigHolds}</div>
                         <div style={{fontSize:7,color:NEON.dimText}}>HOLDS</div></div>
                       <div style={{background:w.totalPnl>=0?"rgba(0,255,0,0.05)":"rgba(255,0,0,0.05)",borderRadius:4,padding:"4px",textAlign:"center"}}>
                         <div style={{fontSize:14,fontWeight:900,color:w.totalPnl>=0?NEON.green:NEON.red,fontFamily:"Orbitron"}}>{w.totalPnl>=0?"+":""}{w.totalPnl.toFixed(2)}</div>
@@ -5272,38 +5277,51 @@ export default function DegenCommandCenter(){
                   </div>
                   <div style={{fontSize:10,fontWeight:900,color:"#ffa500",fontFamily:"Orbitron",letterSpacing:0.5,marginBottom:4}}>TRADES</div>
                   {w.trades.length===0&&<div style={{color:NEON.dimText,fontSize:10,padding:8}}>No trade details recorded yet</div>}
-                  {w.trades.slice().reverse().map((tr,ti)=>{
+                  {w.trades.slice().reverse().filter(tr=>{
                     const trPnl=tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol);
-                    const entryAgo=tr.entryTime?Math.floor((Date.now()-tr.entryTime)/1000):null;
-                    const exitAgo=tr.exitTime?Math.floor((Date.now()-tr.exitTime)/1000):null;
-                    const held=tr.entryTime&&tr.exitTime?Math.floor((tr.exitTime-tr.entryTime)/1000):null;
-                    const fmtAgo=s=>s==null?"—":s<60?s+"s":s<3600?Math.floor(s/60)+"m":Math.floor(s/3600)+"h";
+                    // Hide negligible trades — wins < 0.15 SOL or losses between -0.15 and 0
+                    if(tr.type==="WIN"&&trPnl<0.15)return false;
+                    if(tr.type==="LOSS"&&trPnl>-0.15)return false;
+                    return true;
+                  }).map((tr,ti)=>{
+                    const trPnl=tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol);
+                    const isHold=tr.type==="HOLD";
+                    const typeColor=tr.type==="WIN"?NEON.green:tr.type==="LOSS"?NEON.red:"#ffa500";
                     return(
-                    <div key={ti} style={{padding:"5px 6px",marginBottom:3,borderRadius:4,fontSize:10,
-                      background:tr.type==="WIN"?"rgba(0,255,0,0.04)":tr.type==="LOSS"?"rgba(255,0,0,0.04)":"rgba(255,200,0,0.04)",
-                      borderLeft:`2px solid ${tr.type==="WIN"?NEON.green:tr.type==="LOSS"?NEON.red:"#ffa500"}`}}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                        <div>
-                          <span style={{color:tr.type==="WIN"?NEON.green:tr.type==="LOSS"?NEON.red:"#ffa500",fontWeight:900,fontSize:8,marginRight:4}}>{tr.type}</span>
-                          <span style={{color:NEON.text,fontWeight:700}}>{tr.token}</span>
+                    <div key={ti} style={{padding:"6px 8px",marginBottom:4,borderRadius:5,fontSize:10,
+                      background:tr.type==="WIN"?"rgba(57,255,20,0.04)":tr.type==="LOSS"?"rgba(255,7,58,0.04)":"rgba(255,165,0,0.04)",
+                      borderLeft:`2px solid ${typeColor}`}}>
+                      {/* Top row: badge + name (clickable) + sol amounts + pnl */}
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                        <div style={{display:"flex",alignItems:"center",gap:5}}>
+                          <span style={{color:typeColor,fontWeight:900,fontSize:8,background:`${typeColor}15`,
+                            padding:"1px 5px",borderRadius:3}}>{tr.type}</span>
+                          <span onClick={()=>selectByName(tr.token)}
+                            style={{color:NEON.text,fontWeight:700,cursor:"pointer",
+                              textDecoration:"underline",textDecorationStyle:"dotted",textUnderlineOffset:2}}
+                            title="Click to view token">{tr.token}</span>
+                          <span onClick={()=>clickAddr(tr.addr)}
+                            style={{fontSize:8,color:NEON.cyan,cursor:"pointer",opacity:0.6,
+                              background:"rgba(0,255,255,0.06)",padding:"1px 4px",borderRadius:3,
+                              fontFamily:"monospace"}}
+                            title={tr.addr}>📋 CA</span>
                         </div>
                         <div style={{textAlign:"right"}}>
-                          <div style={{color:NEON.cyan,fontSize:9}}>{tr.sol.toFixed(2)} in{(tr.sold||0)>0?` / ${tr.sold.toFixed(2)} out`:""}</div>
-                          <div style={{fontSize:11,fontWeight:900,color:trPnl>=0?NEON.green:NEON.red}}>{trPnl>=0?"+":""}{trPnl.toFixed(2)} SOL</div>
+                          <div style={{color:NEON.dimText,fontSize:9}}>{tr.sol.toFixed(2)} in{(tr.sold||0)>0?` / ${(tr.sold||0).toFixed(2)} out`:""}</div>
+                          <div style={{fontSize:12,fontWeight:900,color:typeColor}}>{trPnl>=0?"+":""}{trPnl.toFixed(2)} SOL</div>
                         </div>
                       </div>
-                      {/* MC trajectory: start → ATH → current */}
-                      <div style={{display:"flex",gap:6,marginTop:3,alignItems:"center",flexWrap:"wrap"}}>
-                        {tr.startMcap>0&&<span style={{color:NEON.dimText,fontSize:8}}>START <span style={{color:NEON.text}}>${formatNum(tr.startMcap)}</span></span>}
-                        {tr.entryMcap>0&&<span style={{color:NEON.dimText,fontSize:8}}>IN <span style={{color:NEON.cyan}}>${formatNum(tr.entryMcap)}</span></span>}
-                        {tr.athMcap>0&&<span style={{color:NEON.dimText,fontSize:8}}>ATH <span style={{color:"#ffd740"}}>${formatNum(tr.athMcap)}</span></span>}
-                        {tr.mcap>0&&<span style={{color:NEON.dimText,fontSize:8}}>NOW <span style={{color:tr.type==="WIN"?NEON.green:NEON.dimText}}>${formatNum(tr.mcap)}</span></span>}
+                      {/* Line 1: Entry MC → Exit MC */}
+                      <div style={{display:"flex",gap:10,fontSize:9,marginBottom:2}}>
+                        <span style={{color:NEON.dimText}}>Entry <span style={{color:NEON.cyan}}>${formatNum(tr.entryMcap||0)}</span></span>
+                        <span style={{color:NEON.dimText}}>→</span>
+                        <span style={{color:NEON.dimText}}>Exit <span style={{color:isHold?"#ffa500":tr.type==="WIN"?NEON.green:NEON.red}}>
+                          {isHold?"Still Holding":"$"+formatNum(tr.mcap||0)}</span></span>
                       </div>
-                      {/* Timing row */}
-                      <div style={{display:"flex",gap:8,marginTop:2,color:NEON.dimText,fontSize:8}}>
-                        {entryAgo!=null&&<span>ENTRY <span style={{color:NEON.text}}>{fmtAgo(entryAgo)} ago</span></span>}
-                        {held!=null&&tr.type!=="HOLD"&&<span>HELD <span style={{color:NEON.text}}>{fmtAgo(held)}</span></span>}
-                        {tr.type==="HOLD"&&<span style={{color:"#ffa500"}}>STILL HOLDING</span>}
+                      {/* Line 2: ATH + Current */}
+                      <div style={{display:"flex",gap:10,fontSize:9}}>
+                        <span style={{color:NEON.dimText}}>ATH <span style={{color:"#ffd740"}}>${formatNum(tr.athMcap||tr.mcap||0)}</span></span>
+                        <span style={{color:NEON.dimText}}>Current <span style={{color:NEON.text}}>${formatNum(tr.mcap||0)}</span></span>
                       </div>
                     </div>)})}
                 </div>);

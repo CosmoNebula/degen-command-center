@@ -1754,12 +1754,12 @@ export function useLiveData() {
             // "Closed" = wallet sold back ≥50% of cost basis in SOL (handles partial exits)
             const positionClosed = (data.sold || 0) >= data.bought * 0.5;
 
-            // WIN: sold enough and came out profitable (includes bailing before rug!)
-            const walletWin = positionClosed && pnl > 0;
-            // LOSS: token dead and wallet didn't win, OR closed position at >20% loss
+            // WIN: sold enough, came out profitable by ≥0.15 SOL (filters noise/scalps)
+            const walletWin = positionClosed && pnl >= 0.15;
+            // LOSS: token dead and wallet didn't win AND lost ≥0.15 SOL, OR closed at ≥0.15 SOL loss
             const walletLoss = !walletWin && (
-              tokenDead ||
-              (positionClosed && pnl < -(data.bought * 0.2))
+              (tokenDead && pnl <= -0.15) ||
+              (positionClosed && pnl <= -0.15)
             );
             // HOLD: alive token, position still open, outcome not yet determined
             const walletHold = !walletWin && !walletLoss && tokenAlive;
