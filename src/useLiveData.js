@@ -59,7 +59,7 @@ export function useLiveData() {
   });
 
   // Smart money: wallets that have been in winning tokens
-  const walletScores = useRef({}); // { wallet: { wins: N, tokens: [], totalPnl: 0 } }
+  const walletScores = useRef({}); // { wallet: { wins, losses, tokens: [], lossTokens: [], totalBought: 0, bigWins: 0, trades: [{token,sol,type,mcap,time}] } }
   const copyTradeAlerts = useRef(new Set()); // prevent dupes
 
   // Per-token tracking with wallet-level detail
@@ -238,10 +238,12 @@ export function useLiveData() {
           }
           // NOTE: no longer adds future buyers to bundleWallets — set is frozen at detection
 
-          // ─── SMART MONEY: check if buying wallet has wins ───
+          // ─── SMART MONEY: check if buying wallet has wins + win rate ───
           if (!td.smartWallets) td.smartWallets = new Set();
           const ws = walletScores.current[wallet];
-          if (ws && ws.wins >= 3 && sol > 0.3) {
+          const wsTotal = ws ? (ws.wins + ws.losses) : 0;
+          const wsRate = wsTotal > 0 ? ws.wins / wsTotal : 0;
+          if (ws && ws.wins >= 4 && wsRate >= 0.25 && sol > 0.3) {
             td.smartWallets.add(wallet);
             const alertKey = `${wallet.slice(0,8)}-${mint}`;
             if (!copyTradeAlerts.current.has(alertKey)) {
@@ -608,7 +610,9 @@ export function useLiveData() {
         // Check tracked smart wallets + scan all wallets for new smart money
         Object.keys(td.wallets).forEach(w => {
           const ws = walletScores.current[w];
-          if (ws && ws.wins >= 3) {
+          const wsTotal2 = ws ? (ws.wins + ws.losses) : 0;
+          const wsRate2 = wsTotal2 > 0 ? ws.wins / wsTotal2 : 0;
+          if (ws && ws.wins >= 4 && wsRate2 >= 0.25) {
             smartSet.add(w);
             const wd = td.wallets[w];
             if (wd && (wd.bought - wd.sold) > 0.01) {
@@ -1697,29 +1701,39 @@ export function useLiveData() {
 
   const NEON_GREEN = "#39ff14";
 
-  // ═══ SMART MONEY: Score wallets from winning tokens ═══
+  // ═══ SMART MONEY: Score wallets from winning AND losing tokens ═══
   useEffect(() => {
     const iv = setInterval(() => {
       setTokens(prev => {
         prev.forEach(t => {
-          // A "winner" = token that ACTUALLY pumped, not just survived
-          // Must be qualified + strong mcap + healthy OR migrated with good mcap
-          const isWinner = (t.qualified && t.mcap > 50000 && (t.health || 0) > 50) || (t.migrated && t.mcap > 30000);
-          if (!isWinner) return;
           const td = tradeData.current[t.addr];
           if (!td) return;
-          // Score wallets that bought meaningfully (not dust buys)
+          // A "winner" = token that ACTUALLY pumped
+          const isWinner = (t.qualified && t.mcap > 50000 && (t.health || 0) > 50) || (t.migrated && t.mcap > 30000);
+          // A "loser" = token that died or crashed hard
+          const isLoser = (!t.alive || (t.health || 0) <= 0) && (Date.now() - t.timestamp > 60000);
+          
           Object.entries(td.wallets).forEach(([w, data]) => {
-            if (data.bought <= 0.3) return; // min 0.3 SOL position, not dust
-            if (!walletScores.current[w]) walletScores.current[w] = { wins: 0, tokens: [], totalBought: 0, bigWins: 0 };
+            if (data.bought <= 0.3) return; // min 0.3 SOL, not dust
+            if (!walletScores.current[w]) walletScores.current[w] = { wins: 0, losses: 0, tokens: [], lossTokens: [], totalBought: 0, bigWins: 0, trades: [] };
             const ws = walletScores.current[w];
-            if (!ws.tokens.includes(t.name)) {
+            
+            if (isWinner && !ws.tokens.includes(t.name)) {
               ws.wins++;
               ws.tokens.push(t.name);
               ws.totalBought += data.bought;
-              if (t.mcap > 100000) ws.bigWins = (ws.bigWins || 0) + 1; // track 100K+ hits
-              if (ws.wins === 3) console.log(`[SMART$] 🧠 Wallet ${w.slice(0,8)} hit 3 wins: ${ws.tokens.join(", ")}`);
-              if (ws.wins === 5) console.log(`[SMART$] 🧠🧠 Wallet ${w.slice(0,8)} hit 5 WINS: ${ws.tokens.join(", ")}`);
+              ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "WIN", mcap: t.mcap, time: Date.now() });
+              if (ws.trades.length > 50) ws.trades = ws.trades.slice(-50);
+              if (t.mcap > 100000) ws.bigWins = (ws.bigWins || 0) + 1;
+              if (ws.wins === 4) console.log(`[SMART$] 🧠 Wallet ${w.slice(0,8)} hit 4 wins: ${ws.tokens.join(", ")}`);
+              if (ws.wins === 6) console.log(`[SMART$] 🧠🧠 Wallet ${w.slice(0,8)} hit 6 WINS: ${ws.tokens.join(", ")}`);
+            }
+            
+            if (isLoser && !ws.lossTokens.includes(t.name)) {
+              ws.losses++;
+              ws.lossTokens.push(t.name);
+              ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "LOSS", mcap: t.mcap, time: Date.now() });
+              if (ws.trades.length > 50) ws.trades = ws.trades.slice(-50);
             }
           });
         });
@@ -1732,6 +1746,13 @@ export function useLiveData() {
         const keep = new Set(sorted.slice(0, 3000));
         keys.forEach(k => { if (!keep.has(k)) delete walletScores.current[k]; });
       }
+      // Purge spray-and-pray wallets (10:1+ loss:win ratio)
+      Object.keys(walletScores.current).forEach(k => {
+        const ws = walletScores.current[k];
+        if (ws.losses > 10 && ws.wins > 0 && ws.losses / ws.wins >= 10) {
+          delete walletScores.current[k];
+        }
+      });
     }, 10000);
     return () => clearInterval(iv);
   }, []);
@@ -1789,7 +1810,10 @@ export function useLiveData() {
         setSessionStats(s => ({
           ...s, tokensScanned: prev.length, qualified, dead,
           bestToken: best || s.bestToken, bestPct: bestPct || s.bestPct,
-          smartWallets: Object.values(walletScores.current).filter(w => w.wins >= 3).length,
+          smartWallets: Object.values(walletScores.current).filter(w => {
+            const total = w.wins + (w.losses || 0);
+            return w.wins >= 4 && total > 0 && (w.wins / total) >= 0.25;
+          }).length,
           solPrice: SOL_USD, mcapCorr: MCAP_CORRECTION,
         }));
         return prev;
@@ -1799,5 +1823,5 @@ export function useLiveData() {
   }, []);
 
   return { tokens, whaleAlerts, intelEvents, migrations, stats,
-    smartMoneyAlerts, bundleAlerts, narratives, sessionStats };
+    smartMoneyAlerts, bundleAlerts, narratives, sessionStats, walletScoresRef: walletScores };
 }

@@ -2884,6 +2884,9 @@ export default function DegenCommandCenter(){
     ejectReasons:{},scoreAccuracy:[],lastAnalysis:0}); // [{addr,name,events:[{type,reason,time,mcap,score,...}]}]
   const sessionDeathsRef=useRef(0);
   const [sessionReports,setSessionReports]=useState([]);
+  const [reportView,setReportView]=useState("tiers"); // "tiers" | "list" | "detail"
+  const [reportTier,setReportTier]=useState(null);
+  const [selectedWallet,setSelectedWallet]=useState(null);
   const sessionStartRef=useRef(Date.now());
   const lastReportRef=useRef(0);
   const lockOutcomesRef=useRef([]);
@@ -3803,11 +3806,11 @@ export default function DegenCommandCenter(){
             ],[
               {id:"HISTORY",icon:"📜",label:"HISTORY",color:"#8b5cf6",count:lockHistory.length},
               {id:"AI",icon:"🤖",label:"CLAUDE",color:"#00c8ff",count:aiObservations.length},
-              {id:"REPORT",icon:"📊",label:"REPORT",color:"#ffa500",count:sessionReports.length},
+              {id:"REPORT",icon:"💰",label:"WALLETS",color:"#ffa500",count:live.walletScoresRef?Object.values(live.walletScoresRef.current).filter(w=>w.wins>=4&&(w.wins/(w.wins+(w.losses||0)))>=0.25).length:0},
             ]].map((row,ri)=>(
               <div key={ri} style={{display:"flex"}}>
                 {row.map(tab=>(
-                  <button key={tab.id} onClick={()=>setLeftTab(tab.id)} style={{
+                  <button key={tab.id} onClick={()=>{setLeftTab(tab.id);if(tab.id==="REPORT"){setReportView("tiers");setReportTier(null);setSelectedWallet(null);}}} style={{
                     flex:1,padding:"5px 2px",fontSize:10,fontWeight:700,cursor:"pointer",border:"none",
                     fontFamily:"'Orbitron',sans-serif",letterSpacing:0.5,transition:"all 0.2s",
                     background:leftTab===tab.id?`${tab.color}12`:"transparent",
@@ -4102,100 +4105,133 @@ export default function DegenCommandCenter(){
             </div>
           </div>}
 
-          {/* SESSION REPORTS */}
+          {/* SMART WALLET TRACKER */}
           {leftTab==="REPORT"&&<div style={{padding:"4px 6px"}}>
-            {sessionReports.length===0&&<div style={{color:NEON.dimText,fontSize:11,textAlign:"center",padding:20,lineHeight:1.5}}>
-              <div style={{fontSize:20,marginBottom:6}}>📊</div>
-              First report generates after 2 minutes with lock data.<br/>
-              Full reports every 30 minutes after that.</div>}
-            {sessionReports.map((r,ri)=>{
-              const ageMin=Math.round((Date.now()-r.time)/60000);
-              return(
-                <div key={r.id} style={{marginBottom:8,borderRadius:6,border:"1px solid rgba(255,165,0,0.15)",
-                  background:"rgba(255,165,0,0.03)",overflow:"hidden"}}>
-                  <div style={{padding:"6px 8px",background:"rgba(255,165,0,0.08)",
-                    display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                    <div style={{fontSize:11,fontWeight:900,color:"#ffa500",fontFamily:"Orbitron",letterSpacing:1}}>
-                      REPORT #{sessionReports.length-ri}</div>
-                    <div style={{fontSize:9,color:NEON.dimText}}>
-                      {r.sessionMin}min in · {ageMin<1?"just now":ageMin+"m ago"}</div>
-                  </div>
-                  <div style={{padding:"8px",textAlign:"center",borderBottom:"1px solid rgba(255,255,255,0.05)"}}>
-                    <div style={{fontSize:28,fontWeight:900,fontFamily:"Orbitron",
-                      color:r.winRate>=60?NEON.green:r.winRate>=40?NEON.yellow:NEON.red}}>
-                      {r.winRate}%</div>
-                    <div style={{fontSize:9,color:NEON.dimText,letterSpacing:1}}>WIN RATE</div>
-                    <div style={{fontSize:10,color:NEON.text,marginTop:3}}>
-                      <span style={{color:NEON.green}}>{r.wins}W</span>
-                      <span style={{color:NEON.dimText}}> / </span>
-                      <span style={{color:NEON.red}}>{r.losses}L</span>
-                      {r.stillRunning>0&&<span style={{color:NEON.cyan}}> / {r.stillRunning} ACTIVE</span>}
+            {(()=>{
+              const wsRef=live.walletScoresRef;
+              const allWallets=wsRef?Object.entries(wsRef.current).filter(([,w])=>w.wins>=1).map(([addr,w])=>{
+                const total=w.wins+(w.losses||0);
+                const rate=total>0?Math.round(w.wins/total*100):0;
+                return{addr,wins:w.wins,losses:w.losses||0,total,rate,bigWins:w.bigWins||0,totalBought:w.totalBought||0,tokens:w.tokens||[],lossTokens:w.lossTokens||[],trades:w.trades||[]};
+              }).sort((a,b)=>b.rate-a.rate||b.wins-a.wins):[];
+              const genius=allWallets.filter(w=>w.rate>=80&&w.wins>=4);
+              const sharp=allWallets.filter(w=>w.rate>=60&&w.rate<80&&w.wins>=4);
+              const decent=allWallets.filter(w=>w.rate>=40&&w.rate<60&&w.wins>=4);
+              const all4plus=allWallets.filter(w=>w.wins>=4);
+
+              if(reportView==="detail"&&selectedWallet){
+                const w=allWallets.find(w2=>w2.addr===selectedWallet);
+                if(!w)return <div style={{color:NEON.dimText,fontSize:11,textAlign:"center",padding:20}}>Wallet not found</div>;
+                const tierColor=w.rate>=80?"#ffd740":w.rate>=60?"#00e5ff":"#ffa500";
+                const tierLabel=w.rate>=80?"GENIUS":w.rate>=60?"SHARP":"TRACKER";
+                return(<div>
+                  <div onClick={()=>{setReportView("list");setSelectedWallet(null);}}
+                    style={{cursor:"pointer",fontSize:10,color:NEON.cyan,padding:"4px 0",marginBottom:6}}>← BACK TO LIST</div>
+                  <div style={{background:"rgba(255,215,64,0.04)",border:"1px solid rgba(255,215,64,0.12)",borderRadius:6,padding:8,marginBottom:8}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                      <div style={{fontSize:10,fontWeight:900,color:tierColor,fontFamily:"Orbitron",letterSpacing:1}}>{tierLabel}</div>
+                      <div style={{fontSize:22,fontWeight:900,color:tierColor,fontFamily:"Orbitron"}}>{w.rate}%</div>
                     </div>
+                    <div style={{fontSize:9,color:NEON.dimText,wordBreak:"break-all",marginBottom:6,fontFamily:"monospace"}}>{w.addr}</div>
+                    <div onClick={()=>{navigator.clipboard.writeText(w.addr);}}
+                      style={{cursor:"pointer",fontSize:10,fontWeight:700,color:"#111",background:tierColor,
+                        borderRadius:4,padding:"4px 8px",textAlign:"center",marginBottom:8}}>📋 COPY ADDRESS</div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4,marginBottom:8}}>
+                      <div style={{background:"rgba(0,255,0,0.05)",borderRadius:4,padding:"4px",textAlign:"center"}}>
+                        <div style={{fontSize:16,fontWeight:900,color:NEON.green,fontFamily:"Orbitron"}}>{w.wins}</div>
+                        <div style={{fontSize:7,color:NEON.dimText}}>WINS</div></div>
+                      <div style={{background:"rgba(255,0,0,0.05)",borderRadius:4,padding:"4px",textAlign:"center"}}>
+                        <div style={{fontSize:16,fontWeight:900,color:NEON.red,fontFamily:"Orbitron"}}>{w.losses}</div>
+                        <div style={{fontSize:7,color:NEON.dimText}}>LOSSES</div></div>
+                      <div style={{background:"rgba(0,200,255,0.05)",borderRadius:4,padding:"4px",textAlign:"center"}}>
+                        <div style={{fontSize:16,fontWeight:900,color:NEON.cyan,fontFamily:"Orbitron"}}>{w.totalBought.toFixed(1)}</div>
+                        <div style={{fontSize:7,color:NEON.dimText}}>SOL IN</div></div>
+                    </div>
+                    {w.bigWins>0&&<div style={{fontSize:10,color:"#ffd740",marginBottom:6}}>🌙 {w.bigWins} big win{w.bigWins>1?"s":""} (100K+ mcap)</div>}
                   </div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:1,padding:1}}>
-                    {[
-                      {label:"LOCKS",val:r.totalLocks,color:NEON.yellow},
-                      {label:"AVG HOLD",val:r.avgHold,color:NEON.cyan},
-                      {label:"AVG P&L",val:(r.avgPct>=0?"+":"")+r.avgPct+"%",color:r.avgPct>=0?NEON.green:NEON.red},
-                      {label:"MIGRATIONS",val:r.migsCaught,color:NEON.green},
-                      {label:"SMART $",val:r.smartWallets,color:NEON.cyan},
-                      {label:"SCANNED",val:r.tokensScanned,color:NEON.dimText},
-                    ].map((s,si)=>(
-                      <div key={si} style={{background:"rgba(255,255,255,0.02)",padding:"4px 6px",textAlign:"center"}}>
-                        <div style={{fontSize:13,fontWeight:900,color:s.color,fontFamily:"Orbitron"}}>{s.val}</div>
-                        <div style={{fontSize:7,color:NEON.dimText,letterSpacing:0.5}}>{s.label}</div>
+                  <div style={{fontSize:10,fontWeight:900,color:"#ffa500",fontFamily:"Orbitron",letterSpacing:0.5,marginBottom:4}}>TRADES</div>
+                  {w.trades.length===0&&<div style={{color:NEON.dimText,fontSize:10,padding:8}}>No trade details recorded yet</div>}
+                  {w.trades.slice().reverse().map((tr,ti)=>(
+                    <div key={ti} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+                      padding:"4px 6px",marginBottom:2,borderRadius:4,fontSize:10,
+                      background:tr.type==="WIN"?"rgba(0,255,0,0.04)":"rgba(255,0,0,0.04)",
+                      borderLeft:`2px solid ${tr.type==="WIN"?NEON.green:NEON.red}`}}>
+                      <div>
+                        <span style={{color:tr.type==="WIN"?NEON.green:NEON.red,fontWeight:900,fontSize:8,marginRight:4}}>{tr.type}</span>
+                        <span style={{color:NEON.text,fontWeight:700}}>{tr.token}</span>
                       </div>
-                    ))}
-                  </div>
-                  {(r.best||r.worst)&&<div style={{padding:"6px 8px",borderTop:"1px solid rgba(255,255,255,0.05)"}}>
-                    {r.best&&<div style={{fontSize:10,marginBottom:3}}>
-                      <span style={{color:NEON.green,fontWeight:900}}>BEST: </span>
-                      <span style={{color:NEON.text}}>{r.best.name}</span>
-                      <span style={{color:NEON.green,fontWeight:700}}> +{r.best.pct}%</span>
-                      <span style={{color:NEON.dimText}}> (${formatNum(r.best.lockMcap)} → ${formatNum(r.best.finalMcap)})</span>
-                    </div>}
-                    {r.worst&&r.worst.pct<0&&<div style={{fontSize:10}}>
-                      <span style={{color:NEON.red,fontWeight:900}}>WORST: </span>
-                      <span style={{color:NEON.text}}>{r.worst.name}</span>
-                      <span style={{color:NEON.red,fontWeight:700}}> {r.worst.pct}%</span>
-                      <span style={{color:NEON.dimText}}> (${formatNum(r.worst.lockMcap)} → ${formatNum(r.worst.finalMcap)})</span>
-                    </div>}
-                  </div>}
-                  {r.runningDetails.length>0&&<div style={{padding:"6px 8px",borderTop:"1px solid rgba(255,255,255,0.05)"}}>
-                    <div style={{fontSize:9,color:NEON.cyan,fontWeight:700,fontFamily:"Orbitron",letterSpacing:0.5,marginBottom:3}}>
-                      STILL RUNNING</div>
-                    {r.runningDetails.map((rd,rdi)=>(
-                      <div key={rdi} style={{fontSize:10,display:"flex",justifyContent:"space-between",
-                        padding:"2px 0",borderBottom:"1px solid rgba(255,255,255,0.02)"}}>
-                        <span style={{color:NEON.text,fontWeight:700}}>{rd.name}
-                          {rd.migrated&&<span style={{color:NEON.green,fontSize:8}}> 🌉</span>}</span>
-                        <span>
-                          <span style={{color:NEON.dimText}}>${formatNum(rd.lockMcap)} → </span>
-                          <span style={{color:NEON.cyan,fontWeight:700}}>${formatNum(rd.mcap)}</span>
-                          <span style={{color:rd.pct>=0?NEON.green:NEON.red,fontWeight:700,marginLeft:4}}>
-                            {rd.pct>=0?"+":""}{Math.round(rd.pct)}%</span>
-                        </span>
+                      <div style={{textAlign:"right"}}>
+                        <div style={{color:NEON.cyan,fontWeight:700}}>{tr.sol.toFixed(2)} SOL in</div>
+                        {tr.sold>0&&<div style={{color:NEON.dimText,fontSize:9}}>{tr.sold.toFixed(2)} SOL out</div>}
+                        <div style={{color:NEON.dimText,fontSize:8}}>mcap ${formatNum(tr.mcap)}</div>
                       </div>
-                    ))}
-                  </div>}
-                  {r.topReasons.length>0&&<div style={{padding:"6px 8px",borderTop:"1px solid rgba(255,255,255,0.05)"}}>
-                    <div style={{fontSize:9,color:"#ffa500",fontWeight:700,fontFamily:"Orbitron",letterSpacing:0.5,marginBottom:3}}>
-                      TOP EJECT REASONS</div>
-                    {r.topReasons.map(([reason,count],eri)=>(
-                      <div key={eri} style={{display:"flex",justifyContent:"space-between",fontSize:10,padding:"1px 0"}}>
-                        <span style={{color:NEON.dimText}}>{reason}</span>
-                        <span style={{color:NEON.red,fontWeight:700}}>{count}x</span>
-                      </div>
-                    ))}
-                  </div>}
-                  <div style={{padding:"6px 8px",borderTop:"1px solid rgba(255,255,255,0.05)",
-                    display:"flex",justifyContent:"space-around",fontSize:10}}>
-                    <span style={{color:NEON.green}}>Score 9+: <b>{r.scoreGroups.high}</b></span>
-                    <span style={{color:NEON.yellow}}>7-8: <b>{r.scoreGroups.mid}</b></span>
-                    <span style={{color:NEON.red}}>&lt;7: <b>{r.scoreGroups.low}</b></span>
-                  </div>
+                    </div>
+                  ))}
                 </div>);
-            })}
+              }
+
+              if(reportView==="list"&&reportTier){
+                const tierWallets=reportTier==="GENIUS"?genius:reportTier==="SHARP"?sharp:reportTier==="DECENT"?decent:all4plus;
+                const tierColor2=reportTier==="GENIUS"?"#ffd740":reportTier==="SHARP"?"#00e5ff":"#ffa500";
+                return(<div>
+                  <div onClick={()=>{setReportView("tiers");setReportTier(null);}}
+                    style={{cursor:"pointer",fontSize:10,color:NEON.cyan,padding:"4px 0",marginBottom:6}}>← BACK TO TIERS</div>
+                  <div style={{fontSize:12,fontWeight:900,color:tierColor2,fontFamily:"Orbitron",letterSpacing:1,marginBottom:8,textAlign:"center"}}>
+                    {reportTier} WALLETS ({tierWallets.length})</div>
+                  {tierWallets.length===0&&<div style={{color:NEON.dimText,fontSize:11,textAlign:"center",padding:20}}>
+                    No wallets at this tier yet.<br/>Keep the session running.</div>}
+                  {tierWallets.map((w2,wi)=>(
+                    <div key={wi} onClick={()=>{setSelectedWallet(w2.addr);setReportView("detail");}}
+                      style={{cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",
+                        padding:"6px 8px",marginBottom:3,borderRadius:4,
+                        background:"rgba(255,255,255,0.02)",border:"1px solid rgba(255,255,255,0.05)",
+                        transition:"background 0.2s"}}>
+                      <div>
+                        <div style={{fontSize:10,fontWeight:900,color:NEON.text,fontFamily:"monospace"}}>{w2.addr.slice(0,4)}...{w2.addr.slice(-4)}</div>
+                        <div style={{fontSize:9,color:NEON.dimText}}>{w2.wins}W / {w2.losses}L · {w2.totalBought.toFixed(1)} SOL</div>
+                      </div>
+                      <div style={{fontSize:18,fontWeight:900,color:tierColor2,fontFamily:"Orbitron"}}>{w2.rate}%</div>
+                    </div>
+                  ))}
+                </div>);
+              }
+
+              // Default: TIERS view
+              return(<div>
+                <div style={{fontSize:12,fontWeight:900,color:"#ffa500",fontFamily:"Orbitron",letterSpacing:1,
+                  textAlign:"center",marginBottom:10}}>SMART WALLETS</div>
+                {[
+                  {tier:"GENIUS",label:"🧠 GENIUS",desc:"80-100% win rate",wallets:genius,color:"#ffd740",bg:"rgba(255,215,64,0.06)"},
+                  {tier:"SHARP",label:"⚡ SHARP",desc:"60-79% win rate",wallets:sharp,color:"#00e5ff",bg:"rgba(0,229,255,0.04)"},
+                  {tier:"DECENT",label:"📊 DECENT",desc:"40-59% win rate",wallets:decent,color:"#ffa500",bg:"rgba(255,165,0,0.04)"},
+                ].map((t2,ti2)=>(
+                  <div key={ti2} onClick={()=>{setReportTier(t2.tier);setReportView("list");}}
+                    style={{cursor:"pointer",marginBottom:6,borderRadius:6,overflow:"hidden",
+                      border:`1px solid ${t2.color}22`,background:t2.bg,
+                      transition:"background 0.2s"}}>
+                    <div style={{padding:"8px 10px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                      <div>
+                        <div style={{fontSize:12,fontWeight:900,color:t2.color,fontFamily:"Orbitron"}}>{t2.label}</div>
+                        <div style={{fontSize:9,color:NEON.dimText,marginTop:2}}>{t2.desc} · 4+ wins req</div>
+                      </div>
+                      <div style={{textAlign:"right"}}>
+                        <div style={{fontSize:22,fontWeight:900,color:t2.color,fontFamily:"Orbitron"}}>{t2.wallets.length}</div>
+                        <div style={{fontSize:8,color:NEON.dimText}}>WALLETS</div>
+                      </div>
+                    </div>
+                    {t2.wallets.length>0&&<div style={{padding:"4px 10px 6px",borderTop:`1px solid ${t2.color}11`,fontSize:9,color:NEON.dimText}}>
+                      Top: {t2.wallets.slice(0,3).map(w3=>w3.addr.slice(0,6)+"..").join(", ")}
+                    </div>}
+                  </div>
+                ))}
+                <div style={{marginTop:12,padding:"6px 8px",background:"rgba(255,255,255,0.02)",borderRadius:4,
+                  fontSize:10,color:NEON.dimText,lineHeight:1.5,textAlign:"center"}}>
+                  Wallets need <b style={{color:NEON.cyan}}>4+ wins</b> to qualify.<br/>
+                  Spray-and-pray wallets (10:1 L:W) auto-purged.<br/>
+                  <span style={{color:NEON.dimText,fontSize:9}}>{allWallets.filter(w=>w.wins>=1).length} wallets tracked this session</span>
+                </div>
+              </div>);
+            })()}
           </div>}
 
 
@@ -4325,7 +4361,7 @@ export default function DegenCommandCenter(){
                   "🏆 LEADERS — live rankings by market cap, velocity, and holder count",
                   "📜 HISTORY — full lock/unlock log with reasons for every system decision",
                   "🤖 CLAUDE — AI battlefield analyst watching patterns, scoring accuracy, and generating real-time insights",
-                  "📊 REPORT — session win rate reports every 30 min with lock outcomes, P&L, eject analysis",
+                  "💰 WALLETS — smart wallet tracker: GENIUS (80%+), SHARP (60%+), DECENT (40%+) tiers with trade history",
                 ]},
                 {title:"📡 RIGHT PANEL TABS",color:"#00ffcc",items:[
                   "🔒 LOCKS — your auto-locked runners with live P&L tracking",
