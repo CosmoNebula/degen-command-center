@@ -5545,7 +5545,7 @@ export default function DegenCommandCenter(){
                 <div style={{fontSize:12,fontWeight:900,color:"#ffa500",fontFamily:"Orbitron",letterSpacing:1,
                   textAlign:"center",marginBottom:8}}>WALLET TIERS</div>
                 {[
-                  {tier:"SMART",label:"🧠 SMART WALLETS",desc:"5+ wins · 65%+ rate · 1.5 SOL profit · 12K+ coins only",wallets:elite,color:"#00ff88",bg:"rgba(0,255,136,0.07)",glow:true},
+                  {tier:"SMART",label:"🧠 SMART WALLETS",desc:"7+ wins · 70%+ rate · 2.0 SOL profit · 12K+ exit only",wallets:elite,color:"#00ff88",bg:"rgba(0,255,136,0.07)",glow:true},
                   {tier:"GENIUS",label:"🎯 GENIUS",desc:"80-100% win rate",wallets:genius,color:"#ffd740",bg:"rgba(255,215,64,0.06)"},
                   {tier:"SHARP",label:"⚡ SHARP",desc:"60-79% win rate",wallets:sharp,color:"#00e5ff",bg:"rgba(0,229,255,0.04)"},
                   {tier:"DECENT",label:"📊 DECENT",desc:"40-59% win rate",wallets:decent,color:"#ffa500",bg:"rgba(255,165,0,0.04)"},
