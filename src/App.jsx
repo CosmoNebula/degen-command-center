@@ -5438,7 +5438,7 @@ export default function DegenCommandCenter(){
                               </div>
                               <div style={{display:"flex",gap:6,alignItems:"center"}}>
                                 {hasPartialExit&&<span style={{fontSize:8,color:banked>=0?NEON.green:NEON.red}}>
-                                  {banked>=0?"banked +":"":""}{banked.toFixed(2)} SOL</span>}
+                                  {banked>=0?"banked +":"banked "}{banked.toFixed(2)} SOL</span>}
                                 <span style={{fontSize:10,fontWeight:900,color:mcPct>=0?NEON.green:NEON.red}}>
                                   {mcPct>=0?"▲":"▼"}{Math.abs(mcPct).toFixed(0)}%</span>
                               </div>
