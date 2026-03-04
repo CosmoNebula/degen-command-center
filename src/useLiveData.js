@@ -119,6 +119,8 @@ export function useLiveData() {
           deployerSellPct: 0,
           totalBoughtSol: 0,
           totalSoldSol: 0,
+          startMcap: (newToken.marketCapSol || 0) * SOL_USD * MCAP_CORRECTION, // mcap at birth
+          athMcap: (newToken.marketCapSol || 0) * SOL_USD * MCAP_CORRECTION,   // tracks all-time high
           // ─── EDGE DETECTION ───
           freshBuyers: 0,          // buyers never seen before
           totalBuyers: 0,          // total unique buyers
@@ -270,6 +272,7 @@ export function useLiveData() {
 
           // Update lastActivity on sell
           if (walletScores.current[wallet]) walletScores.current[wallet].lastActivity = now;
+          td.wallets[wallet].lastSellTime = now;
 
           // ─── SELL VELOCITY ───
           td.sellTimes.push(now);
@@ -296,6 +299,8 @@ export function useLiveData() {
           td.lastMcapSol = trade.marketCapSol;
           td.mcapSource = "pp"; // PumpPortal raw value, needs correction
           const newMcapUsd = trade.marketCapSol * SOL_USD * MCAP_CORRECTION;
+          // ─── ATH TRACKING ───
+          if (!td.athMcap || newMcapUsd > td.athMcap) td.athMcap = newMcapUsd;
           const elapsed = now - td.launchTime;
           [10000, 20000, 30000, 50000].forEach(m => {
             if (!td.milestones[m] && newMcapUsd >= m && oldMcap < m) {
@@ -361,6 +366,7 @@ export function useLiveData() {
               buys: td.buys, sells: td.sells,
               vol: volUsd,
               mcap: newMcap > 0 ? newMcap : t.mcap,
+              athMcap: Math.max(t.athMcap || 0, newMcap > 0 ? newMcap : 0, td.athMcap || 0),
               holders: uniqueWallets,
               topHolderPct: Math.round(topHolderPct),
               devWallet: Math.round(devPct),
@@ -1771,7 +1777,9 @@ export function useLiveData() {
                 const holdTrade = ws.trades.find(tr => tr.addr === t.addr && tr.type === "HOLD");
                 if (holdTrade) { holdTrade.type = "WIN"; holdTrade.mcap = exitMcap; holdTrade.sold = data.sold; holdTrade.pnl = pnl; }
               } else {
-                ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "WIN", mcap: exitMcap, entryMcap, pnl, time: now3 });
+                ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "WIN", mcap: exitMcap, entryMcap, pnl,
+                  entryTime: data.firstBuyTime || now3, exitTime: data.lastSellTime || now3,
+                  athMcap: td.athMcap || exitMcap, startMcap: td.startMcap || entryMcap, time: now3 });
                 if (ws.trades.length > 50) ws.trades = ws.trades.slice(-50);
               }
               ws.wins++;
@@ -1795,12 +1803,15 @@ export function useLiveData() {
                 const holdTrade = ws.trades.find(tr => tr.addr === t.addr && tr.type === "HOLD");
                 if (holdTrade) { holdTrade.type = "LOSS"; holdTrade.mcap = exitMcap; holdTrade.sold = data.sold; holdTrade.pnl = pnl; }
               } else {
-                ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "LOSS", mcap: exitMcap, entryMcap, pnl, time: now3 });
+                ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "LOSS", mcap: exitMcap, entryMcap, pnl,
+                  entryTime: data.firstBuyTime || now3, exitTime: data.lastSellTime || now3,
+                  athMcap: td.athMcap || exitMcap, startMcap: td.startMcap || entryMcap, time: now3 });
                 if (ws.trades.length > 50) ws.trades = ws.trades.slice(-50);
               }
               ws.losses++;
               ws.lossAddrs.add(t.addr);
               ws.lossTokens.push(t.name);
+              ws.totalBought += data.bought;
               ws.totalSold += (data.sold || 0);
               ws.totalPnl += pnl;
             }
@@ -1811,7 +1822,9 @@ export function useLiveData() {
               ws.holdAddrs.add(t.addr);
               ws.holdTokens = ws.holdTokens || [];
               ws.holdTokens.push(t.name);
-              ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "HOLD", mcap: exitMcap, entryMcap, pnl, time: now3 });
+              ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "HOLD", mcap: exitMcap, entryMcap, pnl,
+                entryTime: data.firstBuyTime || now3, exitTime: null,
+                athMcap: td.athMcap || exitMcap, startMcap: td.startMcap || entryMcap, time: now3 });
               if (ws.trades.length > 50) ws.trades = ws.trades.slice(-50);
             }
             // Refresh live HOLD entries with current mcap/pnl

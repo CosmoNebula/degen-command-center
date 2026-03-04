@@ -3688,7 +3688,8 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
     // Moon click detection
     const moonCx=0.5,moonCy=0.07;
     const dist=Math.sqrt((mx-moonCx)**2+(my-moonCy)**2);
-    if(dist<0.05){onMenuRef.current?.();return}
+    // Moon click — reserved for future interaction
+    // if(dist<0.05){onMenuRef.current?.();return}
     let closest=null,cd=Infinity;
     tokensRef.current.forEach(t=>{if(!t.alive||t.warpIn||t.laserIn)return;
       const d=Math.sqrt((t.bx-mx)**2+(t.by-my)**2);if(d<cd&&d<0.06){cd=d;closest=t}});
@@ -3724,6 +3725,8 @@ function IntelPanel({token,onLock,onClose}){
   if(!token)return null;
   const stats=[
     {l:"MCAP",v:"$"+formatNum(token.mcap),c:NEON.cyan},{l:"VOL",v:"$"+formatNum(token.vol),c:NEON.yellow},
+    {l:"ATH",v:"$"+formatNum(token.athMcap||token.mcap),c:"#ffd740"},
+    {l:"START",v:"$"+formatNum(token.startMcap||0),c:NEON.dimText},
     {l:"HOLDERS",v:token.holders,c:token.holders>100?NEON.green:NEON.red},
     {l:"DEV%",v:token.devWallet.toFixed(1)+"%",c:token.devWallet>15?NEON.red:NEON.green},
     {l:"B/S",v:`${token.buys}/${token.sells}`,c:NEON.text},
@@ -4869,7 +4872,7 @@ export default function DegenCommandCenter(){
                 {corrDisplay.mood==="alarm"?"⚠ ALERT":corrDisplay.mood==="sus"?"◉ INTEL":corrDisplay.mood==="rip"?"☠ REPORT":"◈ COMMS"}</div>
               <div style={{fontSize:10,color:"#e0e0ff",lineHeight:1.2,fontFamily:"'Share Tech Mono',monospace",
                 overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",
-                animation:"marqueeScroll 12s linear"}}>{corrDisplay.msg}</div>
+                animation:"marqueeScroll 24s linear"}}>{corrDisplay.msg}</div>
             </>:<>
               <div style={{fontSize:7,color:"rgba(0,255,204,0.3)",fontWeight:700,letterSpacing:2,fontFamily:"'Orbitron',sans-serif",lineHeight:1}}>◈ STANDBY</div>
               <div style={{fontSize:10,color:"rgba(0,255,204,0.15)",fontFamily:"'Share Tech Mono',monospace",lineHeight:1.2,
@@ -5214,8 +5217,10 @@ export default function DegenCommandCenter(){
               const allWallets=wsRef?Object.entries(wsRef.current).filter(([,w])=>(w.wins+w.losses+(w.holds||0))>=1).map(([addr,w])=>{
                 const total=w.wins+(w.losses||0);
                 const rate=total>0?Math.round(w.wins/total*100):0;
-                return{addr,wins:w.wins,losses:w.losses||0,holds:w.holds||0,total,rate,bigWins:w.bigWins||0,totalBought:w.totalBought||0,totalSold:w.totalSold||0,totalPnl:w.totalPnl||0,tokens:w.tokens||[],lossTokens:w.lossTokens||[],holdTokens:w.holdTokens||[],trades:w.trades||[]};
-              }).sort((a,b)=>b.wins-a.wins||b.rate-a.rate):[];
+                // Compute PnL directly from trade records — avoids accumulation drift
+                const computedPnl=(w.trades||[]).reduce((s,tr)=>s+(tr.pnl||0),0);
+                return{addr,wins:w.wins,losses:w.losses||0,holds:w.holds||0,total,rate,bigWins:w.bigWins||0,totalBought:w.totalBought||0,totalSold:w.totalSold||0,totalPnl:computedPnl,tokens:w.tokens||[],lossTokens:w.lossTokens||[],holdTokens:w.holdTokens||[],trades:w.trades||[]};
+              }).sort((a,b)=>b.totalPnl-a.totalPnl):[];
               const genius=allWallets.filter(w=>w.rate>=80&&w.total>=2);
               const sharp=allWallets.filter(w=>w.rate>=60&&w.rate<80&&w.total>=2);
               const decent=allWallets.filter(w=>w.rate>=40&&w.rate<60&&w.total>=2);
@@ -5268,21 +5273,37 @@ export default function DegenCommandCenter(){
                   <div style={{fontSize:10,fontWeight:900,color:"#ffa500",fontFamily:"Orbitron",letterSpacing:0.5,marginBottom:4}}>TRADES</div>
                   {w.trades.length===0&&<div style={{color:NEON.dimText,fontSize:10,padding:8}}>No trade details recorded yet</div>}
                   {w.trades.slice().reverse().map((tr,ti)=>{
-                    const trPnl=tr.pnl||((tr.sold||0)-tr.sol);
+                    const trPnl=tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol);
+                    const entryAgo=tr.entryTime?Math.floor((Date.now()-tr.entryTime)/1000):null;
+                    const exitAgo=tr.exitTime?Math.floor((Date.now()-tr.exitTime)/1000):null;
+                    const held=tr.entryTime&&tr.exitTime?Math.floor((tr.exitTime-tr.entryTime)/1000):null;
+                    const fmtAgo=s=>s==null?"—":s<60?s+"s":s<3600?Math.floor(s/60)+"m":Math.floor(s/3600)+"h";
                     return(
-                    <div key={ti} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
-                      padding:"4px 6px",marginBottom:2,borderRadius:4,fontSize:10,
+                    <div key={ti} style={{padding:"5px 6px",marginBottom:3,borderRadius:4,fontSize:10,
                       background:tr.type==="WIN"?"rgba(0,255,0,0.04)":tr.type==="LOSS"?"rgba(255,0,0,0.04)":"rgba(255,200,0,0.04)",
                       borderLeft:`2px solid ${tr.type==="WIN"?NEON.green:tr.type==="LOSS"?NEON.red:"#ffa500"}`}}>
-                      <div>
-                        <span style={{color:tr.type==="WIN"?NEON.green:tr.type==="LOSS"?NEON.red:"#ffa500",fontWeight:900,fontSize:8,marginRight:4}}>{tr.type}</span>
-                        <span style={{color:NEON.text,fontWeight:700}}>{tr.token}</span>
-                        <div style={{color:NEON.dimText,fontSize:8,marginTop:1}}>MC: ${formatNum(tr.entryMcap||0)} → ${formatNum(tr.mcap||0)}</div>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                        <div>
+                          <span style={{color:tr.type==="WIN"?NEON.green:tr.type==="LOSS"?NEON.red:"#ffa500",fontWeight:900,fontSize:8,marginRight:4}}>{tr.type}</span>
+                          <span style={{color:NEON.text,fontWeight:700}}>{tr.token}</span>
+                        </div>
+                        <div style={{textAlign:"right"}}>
+                          <div style={{color:NEON.cyan,fontSize:9}}>{tr.sol.toFixed(2)} in{(tr.sold||0)>0?` / ${tr.sold.toFixed(2)} out`:""}</div>
+                          <div style={{fontSize:11,fontWeight:900,color:trPnl>=0?NEON.green:NEON.red}}>{trPnl>=0?"+":""}{trPnl.toFixed(2)} SOL</div>
+                        </div>
                       </div>
-                      <div style={{textAlign:"right"}}>
-                        <div style={{color:NEON.cyan,fontSize:9}}>{tr.sol.toFixed(2)} in{(tr.sold||0)>0?` / ${tr.sold.toFixed(2)} out`:""}</div>
-                        <div style={{fontSize:11,fontWeight:900,color:trPnl>=0?NEON.green:NEON.red}}>
-                          {trPnl>=0?"+":""}{trPnl.toFixed(2)} SOL</div>
+                      {/* MC trajectory: start → ATH → current */}
+                      <div style={{display:"flex",gap:6,marginTop:3,alignItems:"center",flexWrap:"wrap"}}>
+                        {tr.startMcap>0&&<span style={{color:NEON.dimText,fontSize:8}}>START <span style={{color:NEON.text}}>${formatNum(tr.startMcap)}</span></span>}
+                        {tr.entryMcap>0&&<span style={{color:NEON.dimText,fontSize:8}}>IN <span style={{color:NEON.cyan}}>${formatNum(tr.entryMcap)}</span></span>}
+                        {tr.athMcap>0&&<span style={{color:NEON.dimText,fontSize:8}}>ATH <span style={{color:"#ffd740"}}>${formatNum(tr.athMcap)}</span></span>}
+                        {tr.mcap>0&&<span style={{color:NEON.dimText,fontSize:8}}>NOW <span style={{color:tr.type==="WIN"?NEON.green:NEON.dimText}}>${formatNum(tr.mcap)}</span></span>}
+                      </div>
+                      {/* Timing row */}
+                      <div style={{display:"flex",gap:8,marginTop:2,color:NEON.dimText,fontSize:8}}>
+                        {entryAgo!=null&&<span>ENTRY <span style={{color:NEON.text}}>{fmtAgo(entryAgo)} ago</span></span>}
+                        {held!=null&&tr.type!=="HOLD"&&<span>HELD <span style={{color:NEON.text}}>{fmtAgo(held)}</span></span>}
+                        {tr.type==="HOLD"&&<span style={{color:"#ffa500"}}>STILL HOLDING</span>}
                       </div>
                     </div>)})}
                 </div>);
@@ -5448,83 +5469,7 @@ export default function DegenCommandCenter(){
               </div>
             </div>);
           })()}
-          {/* ═══ MENU OVERLAY ═══ */}
-          {showMenu&&<div style={{position:"absolute",inset:0,zIndex:50,background:"rgba(5,3,14,0.92)",
-            backdropFilter:"blur(8px)",overflow:"auto",borderRadius:6}} onClick={e=>{if(e.target===e.currentTarget)setShowMenu(false)}}>
-            <div style={{maxWidth:640,margin:"20px auto",padding:"20px 24px"}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-                <h2 style={{fontFamily:"'Orbitron',sans-serif",fontSize:18,fontWeight:900,
-                  background:`linear-gradient(90deg,${NEON.magenta},${NEON.cyan})`,
-                  WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",letterSpacing:3}}>◈ COMMAND CENTER GUIDE</h2>
-                <button onClick={()=>setShowMenu(false)} style={{background:"none",border:`1px solid ${NEON.magenta}40`,
-                  color:NEON.magenta,padding:"4px 12px",borderRadius:4,cursor:"pointer",fontFamily:"'Orbitron'",fontSize:11}}>✕ CLOSE</button>
-              </div>
-              {[
-                {title:"🎮 THE BATTLEFIELD",color:NEON.cyan,items:[
-                  "Tokens enter from the bottom as they're minted on PumpFun",
-                  "They rise through zones based on market cap: PIT ($5K) → TRENCHES ($10K) → NO MAN'S LAND ($20K) → CLIMB ($50K) → ORBIT ($100K) → MOON ($300K+)",
-                  "Each token's health bar shows how well it's performing — health drops from inactivity, sell dumps, and alien attacks",
-                  "Click any token on the battlefield to inspect it in detail",
-                ]},
-                {title:"👾 ALIEN FLEET",color:"#ff6600",items:[
-                  "Three aliens patrol the battlefield hunting weak tokens: JEET HUNTER, RUG DESTROYER, SCAM ANNIHILATOR",
-                  "They level up with kills — from basic LASER → RAPID FIRE → TWIN LASER → PLASMA CANNON → MULTI-SHOT → NUKE",
-                  "Aliens only target tokens with low health — strong tokens are safe",
-                ]},
-                {title:"🔒 AUTO-LOCK SYSTEM",color:NEON.yellow,items:[
-                  "Tokens scoring 7+ on the qualification scale auto-lock into the LOCKS tab",
-                  "Scoring factors: unique wallets, buy pressure, volume, deployer grade, smart money, narratives",
-                  "Locked tokens are tracked with entry price and live P&L",
-                  "Sour tokens get auto-ejected when health drops, price dumps, or trading goes stale",
-                ]},
-                {title:"🌉 MIGRATION TRACKING",color:NEON.green,items:[
-                  "When a PumpFun token hits ~$34K mcap, it graduates to Raydium",
-                  "A laser animation shows the token entering the upper battlefield",
-                  "Post-migration, DexScreener polls keep the price updated in real-time",
-                ]},
-                {title:"📊 LEFT PANEL TABS",color:NEON.magenta,items:[
-                  "◉ SCANNER — live feed of all tokens with qualification scores and edge signals (👻 fresh wallets, ⚡ velocity, 🐟 small buys, 💎 retention)",
-                  "⚡ WAR LOG — all battlefield events: kills, migrations, locks, dumps",
-                  "🏆 LEADERS — live rankings by market cap, velocity, and holder count",
-                  "📜 HISTORY — full lock/unlock log with reasons for every system decision",
-                  "🤖 CLAUDE — AI battlefield analyst watching patterns, scoring accuracy, and generating real-time insights",
-                  "💰 WALLETS — smart wallet tracker: GENIUS (80%+), SHARP (60%+), DECENT (40%+) tiers with trade history",
-                ]},
-                {title:"📡 RIGHT PANEL TABS",color:"#00ffcc",items:[
-                  "🔒 LOCKS — your auto-locked runners with live P&L tracking",
-                  "🌉 MIGRATE — tokens that graduated to Raydium with post-migration price",
-                  "💰 SMART$ — wallets with 3+ wins, 60%+ rate, wins > losses detected buying",
-                  "⚠ BUNDLES — coordinated buy detection (4+ wallets in 2 seconds)",
-                  "🔥 TRENDS — narrative clustering (AI, CAT, PEPE etc.)",
-                  "📊 STATS — session statistics and system health",
-                ]},
-                {title:"🐒 EASTER EGGS",color:"#ffd740",items:[
-                  "Keep watching... Fat Monkey and the J-Ai-C Mothership make surprise appearances",
-                  "They interact with the battlefield in unexpected ways 💨👾",
-                ]},
-                {title:"💡 PRO TIPS",color:"#ff9500",items:[
-                  "Watch for 🧠 Smart Money labels — these wallets have proven win records",
-                  "⚠B bundle warnings mean coordinated buying — proceed with caution",
-                  "Tokens with deployer grade A/B have devs with good track records",
-                  "High 💎 retention + low 👻 fresh wallets = stronger holder base",
-                  "The REPORT tab tracks your session performance — check it for actionable alpha",
-                ]},
-              ].map(section=>(
-                <div key={section.title} style={{marginBottom:14}}>
-                  <div style={{fontSize:13,fontWeight:900,color:section.color,fontFamily:"'Orbitron',sans-serif",
-                    letterSpacing:1,marginBottom:6,paddingBottom:4,borderBottom:`1px solid ${section.color}30`}}>{section.title}</div>
-                  {section.items.map((item,i)=>(
-                    <div key={i} style={{fontSize:11,color:"rgba(224,224,255,0.8)",lineHeight:1.5,padding:"3px 0 3px 12px",
-                      borderLeft:`1px solid ${section.color}20`}}>{item}</div>
-                  ))}
-                </div>
-              ))}
-              <div style={{textAlign:"center",marginTop:16,paddingTop:12,borderTop:"1px solid rgba(255,255,255,0.06)"}}>
-                <div style={{fontSize:10,color:NEON.dimText,letterSpacing:2}}>SOLANA BATTLEFIELD v6.0 🌸</div>
-                <div style={{fontSize:9,color:NEON.dimText,marginTop:4}}>Click the 🌙 MOON or anywhere outside to close</div>
-              </div>
-            </div>
-          </div>}
+          {/* ═══ MENU OVERLAY — removed, moon reserved for future interaction ═══ */}
         </GlassPanel>
 
         {/* RIGHT COLUMN — 6-TAB INTEL SYSTEM */}
