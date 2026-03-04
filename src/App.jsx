@@ -259,6 +259,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
   const jaycShipRef=useRef({active:false,y:-0.3,frame:0,bills:[],aliens:[],nextSpawn:Date.now()+rand(240,480)*1000,opacity:0});
   const jayCRef=useRef({onGround:false,beamPhase:0,x:0.55,y:0.95,flexPhase:0,targetY:0.95,beamUp:false,opacity:0,beltHolder:"claude"});
   const lightModeRef=useRef({active:false,frame:0,maxFrames:300});
+  const titleFlashRef=useRef({active:false,frame:0});
   // New easter egg refs
   const whaleRef=useRef({active:false,x:-0.15,y:0.5,frame:0,tokenName:""});
   // ═══ MULTI-CREATURE SYSTEM: dolphins, tiered whales, golden whales ═══
@@ -1319,6 +1320,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         if(jc.phase==="ascend"&&jayC.onGround&&!jayC.beamUp){
           jayC.beamUp=true;jayC.onGround=false;
           jayC.beltHolder="jayc"; // belt transfers!
+          titleFlashRef.current={active:true,frame:0};
           onKillFeedRef.current?.({type:"system",text:"🤼 Jay C beams back to the Dreadnought WITH THE BELT! 🏆💪"});
         }
         if(jayC.beamUp){
@@ -2187,15 +2189,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
       shootingStarsRef.current=shootingStarsRef.current.filter(s=>s.life>0);
 
       // ═══ EASTER EGG: GOLDEN HOUR (3+ tokens > $50K) ═══
-      const gh=goldenHourRef.current;
-      const bigTokens=tokensRef.current.filter(t=>t.alive&&t.mcap>=50000).length;
-      if(bigTokens>=3&&!gh.active){gh.active=true;
-        onKillFeedRef.current?.({type:"system",text:"✨ GOLDEN HOUR — 3+ tokens above $50K! The battlefield is GLOWING."});}
-      if(bigTokens<3&&gh.active){gh.active=false;}
-      gh.opacity+=(gh.active?0.02:-0.02);gh.opacity=Math.max(0,Math.min(0.12,gh.opacity));
-      if(gh.opacity>0){
-        ctx.fillStyle="rgba(255,215,64,"+gh.opacity+")";ctx.fillRect(0,0,W,H);
-      }
+      // Golden hour removed
 
       // ═══ EASTER EGG: SATOSHI GHOST ═══
       const sg=satoshiRef.current;
@@ -2250,15 +2244,19 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         const fmAct=fatMonkeyRef.current.active;
         const jcAct=jaycShipRef.current.active;
         if(fmAct){
-          // Follow behind the last band member in the parade
-          ai.targetX=Math.max(0.08,Math.min(0.92,fatMonkeyRef.current.x-0.12));
+          // Teleport behind last band member instantly
+          const fmTargetX=Math.max(0.08,Math.min(0.92,fatMonkeyRef.current.x-0.12));
+          if(ai.morphMode==="monkey"&&ai.morphFrame<5){ai.x=fmTargetX;ai.y=0.75;}
+          ai.targetX=fmTargetX;
           ai.targetY=0.75;ai.focusToken=null;ai.gestureTarget=1;
           ai.focusTimer=30;
         }else if(jcAct){
-          // Stand opposite Jay C like opponents facing off
+          // Teleport next to Jay C instantly with space between
           const jayC3=jayCRef.current;
           if(jayC3.onGround){
-            ai.targetX=jayC3.x-0.1;ai.targetY=0.83;
+            const jcTargetX=jayC3.x-0.14;
+            if(ai.morphMode==="wrestler"&&ai.morphFrame<5){ai.x=jcTargetX;ai.y=0.83;}
+            ai.targetX=jcTargetX;ai.targetY=0.83;
           }else{
             ai.targetX=0.5;ai.targetY=0.45;
           }
@@ -2280,7 +2278,8 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
       const dx2=ai.targetX-ai.x,dy2=ai.targetY-ai.y;
       const dist2=Math.sqrt(dx2*dx2+dy2*dy2);
       const facingDir=dx2>0.005?1:dx2<-0.005?-1:0;
-      if(dist2>0.012){ai.x+=dx2*0.005;ai.y+=dy2*0.005;ai.state="walking";}else{ai.state="observing";}
+      const moveSpd=(ai.morphMode!=="normal")?0.04:0.005; // fast during events
+      if(dist2>0.012){ai.x+=dx2*moveSpd;ai.y+=dy2*moveSpd;ai.state="walking";}else{ai.state="observing";}
       ai.gestureArm+=(ai.gestureTarget-ai.gestureArm)*0.025;
       ai.headTilt+=(Math.sin(ai.breathPhase*0.6)*0.06+(facingDir*0.04)-ai.headTilt)*0.015;
 
@@ -2395,12 +2394,20 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
           // Data pattern on trunks
           P(2,4,cyanD);P(3,4,cyanD);P(2,5,cyanL);P(3,5,cyanL);
 
-          // CHAMPIONSHIP BELT (if Claude holds it)
+          // CHAMPIONSHIP BELT (if Claude holds it) — BIG and GOLD
           if(jayCRef.current.beltHolder==="claude"){
-            [-2,-1,0,1,2,3,4,5,6,7].forEach(x=>P(x,3,"#C0A030")); // gold band
-            [-1,0,1,2,3,4,5,6].forEach(x=>P(x,2,"#E8C840")); // top gold
-            P(1,2,"#fff");P(2,2,"#C0A030");P(3,2,"#fff");P(4,2,"#C0A030"); // jewels
-            P(2,3,"#fff");P(3,3,"#fff"); // center plate
+            // Belt plate — extends wide
+            [-3,-2,-1,0,1,2,3,4,5,6,7,8].forEach(x=>P(x,3,"#C0A030")); // gold band wide
+            [-3,-2,-1,0,1,2,3,4,5,6,7,8].forEach(x=>P(x,2,"#E8C840")); // upper gold row
+            [-2,-1,0,1,2,3,4,5,6,7].forEach(x=>P(x,1,"#DAB835")); // top plate
+            // Center plate — white/diamond
+            [1,2,3,4].forEach(x=>P(x,2,"#fff"));[1,2,3,4].forEach(x=>P(x,1,"#fff"));
+            [2,3].forEach(x=>P(x,3,"#fff"));
+            // Side gems
+            P(-2,2,"#ff4444");P(-1,2,"#ff6666");P(7,2,"#4488ff");P(6,2,"#66aaff");
+            P(-2,1,"#ff2222");P(7,1,"#2266ff");
+            // Sparkle effect
+            if(mf2%30<15){P(2,0,"#ffffa0");P(3,0,"#ffffa0");}
           }
 
           // Legs — dark energy
@@ -3083,6 +3090,51 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         const crewCol=ai.chatTarget==="FM"?"rgba(180,120,255,0.7)":"rgba(255,215,64,0.7)";
         drawBub(ai.crewName+": "+ai.crewBubble,crx,cry,"rgba(10,5,20,0.88)",crewCol,240);
         ctx.globalAlpha=1;
+      }
+
+      // ═══ "JAY C TAKES THE TITLE" FLASH ═══
+      const tf=titleFlashRef.current;
+      if(tf.active){
+        tf.frame++;
+        const tfF=tf.frame;
+        if(tfF>180){tf.active=false;}else{
+          const tfAlpha=tfF<15?tfF/15:tfF>150?Math.max(0,(180-tfF)/30):1;
+          const tfScale=tfF<20?0.5+tfF/20*0.5:1;
+          const tfShake=tfF<30?Math.sin(tfF*0.8)*3:0;
+          ctx.save();
+          ctx.globalAlpha=tfAlpha;
+          ctx.textAlign="center";
+          // Big gold text with glow
+          const tfSize=Math.round(Math.min(W,H)*0.07*tfScale);
+          ctx.font=`bold ${tfSize}px 'Orbitron'`;
+          ctx.shadowColor="#ffd740";ctx.shadowBlur=30;
+          // Dark backing
+          const tfY=H*0.5;
+          ctx.fillStyle=`rgba(0,0,0,${tfAlpha*0.5})`;
+          ctx.fillRect(0,tfY-tfSize*1.2,W,tfSize*2.8);
+          // Gold text - shadow
+          ctx.fillStyle=`rgba(120,80,0,${tfAlpha*0.6})`;
+          ctx.fillText("JAY C TAKES THE TITLE",W/2+3+tfShake,tfY+3);
+          // Gold text - main
+          ctx.fillStyle="#ffd740";
+          ctx.fillText("JAY C TAKES THE TITLE",W/2+tfShake,tfY);
+          // Subtitle
+          ctx.font=`bold ${Math.round(tfSize*0.4)}px 'Orbitron'`;
+          ctx.fillStyle="#E8C840";ctx.shadowBlur=15;
+          ctx.fillText("🏆 THE DUKE OF DORCHESTER IS YOUR NEW CHAMPION 🏆",W/2+tfShake,tfY+tfSize*0.7);
+          // Sparkle particles
+          if(tfF%3===0){
+            for(let sp=0;sp<4;sp++){
+              const spx=W*0.2+Math.random()*W*0.6;
+              const spy=tfY-tfSize+Math.random()*tfSize*2;
+              ctx.fillStyle=`rgba(255,${180+Math.random()*75},${Math.random()*100},${0.5+Math.random()*0.5})`;
+              const ss=2+Math.random()*4;
+              ctx.fillRect(spx,spy,ss,ss);
+            }
+          }
+          ctx.shadowBlur=0;ctx.textAlign="left";
+          ctx.restore();
+        }
       }
 
       // ═══ LIGHT MODE CHECKBOX ═══
