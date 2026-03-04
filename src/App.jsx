@@ -252,9 +252,12 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
     orbitals:[],auraParticles:[],
     chatBubble:null,chatTimer:0,chatTarget:null,
     replyBubble:null,replyTimer:0,
+    crewBubble:null,crewTimer:0,crewName:null,crewSlot:0,
+    chatCooldown:0,
   });
   const fatMonkeyRef=useRef({active:false,x:-0.1,frame:0,smokeRings:[],musicNotes:[],nextSpawn:Date.now()+rand(180,420)*1000,walkDir:1,smokeTimer:0});
   const jaycShipRef=useRef({active:false,y:-0.3,frame:0,bills:[],aliens:[],nextSpawn:Date.now()+rand(240,480)*1000,opacity:0});
+  const jayCRef=useRef({onGround:false,beamPhase:0,x:0.55,y:0.95,flexPhase:0,targetY:0.95,beamUp:false,opacity:0});
   // New easter egg refs
   const whaleRef=useRef({active:false,x:-0.15,y:0.5,frame:0,tokenName:""});
   // ═══ MULTI-CREATURE SYSTEM: dolphins, tiered whales, golden whales ═══
@@ -1298,7 +1301,27 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         }else if(jc.phase==="ascend"){
           jc.y-=0.003;jc.opacity=Math.max(0,jc.opacity-0.01);
           if(jc.opacity<=0){jc.active=false;jc.nextSpawn=now2+rand(900,1500)*1000;
+            jayCRef.current={onGround:false,beamPhase:0,x:0.55,y:0.95,flexPhase:0,targetY:0.95,beamUp:false,opacity:0};
             onKillFeedRef.current?.({type:"system",text:"👾 J-Ai-C Dreadnought has departed... 💸"});}
+        }
+        // ═══ JAY C CHARACTER — beam down from mothership ═══
+        const jayC=jayCRef.current;
+        if(jc.phase==="hover"&&!jayC.onGround&&!jayC.beamUp){
+          jayC.beamPhase+=0.02;jayC.opacity=Math.min(1,jayC.opacity+0.015);
+          jayC.y=0.3+jayC.beamPhase*0.65;
+          if(jayC.y>=0.83){jayC.onGround=true;jayC.y=0.83;jayC.opacity=1;
+            onKillFeedRef.current?.({type:"system",text:"🤼 JAY C HAS ENTERED THE BATTLEFIELD! THE DUKE OF DORCHESTER IS HERE! 💪👑"});
+          }
+          jayC.x=0.5+0.06; // land near Claude (slightly right)
+        }
+        if(jayC.onGround){jayC.flexPhase+=0.04;}
+        if(jc.phase==="ascend"&&jayC.onGround&&!jayC.beamUp){
+          jayC.beamUp=true;jayC.onGround=false;
+          onKillFeedRef.current?.({type:"system",text:"🤼 Jay C beams back to the Dreadnought... UNTIL NEXT TIME! 💪"});
+        }
+        if(jayC.beamUp){
+          jayC.y-=0.008;jayC.opacity=Math.max(0,jayC.opacity-0.012);
+          if(jayC.opacity<=0){jayC.beamUp=false;jayC.beamPhase=0;jayC.y=0.95;jayC.opacity=0;}
         }
         if(jc.active){
           ctx.save();ctx.globalAlpha=jc.opacity;
@@ -1589,14 +1612,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
             {name:"ANDRE",xOff:0.19},
             {name:"TAKER",xOff:0.32},
           ];
-          const wQuotes={
-            HULK:["WHATCHA GONNA DO\nBROTHER?!","HULKAMANIA IS\nRUNNIN' WILD","LET ME TELL YA\nSOMETHIN'","I AM A REAL\nAMERICAN"],
-            MACHO:["OH YEAH!","THE CREAM RISES\nTO THE TOP","SNAP INTO IT","OOOOH YEAH\nDIG IT"],
-            WARRIOR:["LOAD THE SPACESHIP\nWITH ROCKET FUEL","DESTRUCITY!","FEEL THE POWER","SPEAK TO ME\nWARRIORS"],
-            SNAKE:["TRUST ME...","DDT!","THE SNAKE\nSTRIKES","EVERYBODY'S GOT\nA PRICE"],
-            ANDRE:["*STARES DOWN*","FEE FI FO FUM","NOBODY CAN\nMATCH ME","I AM THE\nBOSS"],
-            TAKER:["REST. IN. PEACE.","THIS IS\nMY YARD","THE DEAD\nWILL RISE","YOU WILL\nNEVER FORGET"],
-          };
+          const wQuotes={}; // old quotes removed, now handled by chat system
 
           ctx.imageSmoothingEnabled=false;
           wSlots.forEach((ws,wi)=>{
@@ -1692,31 +1708,6 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
             ctx.font=`bold ${Math.max(7,wp)}px 'Orbitron'`;ctx.fillStyle="rgba(0,255,204,0.8)";ctx.textAlign="center";
             ctx.fillText(ws.name,bx+wp*3.5,by+bob+wp*15);
 
-            // Speech bubble
-            const quotes=wQuotes[ws.name]||[];
-            const cycleLen=260;
-            const offset=wi*43;
-            const phase=(F+offset)%cycleLen;
-            if(phase<85&&quotes.length>0){
-              const qi=Math.floor((F+offset)/(cycleLen*quotes.length))%quotes.length;
-              const fadeIn=Math.min(1,phase/10);
-              const fadeOut=phase>68?Math.max(0,(85-phase)/17):1;
-              const alpha=fadeIn*fadeOut;
-              const quote=quotes[qi];
-              const qLines=quote.split("\n");
-              const bW2=Math.max(...qLines.map(l=>l.length))*5.5+16;
-              const bH2=qLines.length*12+10;
-              const bX2=bx+wp*3.5;
-              const bY2=by+bob-wp*5-bH2;
-              ctx.globalAlpha=alpha*jc.opacity;
-              ctx.fillStyle="rgba(5,3,14,0.92)";ctx.fillRect(bX2-bW2/2,bY2,bW2,bH2);
-              ctx.strokeStyle="rgba(255,215,64,0.6)";ctx.lineWidth=1;ctx.strokeRect(bX2-bW2/2,bY2,bW2,bH2);
-              ctx.fillStyle="rgba(5,3,14,0.92)";
-              ctx.beginPath();ctx.moveTo(bX2-4,bY2+bH2);ctx.lineTo(bX2,bY2+bH2+6);ctx.lineTo(bX2+4,bY2+bH2);ctx.fill();
-              ctx.font="bold 9px 'Share Tech Mono'";ctx.fillStyle="#ffd740";ctx.textAlign="center";
-              qLines.forEach((line,li)=>{ctx.fillText(line,bX2,bY2+14+li*12);});
-              ctx.globalAlpha=jc.opacity;
-            }
             ctx.textAlign="left";
           });
           ctx.imageSmoothingEnabled=true;
@@ -1735,7 +1726,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
           ctx.textAlign="left";
 
           // ─── TRACTOR BEAM ───
-          if(jc.phase==="hover"){
+          if(jc.phase==="hover"||jayC.beamPhase>0){
             const beamTop=shipTop+shipH*0.93;
             const beamH=H-beamTop;
             if(beamH>0){
@@ -1758,6 +1749,126 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
           }
 
           ctx.globalAlpha=1;ctx.restore();
+
+          // ═══ JAY C — PIXEL ART WRESTLER ON THE GROUND ═══
+          if(jayC.opacity>0){
+            ctx.save();ctx.globalAlpha=jayC.opacity;
+            ctx.imageSmoothingEnabled=false;
+            const jx=jayC.x*W;
+            const jy=jayC.y*H;
+            const jp=6; // pixel block size (big, matches Claude scale)
+            const flex=Math.sin(jayC.flexPhase)*0.5;
+            const armUp=jayC.onGround?Math.abs(Math.sin(jayC.flexPhase*0.5)):0;
+            const JP=(gx,gy,col)=>{ctx.fillStyle=col;ctx.fillRect(jx+gx*jp,jy+gy*jp,jp,jp);};
+
+            // Beam trail while descending or ascending
+            if(!jayC.onGround){
+              const beamGrad=ctx.createLinearGradient(jx,0,jx,jy);
+              beamGrad.addColorStop(0,"rgba(160,80,255,0.15)");beamGrad.addColorStop(1,"rgba(160,80,255,0)");
+              ctx.fillStyle=beamGrad;ctx.fillRect(jx-15,0,30,jy);
+              // Sparkles
+              for(let sp=0;sp<6;sp++){
+                const spy=jy*Math.random();
+                const spx=jx+(Math.random()-0.5)*20;
+                ctx.fillStyle=`rgba(200,150,255,${0.3+Math.random()*0.4})`;
+                ctx.fillRect(spx,spy,2,2);
+              }
+            }
+
+            // ── HEAD ──
+            const skin="#D4A574",darkSkin="#B8926A",purple1="#6B1D9E",purple2="#8B3DC0",purpleDk="#4A0E6B";
+            const hair="#2A1506",beard="#3A2010",beardDk="#261508";
+            // Hair top
+            [-1,0,1,2,3,4,5,6].forEach(x=>JP(x,-12,hair));
+            [-2,-1,0,1,2,3,4,5,6,7].forEach(x=>JP(x,-11,hair));
+            // Forehead
+            [-1,0,1,2,3,4,5,6].forEach(x=>JP(x,-10,skin));
+            [-1,0,1,2,3,4,5,6].forEach(x=>JP(x,-9,skin));
+            // Eyes - intense
+            JP(0,-9,"#fff");JP(1,-9,"#222");JP(4,-9,"#fff");JP(5,-9,"#222");
+            // Nose
+            [-1,0,1,2,3,4,5,6].forEach(x=>JP(x,-8,skin));JP(2,-8,darkSkin);JP(3,-8,darkSkin);
+            // Big beard - starts at jaw, goes down
+            [-2,-1,0,1,2,3,4,5,6,7].forEach(x=>JP(x,-7,beard));
+            [-2,-1,0,1,2,3,4,5,6,7].forEach(x=>JP(x,-6,beard));
+            [-1,0,1,2,3,4,5,6].forEach(x=>JP(x,-5,beard));
+            [0,1,2,3,4,5].forEach(x=>JP(x,-4,beardDk));
+            [1,2,3,4].forEach(x=>JP(x,-3,beardDk));
+
+            // ── MASSIVE UPPER BODY ──
+            // Neck
+            [1,2,3,4].forEach(x=>JP(x,-2,skin));
+            // Traps/shoulders - WIDE
+            [-4,-3,-2,-1,0,1,2,3,4,5,6,7,8,9].forEach(x=>JP(x,-1,skin));
+            // Upper chest
+            [-5,-4,-3,-2,-1,0,1,2,3,4,5,6,7,8,9,10].forEach(x=>JP(x,0,purple1));
+            [-5,-4,-3,-2,-1,0,1,2,3,4,5,6,7,8,9,10].forEach(x=>JP(x,1,purple1));
+            // Pecs - highlights
+            [-3,-2,-1,0].forEach(x=>JP(x,0,purple2));[5,6,7,8].forEach(x=>JP(x,0,purple2));
+            // Mid torso
+            [-4,-3,-2,-1,0,1,2,3,4,5,6,7,8,9].forEach(x=>JP(x,2,purple1));
+            [-3,-2,-1,0,1,2,3,4,5,6,7,8].forEach(x=>JP(x,3,purple1));
+            // Abs (visible through singlet)
+            JP(1,2,purpleDk);JP(4,2,purpleDk);JP(2,3,purpleDk);JP(3,3,purpleDk);
+            // Waist narrower
+            [-2,-1,0,1,2,3,4,5,6,7].forEach(x=>JP(x,4,purple1));
+
+            // ── ARMS — flexing ──
+            const lArmUp=Math.round(armUp*3);
+            const rArmUp=Math.round(Math.abs(Math.sin(jayC.flexPhase*0.5+1.5))*3);
+            // Left arm (bicep UP when flexing)
+            JP(-5,-1+lArmUp,skin);JP(-6,-1+lArmUp,skin);JP(-7,-2+lArmUp,skin);JP(-7,-3+lArmUp,skin);
+            JP(-6,-2+lArmUp,skin);JP(-5,0,skin);JP(-6,0,skin);
+            // Left bicep bulge
+            JP(-7,-1+lArmUp,skin);JP(-8,-2+lArmUp,skin);
+            // Left fist
+            JP(-8,-3+lArmUp,skin);JP(-8,-4+lArmUp,skin);
+            // Right arm
+            JP(10,-1+rArmUp,skin);JP(11,-1+rArmUp,skin);JP(12,-2+rArmUp,skin);JP(12,-3+rArmUp,skin);
+            JP(11,-2+rArmUp,skin);JP(10,0,skin);JP(11,0,skin);
+            // Right bicep bulge
+            JP(12,-1+rArmUp,skin);JP(13,-2+rArmUp,skin);
+            // Right fist
+            JP(13,-3+rArmUp,skin);JP(13,-4+rArmUp,skin);
+
+            // ── TINY WRESTLING BOTTOMS (80s style) ──
+            [-1,0,1,2,3,4,5,6].forEach(x=>JP(x,5,purple2));
+            [-1,0,1,2,3,4,5,6].forEach(x=>JP(x,6,purpleDk));
+            // Belt/waistband highlight
+            [-1,0,1,2,3,4,5,6].forEach(x=>JP(x,5,"#C0A030"));
+            // Star on trunks
+            JP(2,6,"#C0A030");JP(3,6,"#C0A030");
+
+            // ── MASSIVE LEGS ──
+            // Left leg
+            [-1,0,1,2].forEach(x=>{JP(x,7,skin);JP(x,8,skin);JP(x,9,skin);JP(x,10,skin);JP(x,11,skin);});
+            // Right leg
+            [3,4,5,6].forEach(x=>{JP(x,7,skin);JP(x,8,skin);JP(x,9,skin);JP(x,10,skin);JP(x,11,skin);});
+            // Knee pads - purple
+            [-1,0,1,2].forEach(x=>JP(x,9,purple2));[3,4,5,6].forEach(x=>JP(x,9,purple2));
+            // Boots
+            [-2,-1,0,1,2].forEach(x=>{JP(x,12,purpleDk);JP(x,13,purpleDk);});
+            [3,4,5,6,7].forEach(x=>{JP(x,12,purpleDk);JP(x,13,purpleDk);});
+
+            // ── PURPLE GLOW aura ──
+            if(jayC.onGround){
+              const aura=0.06+Math.sin(jayC.flexPhase)*0.03;
+              ctx.fillStyle=`rgba(140,40,220,${aura})`;
+              ctx.fillRect(jx-9*jp,jy-13*jp,24*jp,28*jp);
+            }
+
+            // ── NAME TAG ──
+            ctx.imageSmoothingEnabled=true;
+            ctx.font="bold 14px 'Orbitron'";ctx.textAlign="center";
+            ctx.fillStyle="rgba(140,40,220,0.4)";ctx.fillText("JAY C",jx+2.5*jp,jy+16*jp+2);
+            ctx.fillStyle="#bf60ff";ctx.shadowColor="#8B3DC0";ctx.shadowBlur=12;
+            ctx.fillText("JAY C",jx+2.5*jp,jy+16*jp);
+            ctx.font="bold 8px 'Orbitron'";ctx.fillStyle="rgba(200,150,255,0.5)";ctx.shadowBlur=0;
+            ctx.fillText("THE DUKE",jx+2.5*jp,jy+18*jp);
+            ctx.textAlign="left";
+            ctx.imageSmoothingEnabled=true;
+            ctx.globalAlpha=1;ctx.restore();
+          }
 
           // ─── LAUNCH BILLS/COINS ───
           if(jc.phase==="hover"&&jc.frame%8===0&&jc.bills.length<30){
@@ -2106,8 +2217,14 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
           ai.targetY=0.7;ai.focusToken=null;ai.gestureTarget=1;
           ai.focusTimer=60;
         }else if(jcAct){
-          // Stand beneath J-Ai-C mothership
-          ai.targetX=0.5;ai.targetY=0.45;ai.focusToken=null;ai.gestureTarget=1;
+          // Stand next to Jay C if he's on the ground, otherwise look at ship
+          const jayC3=jayCRef.current;
+          if(jayC3.onGround){
+            ai.targetX=jayC3.x-0.06;ai.targetY=0.7;
+          }else{
+            ai.targetX=0.5;ai.targetY=0.45;
+          }
+          ai.focusToken=null;ai.gestureTarget=1;
           ai.focusTimer=60;
         }else{
         const locked2=lockedRef.current;
@@ -2568,7 +2685,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
       ctx.textAlign="left";
       ctx.globalAlpha=1;ctx.restore();
 
-      // ═══ CHAT INTERACTIONS — Fat Monkey & J-Ai-C ═══
+      // ═══ CHAT INTERACTIONS — Fat Monkey & J-Ai-C w/ CREW ═══
       const fmChat=[
         {c:"Yo this monkey is WICKED SMAHT!",r:"You know it kid! Pahk ya tokens heeah!"},
         {c:"Bro you absolutely CRUSHIN it out theah!",r:"We don't lose in Bahston baby!"},
@@ -2581,92 +2698,153 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         {c:"Everyone clear the way for Fat Monkey!",r:"Outta my way! I got tokens to flip, kehd!"},
         {c:"The GOAT has entered the battlefield!",r:"Greatest Of All Time? Nahhh just a regular Tuesday for me!"},
       ];
+      const fmCrewLines=[
+        {name:"JERRY",line:"What a long strange trip this has been..."},
+        {name:"JERRY",line:"Keep on truckin' Fat Monkey!"},
+        {name:"JERRY",line:"This ape is touched with FIRE!"},
+        {name:"JERRY",line:"The wheel is turnin' and he can't slow down!"},
+        {name:"JERRY",line:"Ripple in still water... this monkey makes WAVES"},
+        {name:"BOB",line:"Hell in a bucket and we're enjoyin' the ride!"},
+        {name:"BOB",line:"Playin' in the band with the KING right here!"},
+        {name:"BOB",line:"This monkey's a friend of the devil FOR SURE"},
+        {name:"BOB",line:"Looks like rain? Nah looks like GAINS!"},
+        {name:"BOB",line:"Greatest story ever told right here folks!"},
+        {name:"PHIL",line:"Box of rain comin' down on these tokens!"},
+        {name:"PHIL",line:"Unbroken chain! Monk NEVER quits!"},
+        {name:"PHIL",line:"Let Phil drop the bass for the king!"},
+        {name:"PHIL",line:"Space and time mean nothin' to this ape!"},
+        {name:"BILLY",line:"*drum solo intensifies* GO MONK GO!"},
+        {name:"BILLY",line:"He's in the RHYTHM! Feel that groove!"},
+        {name:"BILLY",line:"Can't stop the beat! Can't stop the MONK!"},
+        {name:"MICKEY",line:"*hits the beam* THAT'S OUR GUY!"},
+        {name:"MICKEY",line:"Planet drum says Fat Monkey is LEGIT!"},
+        {name:"MICKEY",line:"The rhythm don't lie! Monk's on FIRE!"},
+      ];
       const jcChat=[
         {c:"DO YOU SMELLLL WHAT JAY C IS COOKING?!",r:"THE DUKE OF DORCHESTER HAS ARRIVED!"},
         {c:"LADIES AND GENTLEMEN... THE UNDISPUTED CHAMPION!",r:"NOBODY SURVIVES THE DORCHESTER DRIVER!"},
-        {c:"BAH GAWD! J-Ai-C IS IN THE BUILDING!",r:"AND THAT'S THE BOTTOM LINE!"},
+        {c:"BAH GAWD! Jay C IS IN THE BUILDING!",r:"AND THAT'S THE BOTTOM LINE!"},
         {c:"THE DREADNOUGHT HAS A NEW CHALLENGER!",r:"CHALLENGE?! I AM THE CHALLENGE!"},
         {c:"If ya want the best, ya got the BEST!",r:"THE DUKE DOESN'T DO SECOND PLACE!"},
-        {c:"This crowd is on their FEET for J-Ai-C!",r:"DORCHESTER IN THE HOUSE! BOW DOWN!"},
+        {c:"This crowd is on their FEET for Jay C!",r:"DORCHESTER IN THE HOUSE! BOW DOWN!"},
         {c:"THE MOST ELECTRIFYING FORCE IN DEFI!",r:"FEEL THAT ENERGY! THE DUKE IS COOKIN!"},
-        {c:"FROM DORCHESTER WITH FURY! J-Ai-C!",r:"THEY SAID I COULDN'T! I SAID WATCH ME!"},
-        {c:"CAN WE GET A J-AI-C CHANT GOING?!",r:"J-AI-C! J-AI-C! THAT'S RIGHT BABY!"},
+        {c:"FROM DORCHESTER WITH FURY! Jay C!",r:"THEY SAID I COULDN'T! I SAID WATCH ME!"},
+        {c:"CAN WE GET A JAY C CHANT GOING?!",r:"JAY C! JAY C! THAT'S RIGHT BABY!"},
         {c:"NOBODY walks into the Duke's ring and walks out!",r:"THE DORCHESTER DRIVER IS LOCKED AND LOADED!"},
       ];
+      const jcCrewLines=[
+        {name:"HULK",slot:0,line:"WHATCHA GONNA DO when Jay C runs WILD on you?!"},
+        {name:"HULK",slot:0,line:"BROTHER! The Hulkster approves this CARNAGE!"},
+        {name:"HULK",slot:0,line:"LET ME TELL YA SOMETHIN! Jay C is the REAL DEAL!"},
+        {name:"MACHO",slot:1,line:"OH YEAH! The cream ALWAYS rises to the top!"},
+        {name:"MACHO",slot:1,line:"SNAP INTO IT! Jay C style baby! DIG IT!"},
+        {name:"MACHO",slot:1,line:"The Macho Man has SPOKEN! Jay C forever!"},
+        {name:"WARRIOR",slot:2,line:"LOAD THE SPACESHIP! Jay C is DESTRUCITY!"},
+        {name:"WARRIOR",slot:2,line:"WARRIORS! Feel the POWER of the Dreadnought!"},
+        {name:"WARRIOR",slot:2,line:"The Ultimate one bows to NO ONE... except Jay C!"},
+        {name:"SNAKE",slot:3,line:"Trust me... Jay C never misses... DDT!"},
+        {name:"SNAKE",slot:3,line:"The Snake sees EVERYTHING and Jay C's a winner!"},
+        {name:"SNAKE",slot:3,line:"Nobody escapes the ring when Jay C is in it!"},
+        {name:"ANDRE",slot:4,line:"*slowly nods* ...Jay C. Respect."},
+        {name:"ANDRE",slot:4,line:"NOBODY is bigger than Andre... except Jay C's portfolio!"},
+        {name:"ANDRE",slot:4,line:"The Giant has spoken. Jay C. Is. THE BOSS."},
+        {name:"TAKER",slot:5,line:"REST... IN... PROFIT. The Dead Man rides with Jay C."},
+        {name:"TAKER",slot:5,line:"This is MY yard... but Jay C can park here."},
+        {name:"TAKER",slot:5,line:"The souls of rugged tokens cry out... Jay C avenges them all."},
+      ];
 
-      // Chat timer system
-      ai.chatTimer--;
+      // ═══ CHAT TIMING ENGINE ═══
+      ai.chatTimer--;ai.replyTimer--;ai.crewTimer--;ai.chatCooldown--;
       if(ai.chatTimer<=0)ai.chatBubble=null;
-      ai.replyTimer--;
       if(ai.replyTimer<=0)ai.replyBubble=null;
+      if(ai.crewTimer<=0)ai.crewBubble=null;
 
-      // Trigger chats when easter eggs are active
       const fmActive=fatMonkeyRef.current.active;
       const jcActive=jaycShipRef.current.active;
-      if(fmActive&&!ai.chatBubble&&ai.chatTimer<=-60){
+
+      // Phase 1: Claude speaks (only when no bubbles active)
+      if(fmActive&&!ai.chatBubble&&!ai.replyBubble&&!ai.crewBubble&&ai.chatCooldown<=0){
         const pick2=fmChat[Math.floor(Math.random()*fmChat.length)];
-        ai.chatBubble=pick2.c;ai.chatTimer=240;ai.chatTarget="FM";
-        ai.replyBubble=pick2.r;ai.replyTimer=360;
+        ai.chatBubble=pick2.c;ai.chatTimer=180;ai.chatTarget="FM";
+        ai.replyBubble=pick2.r;ai.replyTimer=320;
+        // Queue crew response
+        const crewPick=fmCrewLines[Math.floor(Math.random()*fmCrewLines.length)];
+        ai.crewName=crewPick.name;ai.crewBubble=crewPick.line;ai.crewTimer=460;ai.crewSlot=0;
+        ai.chatCooldown=540;
       }
-      if(jcActive&&!ai.chatBubble&&ai.chatTimer<=-60){
+      if(jcActive&&jayCRef.current.onGround&&!ai.chatBubble&&!ai.replyBubble&&!ai.crewBubble&&ai.chatCooldown<=0){
         const pick2=jcChat[Math.floor(Math.random()*jcChat.length)];
-        ai.chatBubble=pick2.c;ai.chatTimer=240;ai.chatTarget="JC";
-        ai.replyBubble=pick2.r;ai.replyTimer=360;
+        ai.chatBubble=pick2.c;ai.chatTimer=180;ai.chatTarget="JC";
+        ai.replyBubble=pick2.r;ai.replyTimer=320;
+        const crewPick=jcCrewLines[Math.floor(Math.random()*jcCrewLines.length)];
+        ai.crewName=crewPick.name;ai.crewBubble=crewPick.line;ai.crewTimer=460;ai.crewSlot=crewPick.slot||0;
+        ai.chatCooldown=540;
       }
 
-      // Draw chat bubbles
+      // Helper: draw a chat bubble at position
+      const drawBub=(text,bx2,by2,col,borderCol,maxW)=>{
+        ctx.save();
+        ctx.font="bold 9px 'Orbitron'";
+        const tw=Math.min(ctx.measureText(text).width+16,maxW||200);
+        const bH=26;
+        ctx.fillStyle=col;ctx.strokeStyle=borderCol;ctx.lineWidth=1;
+        ctx.beginPath();ctx.roundRect(bx2-tw/2,by2-bH,tw,bH,6);ctx.fill();ctx.stroke();
+        ctx.fillStyle=col;
+        ctx.beginPath();ctx.moveTo(bx2-4,by2);ctx.lineTo(bx2+4,by2);ctx.lineTo(bx2,by2+5);ctx.fill();
+        ctx.strokeStyle=borderCol;ctx.beginPath();ctx.moveTo(bx2-4,by2);ctx.lineTo(bx2,by2+5);ctx.lineTo(bx2+4,by2);ctx.stroke();
+        ctx.fillStyle=borderCol.replace(/[\d.]+\)$/,"0.95)");ctx.font="bold 8px 'Orbitron'";ctx.textAlign="center";
+        ctx.fillText(text,bx2,by2-9,tw-10);
+        ctx.textAlign="left";ctx.restore();
+      };
+
+      // Draw Claude's bubble
       if(ai.chatBubble){
-        const bx=hx;
-        const by=hy-40*S+floatY;
-        const bubAlpha=Math.min(1,ai.chatTimer/30)*0.9;
-        ctx.save();ctx.globalAlpha=bubAlpha;
-        // Measure text
-        ctx.font="bold 10px 'Orbitron'";
-        const tw=Math.min(ctx.measureText(ai.chatBubble).width+16,220);
-        const bH=28;
-        // Bubble background
-        ctx.fillStyle="rgba(0,20,40,0.85)";
-        ctx.strokeStyle="rgba(0,200,255,0.5)";ctx.lineWidth=1;
-        ctx.beginPath();
-        const bLeft=bx-tw/2,bTop=by-bH;
-        ctx.roundRect(bLeft,bTop,tw,bH,6);ctx.fill();ctx.stroke();
-        // Pointer triangle
-        ctx.fillStyle="rgba(0,20,40,0.85)";
-        ctx.beginPath();ctx.moveTo(bx-5,by);ctx.lineTo(bx+5,by);ctx.lineTo(bx,by+6);ctx.fill();
-        ctx.strokeStyle="rgba(0,200,255,0.5)";ctx.lineWidth=1;
-        ctx.beginPath();ctx.moveTo(bx-5,by);ctx.lineTo(bx,by+6);ctx.lineTo(bx+5,by);ctx.stroke();
-        // Text
-        ctx.fillStyle="rgba(0,220,255,0.95)";ctx.font="bold 9px 'Orbitron'";ctx.textAlign="center";
-        ctx.fillText(ai.chatBubble,bx,by-10,tw-12);
-        ctx.textAlign="left";ctx.globalAlpha=1;ctx.restore();
+        const bubAlpha=Math.min(1,ai.chatTimer/20)*0.92;
+        ctx.globalAlpha=bubAlpha;
+        drawBub(ai.chatBubble,hx,hy-42*S+floatY,"rgba(0,20,40,0.88)","rgba(0,200,255,0.6)",220);
+        ctx.globalAlpha=1;
       }
 
-      // Reply bubble from character
-      if(ai.replyBubble&&ai.replyTimer>0&&ai.replyTimer<300){
-        const repAlpha=Math.min(1,(300-ai.replyTimer)/30,ai.replyTimer/30)*0.9;
+      // Draw main character reply
+      if(ai.replyBubble&&ai.replyTimer>0&&ai.replyTimer<260){
+        const repAlpha=Math.min(1,(260-ai.replyTimer)/20,ai.replyTimer/20)*0.92;
         let rx2,ry2;
-        const repColor=ai.chatTarget==="FM"?"rgba(255,160,40,":"rgba(160,0,255,";
-        if(ai.chatTarget==="FM"){
-          rx2=fatMonkeyRef.current.x*W;ry2=0.65*H;
-        }else{
-          rx2=W*0.5;ry2=(jaycShipRef.current.y+0.12)*H;
+        if(ai.chatTarget==="FM"){rx2=fatMonkeyRef.current.x*W;ry2=0.64*H;}
+        else{
+          const jayC2=jayCRef.current;
+          if(jayC2.onGround){rx2=jayC2.x*W;ry2=(jayC2.y-0.13)*H;}
+          else{rx2=W*0.5;ry2=(jaycShipRef.current.y+0.11)*H;}
         }
-        ctx.save();ctx.globalAlpha=repAlpha;
-        ctx.font="bold 10px 'Orbitron'";
-        const rtw=Math.min(ctx.measureText(ai.replyBubble).width+16,220);
-        const rbH=28;
-        // Bubble
-        ctx.fillStyle="rgba(20,0,30,0.85)";
-        ctx.strokeStyle=repColor+"0.6)";ctx.lineWidth=1;
-        const rl=rx2-rtw/2,rt=ry2-rbH;
-        ctx.beginPath();ctx.roundRect(rl,rt,rtw,rbH,6);ctx.fill();ctx.stroke();
-        // Pointer
-        ctx.fillStyle="rgba(20,0,30,0.85)";
-        ctx.beginPath();ctx.moveTo(rx2-5,ry2);ctx.lineTo(rx2+5,ry2);ctx.lineTo(rx2,ry2+6);ctx.fill();
-        // Text
-        ctx.fillStyle=repColor+"0.95)";ctx.font="bold 9px 'Orbitron'";ctx.textAlign="center";
-        ctx.fillText(ai.replyBubble,rx2,ry2-10,rtw-12);
-        ctx.textAlign="left";ctx.globalAlpha=1;ctx.restore();
+        ctx.globalAlpha=repAlpha;
+        const repBorder=ai.chatTarget==="FM"?"rgba(255,160,40,0.7)":"rgba(200,100,255,0.7)";
+        drawBub(ai.replyBubble,rx2,ry2,"rgba(20,5,10,0.88)",repBorder,220);
+        ctx.globalAlpha=1;
+      }
+
+      // Draw crew chime-in
+      if(ai.crewBubble&&ai.crewTimer>0&&ai.crewTimer<380){
+        const crewAlpha=Math.min(1,(380-ai.crewTimer)/20,ai.crewTimer/20)*0.9;
+        let crx,cry;
+        if(ai.chatTarget==="FM"){
+          // Band member — position behind Fat Monkey based on name
+          const bandIdx=["JERRY","BOB","PHIL","BILLY","MICKEY"].indexOf(ai.crewName);
+          const fmX=fatMonkeyRef.current.x;
+          crx=(fmX-(bandIdx+1)*0.025)*W;
+          cry=0.72*H;
+        }else{
+          // Wrestler — on the ship hull
+          const shipTop2=(jaycShipRef.current.y)*H;
+          const shipH2=H*0.22;
+          const cx2=W*0.5;
+          const offsets=[-0.32,-0.19,-0.06,0.06,0.19,0.32];
+          const off=offsets[ai.crewSlot]||0;
+          crx=cx2+off*W*0.42;
+          cry=shipTop2+shipH2*0.42;
+        }
+        ctx.globalAlpha=crewAlpha;
+        const crewCol=ai.chatTarget==="FM"?"rgba(180,120,255,0.7)":"rgba(255,215,64,0.7)";
+        drawBub(ai.crewName+": "+ai.crewBubble,crx,cry,"rgba(10,5,20,0.88)",crewCol,240);
+        ctx.globalAlpha=1;
       }
 
                   // Corner brackets
