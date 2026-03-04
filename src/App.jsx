@@ -2364,6 +2364,28 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
       const headY2=hy-24*S+floatY+breathOff;
       const headTiltX=ai.headTilt*8*S;
 
+      // Hood cowl outline — thin bright line framing the face
+      const hoodW=13*S;
+      const hoodTop=headY2-14*S;
+      const hoodSideL=hx+headTiltX-hoodW;
+      const hoodSideR=hx+headTiltX+hoodW;
+      const hoodBot=headY2+10*S;
+      const hoodShoulderY=torsoTop+6*S;
+      ctx.strokeStyle="rgba(200,220,255,0.1)";ctx.lineWidth=1;
+      ctx.beginPath();
+      // Left shoulder up to left side of hood
+      ctx.moveTo(hx-shoulderW-3*S,hoodShoulderY);
+      ctx.quadraticCurveTo(hoodSideL-2*S,hoodBot-5*S,hoodSideL,hoodBot);
+      // Left side up and over the top
+      ctx.quadraticCurveTo(hoodSideL-1*S,headY2-6*S,hx+headTiltX-4*S,hoodTop);
+      // Top of hood
+      ctx.quadraticCurveTo(hx+headTiltX,hoodTop-3*S,hx+headTiltX+4*S,hoodTop);
+      // Right side down
+      ctx.quadraticCurveTo(hoodSideR+1*S,headY2-6*S,hoodSideR,hoodBot);
+      // Right side down to shoulder
+      ctx.quadraticCurveTo(hoodSideR+2*S,hoodBot-5*S,hx+shoulderW+3*S,hoodShoulderY);
+      ctx.stroke();
+
       // Hair — flowing streams
       for(let hi2=0;hi2<16;hi2++){
         const hAngle=-0.9+hi2*0.112+ai.headTilt;
