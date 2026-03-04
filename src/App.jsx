@@ -3348,7 +3348,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
 
       // ═══ LIGHT MODE CHECKBOX ═══
       ctx.save();
-      const cbX=W*0.84,cbY=H*0.02,cbS=12;
+      const cbX=W*0.84,cbY=H*0.08,cbS=12;
       ctx.strokeStyle="rgba(255,255,255,0.2)";ctx.lineWidth=1;
       ctx.strokeRect(cbX,cbY,cbS,cbS);
       ctx.font="9px 'Orbitron'";ctx.fillStyle="rgba(255,255,255,0.25)";ctx.textAlign="left";
@@ -3499,7 +3499,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
     const rect=canvas.getBoundingClientRect();
     const mx=(e.clientX-rect.left)/rect.width,my=(e.clientY-rect.top)/rect.height;
     // Light mode checkbox — top right
-    if(mx>0.82&&mx<0.98&&my>0.01&&my<0.05){
+    if(mx>0.82&&mx<0.98&&my>0.06&&my<0.12){
       if(!lightModeRef.current.active){lightModeRef.current={active:true,frame:0,maxFrames:180};}
       return;
     }
@@ -3807,15 +3807,14 @@ export default function DegenCommandCenter(){
   // predictions + signals removed in v102c
   const mainTokensRef=useRef([]);
   const [killFeed,setKillFeed]=useState([
-    {type:"system",text:"◈ COMMAND CENTER ONLINE — ALL PLATFORMS ◈"},
-    {type:"system",text:"◈ BATTLEFIELD ACTIVE — FIGHT FOR THE MOON ◈"}]);
+    {type:"system",text:"◈ COMMAND CENTER ONLINE — BATTLEFIELD ACTIVE ◈",_startup:true}]);
   const existingNames=useRef([]);
   const graveyardTokensRef=useRef([]);
   const setGraveyardRef=useRef(null);
   setGraveyardRef.current=setGraveyard;
   useEffect(()=>{graveyardTokensRef.current=tokens},[tokens]);
   const addKillFeed=useCallback(event=>{
-    setKillFeed(p=>[event,...p].slice(0,30));
+    setKillFeed(p=>[event,...p.filter(e=>!e._startup)].slice(0,30));
     if(event.type==="rug"&&event.addr){
       setMigrations(p=>p.filter(m=>m.mint!==event.addr));
       const tok=graveyardTokensRef.current.find(t=>t.addr===event.addr);
