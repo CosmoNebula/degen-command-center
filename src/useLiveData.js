@@ -250,9 +250,15 @@ export function useLiveData() {
           const ws = walletScores.current[wallet];
           // Update lastActivity on actual trade (not scoring loop)
           if (ws) ws.lastActivity = now;
+          // Compute unrealized loss drag from open holds
+          const unrealizedPnl = ws ? (ws.trades||[]).filter(tr=>tr.type==="HOLD")
+            .reduce((s,tr)=>s+(tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol)),0) : 0;
           const wsTotal = ws ? (ws.wins + ws.losses) : 0;
           const wsRate = wsTotal > 0 ? ws.wins / wsTotal : 0;
-          if (ws && ws.wins >= 3 && wsRate >= 0.60 && ws.wins > (ws.losses||0) && wsTotal >= 4 && sol > 0.3) {
+          // Adjusted PnL = realized gains + unrealized drag
+          const adjustedPnl = ws ? (ws.totalPnl||0) + unrealizedPnl : 0;
+          // Smart if: 3+ wins, 60%+ rate, wins > losses, 4+ total trades, decent buy size, AND adjusted PnL positive
+          if (ws && ws.wins >= 3 && wsRate >= 0.60 && ws.wins > (ws.losses||0) && wsTotal >= 4 && sol > 0.3 && adjustedPnl > 0) {
             td.smartWallets.add(wallet);
             const alertKey = `${wallet.slice(0,8)}-${mint}`;
             if (!copyTradeAlerts.current.has(alertKey)) {
@@ -273,6 +279,8 @@ export function useLiveData() {
           // Update lastActivity on sell
           if (walletScores.current[wallet]) walletScores.current[wallet].lastActivity = now;
           td.wallets[wallet].lastSellTime = now;
+          // Capture mcap at time of sell for accurate exit display
+          td.wallets[wallet].exitMcap = tdMcapUsd(td);
 
           // ─── SELL VELOCITY ───
           td.sellTimes.push(now);
@@ -1764,7 +1772,9 @@ export function useLiveData() {
             // HOLD: alive token, position still open, outcome not yet determined
             const walletHold = !walletWin && !walletLoss && tokenAlive;
 
-            const exitMcap = t.mcap || 0;
+            const exitMcap = walletLoss || walletWin
+              ? (data.exitMcap || t.mcap || 0)   // use mcap captured at actual sell time
+              : (t.mcap || 0);                    // for holds, use current mcap
             const entryMcap = data.entryMcap || 0;
 
             // ── WIN ──
@@ -1775,7 +1785,7 @@ export function useLiveData() {
                 ws.holdAddrs.delete(t.addr);
                 ws.holdTokens = ws.holdTokens.filter(n => n !== t.name);
                 const holdTrade = ws.trades.find(tr => tr.addr === t.addr && tr.type === "HOLD");
-                if (holdTrade) { holdTrade.type = "WIN"; holdTrade.mcap = exitMcap; holdTrade.sold = data.sold; holdTrade.pnl = pnl; }
+                if (holdTrade) { holdTrade.type = "WIN"; holdTrade.mcap = data.exitMcap||exitMcap; holdTrade.sold = data.sold; holdTrade.pnl = pnl; }
               } else {
                 ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "WIN", mcap: exitMcap, entryMcap, pnl,
                   entryTime: data.firstBuyTime || now3, exitTime: data.lastSellTime || now3,
@@ -1801,7 +1811,7 @@ export function useLiveData() {
                 ws.holdAddrs.delete(t.addr);
                 ws.holdTokens = ws.holdTokens.filter(n => n !== t.name);
                 const holdTrade = ws.trades.find(tr => tr.addr === t.addr && tr.type === "HOLD");
-                if (holdTrade) { holdTrade.type = "LOSS"; holdTrade.mcap = exitMcap; holdTrade.sold = data.sold; holdTrade.pnl = pnl; }
+                if (holdTrade) { holdTrade.type = "LOSS"; holdTrade.mcap = data.exitMcap||exitMcap; holdTrade.sold = data.sold; holdTrade.pnl = pnl; }
               } else {
                 ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "LOSS", mcap: exitMcap, entryMcap, pnl,
                   entryTime: data.firstBuyTime || now3, exitTime: data.lastSellTime || now3,
@@ -1925,7 +1935,10 @@ export function useLiveData() {
           bestToken: best || s.bestToken, bestPct: bestPct || s.bestPct,
           smartWallets: Object.values(walletScores.current).filter(w => {
             const total = w.wins + (w.losses || 0);
-            return w.wins >= 3 && total >= 4 && (w.wins / total) >= 0.60 && w.wins > (w.losses || 0);
+            const unrealized = (w.trades||[]).filter(tr=>tr.type==="HOLD")
+              .reduce((s,tr)=>s+(tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol)),0);
+            const adjustedPnl = (w.totalPnl||0) + unrealized;
+            return w.wins >= 3 && total >= 4 && (w.wins / total) >= 0.60 && w.wins > (w.losses || 0) && adjustedPnl > 0;
           }).length,
           solPrice: SOL_USD, mcapCorr: MCAP_CORRECTION,
         }));

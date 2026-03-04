@@ -4839,40 +4839,43 @@ export default function DegenCommandCenter(){
             WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",letterSpacing:3}}>◈ DEGEN COMMAND CENTER</h1>
           <div style={{fontSize:11,color:NEON.dimText,letterSpacing:2,marginTop:1}}>🌸 SOLANA BATTLEFIELD v6.0 🌸</div>
         </div>
-        {/* ═══ CORRESPONDENT MARQUEE — always visible ═══ */}
-        <div style={{flex:1,margin:"0 14px",height:32,overflow:"hidden",position:"relative",
-          background:"rgba(0,12,24,0.8)",border:"1px solid rgba(0,255,204,0.2)",borderRadius:4}}>
+        {/* ═══ CORRESPONDENT MARQUEE — expands when active ═══ */}
+        <div style={{flex:1,margin:"0 14px",height:corrDisplay.visible?52:32,overflow:"hidden",position:"relative",
+          background:corrDisplay.visible?"rgba(0,6,14,0.97)":"rgba(0,12,24,0.8)",
+          border:`1px solid ${corrDisplay.visible?(corrDisplay.mood==="alarm"?"rgba(255,50,50,0.5)":corrDisplay.mood==="hype"?"rgba(57,255,20,0.4)":"rgba(0,255,204,0.35)"):"rgba(0,255,204,0.2)"}`,
+          borderRadius:4,transition:"height 0.3s ease, background 0.3s ease, border-color 0.3s ease",
+          boxShadow:corrDisplay.visible?`0 0 20px ${corrDisplay.mood==="alarm"?"rgba(255,50,50,0.15)":corrDisplay.mood==="hype"?"rgba(57,255,20,0.1)":"rgba(0,255,204,0.1)"}`:undefined}}>
           {/* Scan lines */}
           <div style={{position:"absolute",inset:0,
             background:"repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,255,204,0.02) 2px,rgba(0,255,204,0.02) 4px)",
             pointerEvents:"none",zIndex:2}}/>
           {/* Robot icon left */}
-          <div style={{position:"absolute",left:0,top:0,bottom:0,width:30,
+          <div style={{position:"absolute",left:0,top:0,bottom:0,width:corrDisplay.visible?40:30,
             background:"linear-gradient(180deg,rgba(0,255,204,0.06),rgba(0,40,60,0.2))",
             borderRight:"1px solid rgba(0,255,204,0.12)",
-            display:"flex",alignItems:"center",justifyContent:"center",zIndex:3}}>
-            <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1}}>
-              <div style={{display:"flex",gap:1}}>
-                {[0,1].map(i=><div key={i} style={{width:7,height:5,borderRadius:"2px 2px 0 0",
+            display:"flex",alignItems:"center",justifyContent:"center",zIndex:3,transition:"width 0.3s"}}>
+            <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+              <div style={{display:"flex",gap:2}}>
+                {[0,1].map(i=><div key={i} style={{width:corrDisplay.visible?9:7,height:corrDisplay.visible?7:5,borderRadius:"2px 2px 0 0",
                   background:"#0d1e2e",border:"1px solid rgba(0,255,204,0.3)",
-                  display:"flex",alignItems:"center",justifyContent:"center"}}>
-                  <div style={{width:3,height:3,borderRadius:"50%",
+                  display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.3s"}}>
+                  <div style={{width:corrDisplay.visible?5:3,height:corrDisplay.visible?5:3,borderRadius:"50%",transition:"all 0.3s",
                     background:corrDisplay.visible?(corrDisplay.mood==="hype"?"#39ff14":corrDisplay.mood==="alarm"?"#ff3333":corrDisplay.mood==="sus"?"#ffd740":"#00ccff"):"#00ccff",
-                    boxShadow:`0 0 3px ${corrDisplay.visible&&corrDisplay.mood==="alarm"?"#ff3333":"#00ccff"}`}}/>
+                    boxShadow:`0 0 ${corrDisplay.visible?6:3}px ${corrDisplay.visible&&corrDisplay.mood==="alarm"?"#ff3333":"#00ccff"}`}}/>
                 </div>)}
               </div>
-              <div style={{width:14,height:6,borderRadius:1,background:"#1a2a3a",border:"1px solid rgba(0,255,204,0.12)"}}/>
+              <div style={{width:corrDisplay.visible?18:14,height:corrDisplay.visible?8:6,borderRadius:1,background:"#1a2a3a",border:"1px solid rgba(0,255,204,0.12)",transition:"all 0.3s"}}/>
             </div>
           </div>
           {/* Message area */}
-          <div style={{position:"absolute",left:32,right:4,top:0,bottom:0,display:"flex",flexDirection:"column",justifyContent:"center",
-            padding:"2px 4px",overflow:"hidden"}}>
+          <div style={{position:"absolute",left:corrDisplay.visible?42:32,right:4,top:0,bottom:0,display:"flex",flexDirection:"column",justifyContent:"center",
+            padding:"3px 6px",overflow:"hidden"}}>
             {corrDisplay.visible?<>
-              <div style={{fontSize:7,color:"#00ffcc",fontWeight:700,letterSpacing:2,fontFamily:"'Orbitron',sans-serif",lineHeight:1}}>
+              <div style={{fontSize:corrDisplay.visible?9:7,color:"#00ffcc",fontWeight:700,letterSpacing:2,fontFamily:"'Orbitron',sans-serif",lineHeight:1,marginBottom:3}}>
                 {corrDisplay.mood==="alarm"?"⚠ ALERT":corrDisplay.mood==="sus"?"◉ INTEL":corrDisplay.mood==="rip"?"☠ REPORT":"◈ COMMS"}</div>
-              <div style={{fontSize:10,color:"#e0e0ff",lineHeight:1.2,fontFamily:"'Share Tech Mono',monospace",
-                overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",
-                animation:"marqueeScroll 24s linear"}}>{corrDisplay.msg}</div>
+              <div style={{fontSize:13,color:"#e0e0ff",lineHeight:1.3,fontFamily:"'Share Tech Mono',monospace",
+                overflow:"hidden",whiteSpace:"nowrap",fontWeight:600,letterSpacing:0.5,
+                animation:"marqueeScroll 40s linear"}}>{corrDisplay.msg}</div>
             </>:<>
               <div style={{fontSize:7,color:"rgba(0,255,204,0.3)",fontWeight:700,letterSpacing:2,fontFamily:"'Orbitron',sans-serif",lineHeight:1}}>◈ STANDBY</div>
               <div style={{fontSize:10,color:"rgba(0,255,204,0.15)",fontFamily:"'Share Tech Mono',monospace",lineHeight:1.2,
@@ -5215,12 +5218,24 @@ export default function DegenCommandCenter(){
             {(()=>{
               const wsRef=live.walletScoresRef;
               const allWallets=wsRef?Object.entries(wsRef.current).filter(([,w])=>(w.wins+w.losses+(w.holds||0))>=1).map(([addr,w])=>{
-                const total=w.wins+(w.losses||0);
-                const rate=total>0?Math.round(w.wins/total*100):0;
-                // Compute PnL directly from trade records — avoids accumulation drift
-                const computedPnl=(w.trades||[]).reduce((s,tr)=>s+(tr.pnl||0),0);
-                return{addr,wins:w.wins,losses:w.losses||0,holds:w.holds||0,total,rate,bigWins:w.bigWins||0,totalBought:w.totalBought||0,totalSold:w.totalSold||0,totalPnl:computedPnl,tokens:w.tokens||[],lossTokens:w.lossTokens||[],holdTokens:w.holdTokens||[],trades:w.trades||[]};
-              }).sort((a,b)=>b.totalPnl-a.totalPnl):[];
+                // Only count trades where the coin's ATH cleared $12K — filters out bot noise on micro coins
+                const qualTrades=(w.trades||[]).filter(tr=>(tr.athMcap||0)>=12000||(tr.mcap||0)>=12000);
+                if(qualTrades.length===0)return null; // wallet has no qualifying trades — skip entirely
+                const qualWins=qualTrades.filter(t=>t.type==="WIN").length;
+                const qualLosses=qualTrades.filter(t=>t.type==="LOSS").length;
+                const qualHolds=qualTrades.filter(t=>t.type==="HOLD").length;
+                const total=qualWins+qualLosses;
+                const rate=total>0?Math.round(qualWins/total*100):0;
+                const computedPnl=qualTrades.reduce((s,tr)=>s+(tr.pnl||0),0);
+                const totalBought=qualTrades.reduce((s,tr)=>s+(tr.sol||0),0);
+                const totalSold=qualTrades.reduce((s,tr)=>s+(tr.sold||0),0);
+                return{addr,wins:qualWins,losses:qualLosses,holds:qualHolds,total,rate,
+                  bigWins:w.bigWins||0,totalBought,totalSold,totalPnl:computedPnl,
+                  tokens:qualTrades.filter(t=>t.type==="WIN").map(t=>t.token),
+                  lossTokens:qualTrades.filter(t=>t.type==="LOSS").map(t=>t.token),
+                  holdTokens:qualTrades.filter(t=>t.type==="HOLD").map(t=>t.token),
+                  trades:qualTrades}; // only qualifying trades shown
+              }).filter(Boolean).sort((a,b)=>b.totalPnl-a.totalPnl):[];
               const genius=allWallets.filter(w=>w.rate>=80&&w.total>=2);
               const sharp=allWallets.filter(w=>w.rate>=60&&w.rate<80&&w.total>=2);
               const decent=allWallets.filter(w=>w.rate>=40&&w.rate<60&&w.total>=2);
@@ -5274,6 +5289,46 @@ export default function DegenCommandCenter(){
                         <div style={{fontSize:7,color:NEON.dimText}}>SOL OUT</div></div>
                     </div>
                     {w.bigWins>0&&<div style={{fontSize:10,color:"#ffd740",marginBottom:6}}>🌙 {w.bigWins} big win{w.bigWins>1?"s":""} (100K+ mcap)</div>}
+                    {/* ── UNREALIZED SECTION ── */}
+                    {sigHolds>0&&(()=>{
+                      const holdTrades=w.trades.filter(tr=>tr.type==="HOLD");
+                      const totalUnrealized=holdTrades.reduce((s,tr)=>{
+                        const p=tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol);
+                        return s+p;
+                      },0);
+                      const deeplyUnder=holdTrades.filter(tr=>{
+                        const p=tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol);
+                        return p<-0.15;
+                      });
+                      return(<div style={{marginBottom:6,padding:"6px 8px",borderRadius:5,
+                        background:totalUnrealized>=0?"rgba(57,255,20,0.04)":"rgba(255,7,58,0.06)",
+                        border:`1px solid ${totalUnrealized>=0?"rgba(57,255,20,0.15)":"rgba(255,7,58,0.2)"}`}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                          <span style={{fontSize:9,fontWeight:900,color:"#ffa500",fontFamily:"Orbitron",letterSpacing:1}}>⏳ UNREALIZED</span>
+                          <span style={{fontSize:13,fontWeight:900,color:totalUnrealized>=0?NEON.green:NEON.red,fontFamily:"Orbitron"}}>
+                            {totalUnrealized>=0?"+":""}{totalUnrealized.toFixed(2)} SOL</span>
+                        </div>
+                        {holdTrades.map((tr,hi)=>{
+                          const p=tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol);
+                          return(<div key={hi} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+                            padding:"2px 4px",marginBottom:1,borderRadius:3,fontSize:9,
+                            background:p>=0?"rgba(57,255,20,0.03)":"rgba(255,7,58,0.04)"}}>
+                            <div style={{display:"flex",alignItems:"center",gap:4}}>
+                              <span onClick={()=>selectByName(tr.token)} style={{color:NEON.text,cursor:"pointer",fontWeight:700,
+                                textDecoration:"underline",textDecorationStyle:"dotted",textUnderlineOffset:2}}>{tr.token}</span>
+                              <span onClick={()=>clickAddr(tr.addr)} style={{fontSize:7,color:NEON.cyan,cursor:"pointer",
+                                background:"rgba(0,255,255,0.06)",padding:"0px 3px",borderRadius:2,fontFamily:"monospace"}}>CA</span>
+                            </div>
+                            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                              <span style={{color:NEON.dimText,fontSize:8}}>in <span style={{color:NEON.cyan}}>${formatNum(tr.entryMcap||0)}</span></span>
+                              <span style={{fontSize:10,fontWeight:900,color:p>=0?NEON.green:NEON.red}}>{p>=0?"+":""}{p.toFixed(2)}</span>
+                            </div>
+                          </div>);
+                        })}
+                        {deeplyUnder.length>0&&<div style={{fontSize:8,color:NEON.red,marginTop:3,opacity:0.8}}>
+                          ⚠ {deeplyUnder.length} hold{deeplyUnder.length>1?"s":""} deeply underwater — check real win rate</div>}
+                      </div>);
+                    })()}
                   </div>
                   <div style={{fontSize:10,fontWeight:900,color:"#ffa500",fontFamily:"Orbitron",letterSpacing:0.5,marginBottom:4}}>TRADES</div>
                   {w.trades.length===0&&<div style={{color:NEON.dimText,fontSize:10,padding:8}}>No trade details recorded yet</div>}
