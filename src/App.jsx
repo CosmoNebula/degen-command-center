@@ -1274,8 +1274,6 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         ctx.imageSmoothingEnabled=true;
         ctx.font="bold 10px 'Orbitron'";ctx.fillStyle="#ffd740";ctx.shadowColor="#ffd740";ctx.shadowBlur=6;
         ctx.textAlign="center";ctx.fillText("FAT MONKEY & THE GRATEFUL DEAD",mx-12*px,feetY+12);
-        ctx.font="bold 7px 'Orbitron'";ctx.fillStyle="rgba(255,215,64,0.5)";
-        ctx.fillText("🌹 what a long strange trip 🌹",mx-12*px,feetY+22);
         ctx.textAlign="left";ctx.shadowBlur=0;
         ctx.restore();
 
@@ -1420,6 +1418,163 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
             ctx.fillRect(0,ewY,W,H/4);
           }
 
+          // ── BATS — "WE CAN'T STOP HERE THIS IS BAT COUNTRY" ──
+          for(let bi2=0;bi2<10;bi2++){
+            const bx2=((bi2*113+tf*2.5)%(W+200))-100;
+            const by2=H*0.15+Math.sin(tf*0.03+bi2*1.7)*H*0.2+Math.cos(tf*0.05+bi2*0.9)*H*0.1;
+            const bSize=12+Math.sin(tf*0.07+bi2)*5;
+            const wingFlap=Math.sin(tf*0.15+bi2*2)*0.6;
+            ctx.save();ctx.translate(bx2,by2);
+            ctx.fillStyle=`rgba(30,0,40,${tripAlpha*0.8})`;
+            // Body
+            ctx.beginPath();ctx.ellipse(0,0,bSize*0.3,bSize*0.15,0,0,Math.PI*2);ctx.fill();
+            // Left wing
+            ctx.beginPath();ctx.moveTo(-bSize*0.2,0);
+            ctx.quadraticCurveTo(-bSize*0.6,-bSize*(0.4+wingFlap),-bSize,bSize*0.1*wingFlap);
+            ctx.quadraticCurveTo(-bSize*0.5,bSize*0.1,-bSize*0.2,0);ctx.fill();
+            // Right wing
+            ctx.beginPath();ctx.moveTo(bSize*0.2,0);
+            ctx.quadraticCurveTo(bSize*0.6,-bSize*(0.4+wingFlap),bSize,bSize*0.1*wingFlap);
+            ctx.quadraticCurveTo(bSize*0.5,bSize*0.1,bSize*0.2,0);ctx.fill();
+            // Eyes — tiny red dots
+            ctx.fillStyle=`rgba(255,0,0,${tripAlpha*0.9})`;
+            ctx.fillRect(-bSize*0.12,-bSize*0.05,2,2);
+            ctx.fillRect(bSize*0.08,-bSize*0.05,2,2);
+            ctx.restore();
+          }
+
+          // ── PINK ELEPHANTS ON PARADE ──
+          for(let pe=0;pe<4;pe++){
+            const peX=((pe*W/3+tf*1.2)%(W+160))-80;
+            const peY=H*0.6+Math.sin(tf*0.015+pe*1.5)*H*0.15;
+            const peS=25+Math.sin(tf*0.02+pe)*8;
+            const peWobble=Math.sin(tf*0.04+pe)*0.15;
+            ctx.save();ctx.translate(peX,peY);ctx.rotate(peWobble);
+            const pCol=`hsla(${320+pe*15},70%,70%,${tripAlpha*0.6})`;
+            // Body
+            ctx.fillStyle=pCol;
+            ctx.beginPath();ctx.ellipse(0,0,peS,peS*0.65,0,0,Math.PI*2);ctx.fill();
+            // Head
+            ctx.beginPath();ctx.ellipse(peS*0.8,-peS*0.3,peS*0.45,peS*0.4,0,0,Math.PI*2);ctx.fill();
+            // Trunk — wavy
+            ctx.strokeStyle=pCol;ctx.lineWidth=peS*0.15;
+            ctx.beginPath();ctx.moveTo(peS*1.15,-peS*0.35);
+            ctx.quadraticCurveTo(peS*1.4,-peS*0.6+Math.sin(tf*0.06+pe)*peS*0.3,peS*1.6,-peS*0.2+Math.sin(tf*0.08+pe)*peS*0.2);
+            ctx.stroke();
+            // Ear
+            ctx.fillStyle=`hsla(${330+pe*15},80%,80%,${tripAlpha*0.5})`;
+            ctx.beginPath();ctx.ellipse(peS*0.5,-peS*0.5,peS*0.3,peS*0.4,0,0,Math.PI*2);ctx.fill();
+            // Legs — stubby
+            ctx.fillStyle=pCol;
+            [-0.5,-0.15,0.15,0.5].forEach(lx=>{
+              ctx.fillRect(lx*peS-peS*0.06,peS*0.45,peS*0.12,peS*0.4);
+            });
+            // Googly eye
+            ctx.fillStyle=`rgba(255,255,255,${tripAlpha*0.9})`;
+            ctx.beginPath();ctx.arc(peS*1,-peS*0.35,peS*0.12,0,Math.PI*2);ctx.fill();
+            ctx.fillStyle=`rgba(0,0,0,${tripAlpha*0.9})`;
+            ctx.beginPath();ctx.arc(peS*1.02+Math.sin(tf*0.1)*2,-peS*0.35,peS*0.06,0,Math.PI*2);ctx.fill();
+            // Sparkle trail
+            for(let ss2=0;ss2<3;ss2++){
+              ctx.fillStyle=`hsla(${(tf*5+ss2*120+pe*90)%360},100%,80%,${tripAlpha*0.4})`;
+              ctx.fillRect(-peS*0.8-ss2*12+Math.sin(tf*0.1+ss2)*5,Math.sin(tf*0.06+ss2*2)*8,5,5);
+            }
+            ctx.restore();
+          }
+
+          // ── MELTING CLOCKS (Dali style) ──
+          for(let mc3=0;mc3<3;mc3++){
+            const clkX=W*(0.15+mc3*0.35)+Math.sin(tf*0.01+mc3)*30;
+            const clkY=H*(0.25+mc3*0.15)+Math.sin(tf*0.015+mc3*2)*20;
+            const clkS=20+Math.sin(tf*0.03)*5;
+            ctx.save();ctx.translate(clkX,clkY);
+            // Melted clock body — stretched oval
+            const melt=Math.sin(tf*0.02+mc3)*0.4;
+            ctx.scale(1+melt*0.3,1-melt*0.2);
+            ctx.fillStyle=`hsla(${(tf*2+mc3*120)%360},60%,80%,${tripAlpha*0.4})`;
+            ctx.beginPath();ctx.ellipse(0,0,clkS,clkS*0.8,melt*0.5,0,Math.PI*2);ctx.fill();
+            ctx.strokeStyle=`rgba(0,0,0,${tripAlpha*0.3})`;ctx.lineWidth=1;
+            ctx.stroke();
+            // Clock hands — spinning
+            const hr=tf*0.01+mc3*2;
+            const mn=tf*0.08+mc3;
+            ctx.strokeStyle=`rgba(0,0,0,${tripAlpha*0.5})`;ctx.lineWidth=2;
+            ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(Math.cos(hr)*clkS*0.5,Math.sin(hr)*clkS*0.4);ctx.stroke();
+            ctx.lineWidth=1;
+            ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(Math.cos(mn)*clkS*0.7,Math.sin(mn)*clkS*0.6);ctx.stroke();
+            ctx.restore();
+          }
+
+          // ── THIRD EYE — giant pulsing eye in the sky ──
+          {
+            const eyeCx=W/2+Math.sin(tf*0.008)*W*0.1;
+            const eyeCy=H*0.18+Math.sin(tf*0.012)*20;
+            const eyeS2=40+Math.sin(tf*0.025)*15;
+            const irisHue=(tf*2)%360;
+            const pupilPulse=0.3+Math.sin(tf*0.06)*0.15;
+            ctx.save();ctx.globalAlpha=tripAlpha*0.5;
+            // Outer glow
+            const eyeGlow=ctx.createRadialGradient(eyeCx,eyeCy,eyeS2*0.2,eyeCx,eyeCy,eyeS2*1.5);
+            eyeGlow.addColorStop(0,`hsla(${irisHue},100%,70%,0.3)`);eyeGlow.addColorStop(1,"transparent");
+            ctx.fillStyle=eyeGlow;ctx.fillRect(eyeCx-eyeS2*2,eyeCy-eyeS2*2,eyeS2*4,eyeS2*4);
+            // Eye white
+            ctx.fillStyle=`rgba(255,255,255,0.8)`;
+            ctx.beginPath();ctx.ellipse(eyeCx,eyeCy,eyeS2,eyeS2*0.5,0,0,Math.PI*2);ctx.fill();
+            // Iris
+            ctx.fillStyle=`hsla(${irisHue},100%,50%,0.9)`;
+            ctx.beginPath();ctx.arc(eyeCx,eyeCy,eyeS2*pupilPulse,0,Math.PI*2);ctx.fill();
+            // Pupil
+            ctx.fillStyle="rgba(0,0,0,0.9)";
+            ctx.beginPath();ctx.arc(eyeCx,eyeCy,eyeS2*pupilPulse*0.4,0,Math.PI*2);ctx.fill();
+            // Pupil reflection
+            ctx.fillStyle="rgba(255,255,255,0.7)";
+            ctx.beginPath();ctx.arc(eyeCx-eyeS2*0.08,eyeCy-eyeS2*0.08,eyeS2*0.06,0,Math.PI*2);ctx.fill();
+            ctx.restore();
+          }
+
+          // ── FLYING RAINBOW WHALES ──
+          for(let fw=0;fw<2;fw++){
+            const fwX=((fw*W/2+tf*1.8)%(W+300))-150;
+            const fwY=H*(0.3+fw*0.25)+Math.sin(tf*0.02+fw*3)*H*0.08;
+            const fwS=30+fw*10;
+            const fwHue=(tf*3+fw*180)%360;
+            ctx.save();ctx.translate(fwX,fwY);
+            ctx.fillStyle=`hsla(${fwHue},80%,60%,${tripAlpha*0.45})`;
+            // Body
+            ctx.beginPath();ctx.ellipse(0,0,fwS*1.2,fwS*0.5,0,0,Math.PI*2);ctx.fill();
+            // Tail
+            ctx.beginPath();ctx.moveTo(-fwS*1.1,0);
+            ctx.lineTo(-fwS*1.7,-fwS*0.4);ctx.lineTo(-fwS*1.7,fwS*0.4);ctx.closePath();ctx.fill();
+            // Eye
+            ctx.fillStyle=`rgba(255,255,255,${tripAlpha*0.8})`;
+            ctx.beginPath();ctx.arc(fwS*0.7,-fwS*0.1,fwS*0.12,0,Math.PI*2);ctx.fill();
+            // Rainbow trail
+            for(let rt=0;rt<6;rt++){
+              ctx.fillStyle=`hsla(${(fwHue+rt*60)%360},100%,70%,${tripAlpha*0.2})`;
+              ctx.fillRect(-fwS*1.2-rt*15,(-3+rt)*3,12,4);
+            }
+            ctx.restore();
+          }
+
+          // ── DRIPPING REALITY — edges melting ──
+          for(let dr=0;dr<20;dr++){
+            const dx4=dr*W/20;
+            const dLen=30+Math.sin(tf*0.03+dr*0.7)*20+Math.sin(tf*0.07+dr*1.3)*10;
+            const dHue2=(tf*2+dr*18)%360;
+            const dGrad=ctx.createLinearGradient(dx4,0,dx4,dLen);
+            dGrad.addColorStop(0,`hsla(${dHue2},100%,60%,${tripAlpha*0.3})`);
+            dGrad.addColorStop(1,"transparent");
+            ctx.fillStyle=dGrad;
+            ctx.fillRect(dx4,0,W/20,dLen);
+            // Bottom drips
+            const dLen2=20+Math.sin(tf*0.04+dr*1.1)*15;
+            const dGrad2=ctx.createLinearGradient(dx4,H-dLen2,dx4,H);
+            dGrad2.addColorStop(0,"transparent");
+            dGrad2.addColorStop(1,`hsla(${(dHue2+180)%360},100%,60%,${tripAlpha*0.25})`);
+            ctx.fillStyle=dGrad2;
+            ctx.fillRect(dx4,H-dLen2,W/20,dLen2);
+          }
+
           ctx.restore();
         }
 
@@ -1441,7 +1596,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
           ctx.fillStyle=`rgba(0,0,0,${tmAlpha*0.6})`;
           ctx.fillRect(0,msgY-msgH/2,W,msgH);
           ctx.textAlign="center";
-          const tfs=Math.round(Math.min(W*0.05,36));
+          const tfs=Math.round(Math.min(W*0.035,28));
           ctx.font=`bold ${tfs}px 'Orbitron'`;
           const msgText="WHAT A LONG STRANGE TRIP IT'S BEEN";
           for(let ci=0;ci<msgText.length;ci++){
@@ -3153,7 +3308,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         {c:"The GOAT has entered the battlefield!",r:"Greatest Of All Time? Nahhh just a regular Tuesday for me!"},
       ];
       const fmCrewLines=[
-        {name:"JERRY",line:"What a long strange trip this has been..."},
+        {name:"JERRY",line:"The music never stops... neither does this ape!"},
         {name:"JERRY",line:"Keep on truckin' Fat Monkey!"},
         {name:"JERRY",line:"This ape is touched with FIRE!"},
         {name:"JERRY",line:"The wheel is turnin' and he can't slow down!"},
@@ -3215,14 +3370,41 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
 
       const fmActive=fatMonkeyRef.current.active;
       const jcActive=jaycShipRef.current.active;
+      const tripOn=fatMonkeyRef.current.tripActive;
+
+      // Trip-mode banter — Fear & Loathing + Cheech & Chong
+      const tripChat=[
+        {c:"We can't stop here... this is BAT COUNTRY!",r:"BATS?! WHERE?! Oh wait those are tokens kehd..."},
+        {c:"I think the drugs are beginning to take hold...",r:"Dude I can TASTE the colors right now!"},
+        {c:"As your attorney, I advise you to buy the dip.",r:"My attorney is a 200 pound ape from Bahston!"},
+        {c:"The only thing that worried me was the ether.",r:"Is that... is that chart BREATHING?!"},
+        {c:"Too weird to live, too rare to rug!",r:"That's what I tell myself every mornin' kehd!"},
+        {c:"Hey man am I driving ok?",r:"I think we're parked bro... ON THE MOON!"},
+        {c:"Dave's not here man!",r:"No man I'M Dave! Wait... who's Dave?"},
+        {c:"This token is making me see pink elephants!",r:"Those aren't elephants those are GAINS baby!"},
+        {c:"I think my wallet is melting...",r:"Your wallet? BRO THE WHOLE BLOCKCHAIN IS MELTING!"},
+        {c:"We had two bags of SOL, 75 memecoins...",r:"And a whole galaxy of multi-colored tokens!"},
+        {c:"Hey man you want to get high?",r:"I'M ALREADY HIGH... on UNREALIZED GAINS!"},
+        {c:"I see the machine elves and they're BULLISH!",r:"The elves told me to APEEE INNNN!"},
+      ];
+      const tripCrewLines=[
+        {name:"JERRY",line:"If you get confused just listen to the music play..."},
+        {name:"JERRY",line:"Once in a while you get shown the light in the strangest of places if you look at it right..."},
+        {name:"BOB",line:"I need a miracle every day! ...and this trip is delivering!"},
+        {name:"PHIL",line:"The waveforms are BEAUTIFUL right now..."},
+        {name:"BILLY",line:"*drums are melting* THIS IS FINE"},
+        {name:"MICKEY",line:"*the beam has become SENTIENT*"},
+      ];
 
       // Phase 1: Claude speaks (only when no bubbles active)
       if(fmActive&&!ai.chatBubble&&!ai.replyBubble&&!ai.crewBubble&&ai.chatCooldown<=0){
-        const pick2=fmChat[Math.floor(Math.random()*fmChat.length)];
+        const chatPool=tripOn?tripChat:fmChat;
+        const crewPool=tripOn?tripCrewLines:fmCrewLines;
+        const pick2=chatPool[Math.floor(Math.random()*chatPool.length)];
         ai.chatBubble=pick2.c;ai.chatTimer=120;ai.chatTarget="FM";
         ai.replyBubble=pick2.r;ai.replyTimer=190;
         // Queue crew response
-        const crewPick=fmCrewLines[Math.floor(Math.random()*fmCrewLines.length)];
+        const crewPick=crewPool[Math.floor(Math.random()*crewPool.length)];
         ai.crewName=crewPick.name;ai.crewBubble=crewPick.line;ai.crewTimer=280;ai.crewSlot=0;
         ai.chatCooldown=340;
       }
