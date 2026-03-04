@@ -3806,7 +3806,7 @@ export default function DegenCommandCenter(){
             ],[
               {id:"HISTORY",icon:"📜",label:"HISTORY",color:"#8b5cf6",count:lockHistory.length},
               {id:"AI",icon:"🤖",label:"CLAUDE",color:"#00c8ff",count:aiObservations.length},
-              {id:"REPORT",icon:"💰",label:"WALLETS",color:"#ffa500",count:live.walletScoresRef?Object.values(live.walletScoresRef.current).filter(w=>w.wins>=4&&(w.wins/(w.wins+(w.losses||0)))>=0.25).length:0},
+              {id:"REPORT",icon:"💰",label:"WALLETS",color:"#ffa500",count:live.walletScoresRef?Object.values(live.walletScoresRef.current).filter(w=>w.wins>=3&&(w.wins/(w.wins+(w.losses||0)))>=0.15).length:0},
             ]].map((row,ri)=>(
               <div key={ri} style={{display:"flex"}}>
                 {row.map(tab=>(
@@ -4114,10 +4114,12 @@ export default function DegenCommandCenter(){
                 const rate=total>0?Math.round(w.wins/total*100):0;
                 return{addr,wins:w.wins,losses:w.losses||0,total,rate,bigWins:w.bigWins||0,totalBought:w.totalBought||0,tokens:w.tokens||[],lossTokens:w.lossTokens||[],trades:w.trades||[]};
               }).sort((a,b)=>b.rate-a.rate||b.wins-a.wins):[];
-              const genius=allWallets.filter(w=>w.rate>=80&&w.wins>=4);
-              const sharp=allWallets.filter(w=>w.rate>=60&&w.rate<80&&w.wins>=4);
-              const decent=allWallets.filter(w=>w.rate>=40&&w.rate<60&&w.wins>=4);
-              const all4plus=allWallets.filter(w=>w.wins>=4);
+              const genius=allWallets.filter(w=>w.rate>=80&&w.wins>=3);
+              const sharp=allWallets.filter(w=>w.rate>=60&&w.rate<80&&w.wins>=3);
+              const decent=allWallets.filter(w=>w.rate>=40&&w.rate<60&&w.wins>=3);
+              const lucky=allWallets.filter(w=>w.rate>=20&&w.rate<40&&w.wins>=3);
+              const degen=allWallets.filter(w=>w.rate>=5&&w.rate<20&&w.wins>=3);
+              const all3plus=allWallets.filter(w=>w.wins>=3);
 
               if(reportView==="detail"&&selectedWallet){
                 const w=allWallets.find(w2=>w2.addr===selectedWallet);
@@ -4171,8 +4173,8 @@ export default function DegenCommandCenter(){
               }
 
               if(reportView==="list"&&reportTier){
-                const tierWallets=reportTier==="GENIUS"?genius:reportTier==="SHARP"?sharp:reportTier==="DECENT"?decent:all4plus;
-                const tierColor2=reportTier==="GENIUS"?"#ffd740":reportTier==="SHARP"?"#00e5ff":"#ffa500";
+                const tierWallets=reportTier==="GENIUS"?genius:reportTier==="SHARP"?sharp:reportTier==="DECENT"?decent:reportTier==="LUCKY"?lucky:reportTier==="DEGEN"?degen:all3plus;
+                const tierColor2=reportTier==="GENIUS"?"#ffd740":reportTier==="SHARP"?"#00e5ff":reportTier==="DECENT"?"#ffa500":reportTier==="LUCKY"?"#ba68c8":"#ff5252";
                 return(<div>
                   <div onClick={()=>{setReportView("tiers");setReportTier(null);}}
                     style={{cursor:"pointer",fontSize:10,color:NEON.cyan,padding:"4px 0",marginBottom:6}}>← BACK TO TIERS</div>
@@ -4204,6 +4206,8 @@ export default function DegenCommandCenter(){
                   {tier:"GENIUS",label:"🧠 GENIUS",desc:"80-100% win rate",wallets:genius,color:"#ffd740",bg:"rgba(255,215,64,0.06)"},
                   {tier:"SHARP",label:"⚡ SHARP",desc:"60-79% win rate",wallets:sharp,color:"#00e5ff",bg:"rgba(0,229,255,0.04)"},
                   {tier:"DECENT",label:"📊 DECENT",desc:"40-59% win rate",wallets:decent,color:"#ffa500",bg:"rgba(255,165,0,0.04)"},
+                  {tier:"LUCKY",label:"🍀 LUCKY",desc:"20-39% win rate",wallets:lucky,color:"#ba68c8",bg:"rgba(186,104,200,0.04)"},
+                  {tier:"DEGEN",label:"💀 DEGEN",desc:"5-19% win rate",wallets:degen,color:"#ff5252",bg:"rgba(255,82,82,0.04)"},
                 ].map((t2,ti2)=>(
                   <div key={ti2} onClick={()=>{setReportTier(t2.tier);setReportView("list");}}
                     style={{cursor:"pointer",marginBottom:6,borderRadius:6,overflow:"hidden",
@@ -4212,7 +4216,7 @@ export default function DegenCommandCenter(){
                     <div style={{padding:"8px 10px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                       <div>
                         <div style={{fontSize:12,fontWeight:900,color:t2.color,fontFamily:"Orbitron"}}>{t2.label}</div>
-                        <div style={{fontSize:9,color:NEON.dimText,marginTop:2}}>{t2.desc} · 4+ wins req</div>
+                        <div style={{fontSize:9,color:NEON.dimText,marginTop:2}}>{t2.desc} · 3+ wins req</div>
                       </div>
                       <div style={{textAlign:"right"}}>
                         <div style={{fontSize:22,fontWeight:900,color:t2.color,fontFamily:"Orbitron"}}>{t2.wallets.length}</div>
@@ -4226,7 +4230,7 @@ export default function DegenCommandCenter(){
                 ))}
                 <div style={{marginTop:12,padding:"6px 8px",background:"rgba(255,255,255,0.02)",borderRadius:4,
                   fontSize:10,color:NEON.dimText,lineHeight:1.5,textAlign:"center"}}>
-                  Wallets need <b style={{color:NEON.cyan}}>4+ wins</b> to qualify.<br/>
+                  Wallets need <b style={{color:NEON.cyan}}>3+ wins</b> to qualify.<br/>
                   Spray-and-pray wallets (10:1 L:W) auto-purged.<br/>
                   <span style={{color:NEON.dimText,fontSize:9}}>{allWallets.filter(w=>w.wins>=1).length} wallets tracked this session</span>
                 </div>

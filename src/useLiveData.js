@@ -243,7 +243,7 @@ export function useLiveData() {
           const ws = walletScores.current[wallet];
           const wsTotal = ws ? (ws.wins + ws.losses) : 0;
           const wsRate = wsTotal > 0 ? ws.wins / wsTotal : 0;
-          if (ws && ws.wins >= 4 && wsRate >= 0.25 && sol > 0.3) {
+          if (ws && ws.wins >= 3 && wsRate >= 0.15 && sol > 0.3) {
             td.smartWallets.add(wallet);
             const alertKey = `${wallet.slice(0,8)}-${mint}`;
             if (!copyTradeAlerts.current.has(alertKey)) {
@@ -612,7 +612,7 @@ export function useLiveData() {
           const ws = walletScores.current[w];
           const wsTotal2 = ws ? (ws.wins + ws.losses) : 0;
           const wsRate2 = wsTotal2 > 0 ? ws.wins / wsTotal2 : 0;
-          if (ws && ws.wins >= 4 && wsRate2 >= 0.25) {
+          if (ws && ws.wins >= 3 && wsRate2 >= 0.15) {
             smartSet.add(w);
             const wd = td.wallets[w];
             if (wd && (wd.bought - wd.sold) > 0.01) {
@@ -1725,7 +1725,7 @@ export function useLiveData() {
               ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "WIN", mcap: t.mcap, time: Date.now() });
               if (ws.trades.length > 50) ws.trades = ws.trades.slice(-50);
               if (t.mcap > 100000) ws.bigWins = (ws.bigWins || 0) + 1;
-              if (ws.wins === 4) console.log(`[SMART$] 🧠 Wallet ${w.slice(0,8)} hit 4 wins: ${ws.tokens.join(", ")}`);
+              if (ws.wins === 3) console.log(`[SMART$] 🧠 Wallet ${w.slice(0,8)} hit 3 wins: ${ws.tokens.join(", ")}`);
               if (ws.wins === 6) console.log(`[SMART$] 🧠🧠 Wallet ${w.slice(0,8)} hit 6 WINS: ${ws.tokens.join(", ")}`);
             }
             
@@ -1812,7 +1812,7 @@ export function useLiveData() {
           bestToken: best || s.bestToken, bestPct: bestPct || s.bestPct,
           smartWallets: Object.values(walletScores.current).filter(w => {
             const total = w.wins + (w.losses || 0);
-            return w.wins >= 4 && total > 0 && (w.wins / total) >= 0.25;
+            return w.wins >= 3 && total > 0 && (w.wins / total) >= 0.15;
           }).length,
           solPrice: SOL_USD, mcapCorr: MCAP_CORRECTION,
         }));
