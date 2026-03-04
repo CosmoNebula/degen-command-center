@@ -190,12 +190,17 @@ export function useLiveData() {
         td.lastTradeTime = now;  // track staleness
 
         // Track per-wallet activity
-        if (!td.wallets[wallet]) td.wallets[wallet] = { bought: 0, sold: 0 };
+        if (!td.wallets[wallet]) td.wallets[wallet] = { bought: 0, sold: 0, entryMcap: 0, firstBuyTime: now };
 
         if (trade.type === "buy") {
           td.buys++;
           td.totalBoughtSol += sol;
           td.wallets[wallet].bought += sol;
+          // Store entry mcap on first buy for this wallet on this token
+          if (!td.wallets[wallet].entryMcap) {
+            const mcapNow = (trade.marketCapSol || td.lastMcapSol || 0) * SOL_USD * MCAP_CORRECTION;
+            td.wallets[wallet].entryMcap = mcapNow;
+          }
 
           // ─── FRESH WALLET DETECTION ───
           td.totalBuyers++;
@@ -243,7 +248,7 @@ export function useLiveData() {
           const ws = walletScores.current[wallet];
           const wsTotal = ws ? (ws.wins + ws.losses) : 0;
           const wsRate = wsTotal > 0 ? ws.wins / wsTotal : 0;
-          if (ws && ws.wins >= 3 && wsRate >= 0.15 && sol > 0.3) {
+          if (ws && ws.wins >= 3 && wsRate >= 0.60 && ws.wins > (ws.losses||0) && wsTotal >= 4 && sol > 0.3) {
             td.smartWallets.add(wallet);
             const alertKey = `${wallet.slice(0,8)}-${mint}`;
             if (!copyTradeAlerts.current.has(alertKey)) {
@@ -608,12 +613,14 @@ export function useLiveData() {
         let smartWalletCount = 0;
         const smartSet = td.smartWallets || new Set();
         // Check tracked smart wallets + scan all wallets for new smart money
+        // Also remove wallets that have degraded below threshold
+        const newSmartSet = new Set();
         Object.keys(td.wallets).forEach(w => {
           const ws = walletScores.current[w];
           const wsTotal2 = ws ? (ws.wins + ws.losses) : 0;
           const wsRate2 = wsTotal2 > 0 ? ws.wins / wsTotal2 : 0;
-          if (ws && ws.wins >= 3 && wsRate2 >= 0.15) {
-            smartSet.add(w);
+          if (ws && ws.wins >= 3 && wsRate2 >= 0.60 && ws.wins > (ws.losses||0) && wsTotal2 >= 4) {
+            newSmartSet.add(w);
             const wd = td.wallets[w];
             if (wd && (wd.bought - wd.sold) > 0.01) {
               hasSmartMoney = true;
@@ -621,7 +628,7 @@ export function useLiveData() {
             }
           }
         });
-        td.smartWallets = smartSet;
+        td.smartWallets = newSmartSet;
 
         // 9. NARRATIVE MATCH — is token name trending?
         let narrativeMatch = false;
@@ -1704,6 +1711,7 @@ export function useLiveData() {
   // ═══ SMART MONEY: Score wallets from winning AND losing tokens ═══
   useEffect(() => {
     const iv = setInterval(() => {
+      const now3 = Date.now();
       setTokens(prev => {
         prev.forEach(t => {
           const td = tradeData.current[t.addr];
@@ -1711,87 +1719,107 @@ export function useLiveData() {
           // A "winner" = token that ACTUALLY pumped
           const isWinner = (t.qualified && t.mcap > 50000 && (t.health || 0) > 50) || (t.migrated && t.mcap > 30000);
           // A "loser" = token that died, crashed hard, OR has been stagnant/declining for a while
-          const age = Date.now() - t.timestamp;
+          const age = now3 - t.timestamp;
           const isLoser = ((!t.alive || (t.health || 0) <= 0) && age > 60000) ||
-            (age > 120000 && t.mcap < 5000 && !t.migrated) || // stagnant micro after 2 min
-            (age > 180000 && (t.health || 0) < 30 && t.mcap < 20000); // declining after 3 min
-          // A "hold" = still alive, not yet determined
+            (age > 120000 && t.mcap < 5000 && !t.migrated) ||
+            (age > 180000 && (t.health || 0) < 30 && t.mcap < 20000);
           const isHold = !isWinner && !isLoser && t.alive;
           
           Object.entries(td.wallets).forEach(([w, data]) => {
-            if (data.bought <= 0.3) return; // min 0.3 SOL, not dust
-            if (!walletScores.current[w]) walletScores.current[w] = { wins: 0, losses: 0, holds: 0, tokens: [], lossTokens: [], holdTokens: [], totalBought: 0, bigWins: 0, trades: [] };
+            if (data.bought <= 0.3) return;
+            if (!walletScores.current[w]) walletScores.current[w] = { wins: 0, losses: 0, holds: 0, tokens: [], lossTokens: [], holdTokens: [], totalBought: 0, totalSold: 0, totalPnl: 0, bigWins: 0, trades: [], lastActivity: now3 };
             const ws = walletScores.current[w];
+            ws.lastActivity = now3;
             
-            // Entry mcap = mcap when wallet first bought (estimate from token data)
-            const entryMcap = data.entryMcap || t.mcap;
-            if (!data.entryMcap) data.entryMcap = t.mcap;
+            // Use real entry mcap from buy time
+            const entryMcap = data.entryMcap || 0;
+            const exitMcap = t.mcap || 0;
+            // P&L for this trade in SOL
+            const pnl = (data.sold || 0) - data.bought;
             
             if (isWinner && !ws.tokens.includes(t.name)) {
-              // If it was a hold before, remove from holds and update trade entry
               if (ws.holdTokens.includes(t.name)) { 
                 ws.holds = Math.max(0, ws.holds - 1); 
                 ws.holdTokens = ws.holdTokens.filter(n => n !== t.name);
                 const holdTrade = ws.trades.find(tr => tr.token === t.name && tr.type === "HOLD");
-                if (holdTrade) { holdTrade.type = "WIN"; holdTrade.mcap = t.mcap; holdTrade.sold = data.sold; }
+                if (holdTrade) { holdTrade.type = "WIN"; holdTrade.mcap = exitMcap; holdTrade.sold = data.sold; holdTrade.pnl = pnl; }
               } else {
-                ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "WIN", mcap: t.mcap, entryMcap, time: Date.now() });
+                ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "WIN", mcap: exitMcap, entryMcap, pnl, time: now3 });
                 if (ws.trades.length > 50) ws.trades = ws.trades.slice(-50);
               }
               ws.wins++;
               ws.tokens.push(t.name);
               ws.totalBought += data.bought;
-              if (t.mcap > 100000) ws.bigWins = (ws.bigWins || 0) + 1;
+              ws.totalSold += (data.sold || 0);
+              ws.totalPnl += pnl;
+              if (exitMcap > 100000) ws.bigWins = (ws.bigWins || 0) + 1;
               if (ws.wins === 3) console.log(`[SMART$] 🧠 Wallet ${w.slice(0,8)} hit 3 wins: ${ws.tokens.join(", ")}`);
               if (ws.wins === 6) console.log(`[SMART$] 🧠🧠 Wallet ${w.slice(0,8)} hit 6 WINS: ${ws.tokens.join(", ")}`);
             }
             
             if (isLoser && !ws.lossTokens.includes(t.name)) {
-              // If it was a hold before, remove from holds and update trade entry
               if (ws.holdTokens.includes(t.name)) { 
                 ws.holds = Math.max(0, ws.holds - 1); 
                 ws.holdTokens = ws.holdTokens.filter(n => n !== t.name);
                 const holdTrade = ws.trades.find(tr => tr.token === t.name && tr.type === "HOLD");
-                if (holdTrade) { holdTrade.type = "LOSS"; holdTrade.mcap = t.mcap; holdTrade.sold = data.sold; }
+                if (holdTrade) { holdTrade.type = "LOSS"; holdTrade.mcap = exitMcap; holdTrade.sold = data.sold; holdTrade.pnl = pnl; }
               } else {
-                ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "LOSS", mcap: t.mcap, entryMcap, time: Date.now() });
+                ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "LOSS", mcap: exitMcap, entryMcap, pnl, time: now3 });
                 if (ws.trades.length > 50) ws.trades = ws.trades.slice(-50);
               }
               ws.losses++;
               ws.lossTokens.push(t.name);
+              ws.totalSold += (data.sold || 0);
+              ws.totalPnl += pnl;
             }
             
             if (isHold && !ws.tokens.includes(t.name) && !ws.lossTokens.includes(t.name) && !ws.holdTokens.includes(t.name)) {
               ws.holds = (ws.holds || 0) + 1;
               ws.holdTokens = ws.holdTokens || [];
               ws.holdTokens.push(t.name);
-              ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "HOLD", mcap: t.mcap, entryMcap, time: Date.now() });
+              ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "HOLD", mcap: exitMcap, entryMcap, pnl, time: now3 });
               if (ws.trades.length > 50) ws.trades = ws.trades.slice(-50);
             }
-            // Update existing HOLD entries with current mcap and sold
+            // Update existing HOLD entries with current mcap, sold, and pnl
             if (isHold) {
               const existTrade = ws.trades.find(tr => tr.token === t.name && tr.type === "HOLD");
-              if (existTrade) { existTrade.mcap = t.mcap; existTrade.sold = data.sold; }
+              if (existTrade) { existTrade.mcap = exitMcap; existTrade.sold = data.sold; existTrade.pnl = pnl; }
             }
           });
         });
         return prev;
       });
-      // Cap wallet scores
+      // ── SMART PRUNING ──
       const keys = Object.keys(walletScores.current);
+      // Hard cap
       if (keys.length > 5000) {
         const sorted = keys.sort((a, b) => (walletScores.current[b]?.wins || 0) - (walletScores.current[a]?.wins || 0));
-        const keep = new Set(sorted.slice(0, 3000));
+        const keep = new Set(sorted.slice(0, 2000));
         keys.forEach(k => { if (!keep.has(k)) delete walletScores.current[k]; });
       }
       // Purge spray-and-pray wallets (10:1+ loss:win ratio)
+      // Purge no-win no-hold wallets after 2 min of inactivity
+      // Purge 1W/1L/0H wallets after 5 min of inactivity
       Object.keys(walletScores.current).forEach(k => {
         const ws = walletScores.current[k];
+        const idle = now3 - (ws.lastActivity || 0);
         if (ws.losses > 10 && ws.wins > 0 && ws.losses / ws.wins >= 10) {
-          delete walletScores.current[k];
+          delete walletScores.current[k]; return;
+        }
+        // No wins, no holds, only losses — purge after 2 min idle
+        if (ws.wins === 0 && (ws.holds || 0) === 0 && idle > 120000) {
+          delete walletScores.current[k]; return;
+        }
+        // 1 win, 1+ loss, no holds — mediocre, purge after 5 min idle
+        if (ws.wins <= 1 && ws.losses >= 1 && (ws.holds || 0) === 0 && idle > 300000) {
+          delete walletScores.current[k]; return;
+        }
+        // 0 wins, 0 losses, only holds that never resolved — purge after 10 min idle
+        if (ws.wins === 0 && ws.losses === 0 && idle > 600000) {
+          delete walletScores.current[k]; return;
         }
       });
-    }, 10000);
+    }, 3000);
     return () => clearInterval(iv);
   }, []);
 
@@ -1850,7 +1878,7 @@ export function useLiveData() {
           bestToken: best || s.bestToken, bestPct: bestPct || s.bestPct,
           smartWallets: Object.values(walletScores.current).filter(w => {
             const total = w.wins + (w.losses || 0);
-            return w.wins >= 3 && total > 0 && (w.wins / total) >= 0.15;
+            return w.wins >= 3 && total >= 4 && (w.wins / total) >= 0.60 && w.wins > (w.losses || 0);
           }).length,
           solPrice: SOL_USD, mcapCorr: MCAP_CORRECTION,
         }));

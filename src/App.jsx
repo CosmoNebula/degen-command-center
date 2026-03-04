@@ -3968,6 +3968,7 @@ export default function DegenCommandCenter(){
   };
   const clickAddr=(addr)=>{const t=tokens.find(x=>x.addr===addr);if(t)setSelectedToken(t);};
   const selectByName=(name)=>{const t=tokens.find(x=>x.name===name);if(t)setSelectedToken(t);};
+  const viewWalletDetail=(walletAddr)=>{setLeftTab("REPORT");setSelectedWallet(walletAddr);setReportView("detail");};
   const [leftTab,setLeftTab]=useState("SCANNER");
   const [showMenu,setShowMenu]=useState(false);
   const [intelEvents,setIntelEvents]=useState([]);
@@ -5213,7 +5214,7 @@ export default function DegenCommandCenter(){
               const allWallets=wsRef?Object.entries(wsRef.current).filter(([,w])=>(w.wins+w.losses+(w.holds||0))>=1).map(([addr,w])=>{
                 const total=w.wins+(w.losses||0);
                 const rate=total>0?Math.round(w.wins/total*100):0;
-                return{addr,wins:w.wins,losses:w.losses||0,holds:w.holds||0,total,rate,bigWins:w.bigWins||0,totalBought:w.totalBought||0,tokens:w.tokens||[],lossTokens:w.lossTokens||[],holdTokens:w.holdTokens||[],trades:w.trades||[]};
+                return{addr,wins:w.wins,losses:w.losses||0,holds:w.holds||0,total,rate,bigWins:w.bigWins||0,totalBought:w.totalBought||0,totalSold:w.totalSold||0,totalPnl:w.totalPnl||0,tokens:w.tokens||[],lossTokens:w.lossTokens||[],holdTokens:w.holdTokens||[],trades:w.trades||[]};
               }).sort((a,b)=>b.wins-a.wins||b.rate-a.rate):[];
               const genius=allWallets.filter(w=>w.rate>=80&&w.total>=2);
               const sharp=allWallets.filter(w=>w.rate>=60&&w.rate<80&&w.total>=2);
@@ -5240,7 +5241,7 @@ export default function DegenCommandCenter(){
                     <div onClick={()=>{navigator.clipboard.writeText(w.addr);}}
                       style={{cursor:"pointer",fontSize:10,fontWeight:700,color:"#111",background:tierColor,
                         borderRadius:4,padding:"4px 8px",textAlign:"center",marginBottom:8}}>📋 COPY ADDRESS</div>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:4,marginBottom:8}}>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:4,marginBottom:4}}>
                       <div style={{background:"rgba(0,255,0,0.05)",borderRadius:4,padding:"4px",textAlign:"center"}}>
                         <div style={{fontSize:16,fontWeight:900,color:NEON.green,fontFamily:"Orbitron"}}>{w.wins}</div>
                         <div style={{fontSize:7,color:NEON.dimText}}>WINS</div></div>
@@ -5250,15 +5251,25 @@ export default function DegenCommandCenter(){
                       <div style={{background:"rgba(255,200,0,0.05)",borderRadius:4,padding:"4px",textAlign:"center"}}>
                         <div style={{fontSize:16,fontWeight:900,color:"#ffa500",fontFamily:"Orbitron"}}>{w.holds}</div>
                         <div style={{fontSize:7,color:NEON.dimText}}>HOLDS</div></div>
+                      <div style={{background:w.totalPnl>=0?"rgba(0,255,0,0.05)":"rgba(255,0,0,0.05)",borderRadius:4,padding:"4px",textAlign:"center"}}>
+                        <div style={{fontSize:14,fontWeight:900,color:w.totalPnl>=0?NEON.green:NEON.red,fontFamily:"Orbitron"}}>{w.totalPnl>=0?"+":""}{w.totalPnl.toFixed(2)}</div>
+                        <div style={{fontSize:7,color:NEON.dimText}}>P&L SOL</div></div>
+                    </div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:4,marginBottom:8}}>
                       <div style={{background:"rgba(0,200,255,0.05)",borderRadius:4,padding:"4px",textAlign:"center"}}>
-                        <div style={{fontSize:16,fontWeight:900,color:NEON.cyan,fontFamily:"Orbitron"}}>{w.totalBought.toFixed(1)}</div>
+                        <div style={{fontSize:12,fontWeight:900,color:NEON.cyan,fontFamily:"Orbitron"}}>{w.totalBought.toFixed(2)}</div>
                         <div style={{fontSize:7,color:NEON.dimText}}>SOL IN</div></div>
+                      <div style={{background:"rgba(0,200,255,0.05)",borderRadius:4,padding:"4px",textAlign:"center"}}>
+                        <div style={{fontSize:12,fontWeight:900,color:NEON.cyan,fontFamily:"Orbitron"}}>{w.totalSold.toFixed(2)}</div>
+                        <div style={{fontSize:7,color:NEON.dimText}}>SOL OUT</div></div>
                     </div>
                     {w.bigWins>0&&<div style={{fontSize:10,color:"#ffd740",marginBottom:6}}>🌙 {w.bigWins} big win{w.bigWins>1?"s":""} (100K+ mcap)</div>}
                   </div>
                   <div style={{fontSize:10,fontWeight:900,color:"#ffa500",fontFamily:"Orbitron",letterSpacing:0.5,marginBottom:4}}>TRADES</div>
                   {w.trades.length===0&&<div style={{color:NEON.dimText,fontSize:10,padding:8}}>No trade details recorded yet</div>}
-                  {w.trades.slice().reverse().map((tr,ti)=>(
+                  {w.trades.slice().reverse().map((tr,ti)=>{
+                    const trPnl=tr.pnl||((tr.sold||0)-tr.sol);
+                    return(
                     <div key={ti} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
                       padding:"4px 6px",marginBottom:2,borderRadius:4,fontSize:10,
                       background:tr.type==="WIN"?"rgba(0,255,0,0.04)":tr.type==="LOSS"?"rgba(255,0,0,0.04)":"rgba(255,200,0,0.04)",
@@ -5266,14 +5277,14 @@ export default function DegenCommandCenter(){
                       <div>
                         <span style={{color:tr.type==="WIN"?NEON.green:tr.type==="LOSS"?NEON.red:"#ffa500",fontWeight:900,fontSize:8,marginRight:4}}>{tr.type}</span>
                         <span style={{color:NEON.text,fontWeight:700}}>{tr.token}</span>
+                        <div style={{color:NEON.dimText,fontSize:8,marginTop:1}}>MC: ${formatNum(tr.entryMcap||0)} → ${formatNum(tr.mcap||0)}</div>
                       </div>
                       <div style={{textAlign:"right"}}>
-                        <div style={{color:NEON.cyan,fontWeight:700}}>{tr.sol.toFixed(2)} SOL in</div>
-                        {tr.sold>0&&<div style={{color:NEON.dimText,fontSize:9}}>{tr.sold.toFixed(2)} SOL out</div>}
-                        <div style={{color:NEON.dimText,fontSize:8}}>entry ${formatNum(tr.entryMcap||tr.mcap)} → {tr.type==="HOLD"?"current":"exit"} ${formatNum(tr.mcap)}</div>
+                        <div style={{color:NEON.cyan,fontSize:9}}>{tr.sol.toFixed(2)} in{(tr.sold||0)>0?` / ${tr.sold.toFixed(2)} out`:""}</div>
+                        <div style={{fontSize:11,fontWeight:900,color:trPnl>=0?NEON.green:NEON.red}}>
+                          {trPnl>=0?"+":""}{trPnl.toFixed(2)} SOL</div>
                       </div>
-                    </div>
-                  ))}
+                    </div>)})}
                 </div>);
               }
 
@@ -5287,7 +5298,9 @@ export default function DegenCommandCenter(){
                     {reportTier} WALLETS ({tierWallets.length})</div>
                   {tierWallets.length===0&&<div style={{color:NEON.dimText,fontSize:11,textAlign:"center",padding:20}}>
                     No wallets at this tier yet.<br/>Keep the session running.</div>}
-                  {tierWallets.map((w2,wi)=>(
+                  {tierWallets.map((w2,wi)=>{
+                    const pnl2=w2.totalPnl||0;
+                    return(
                     <div key={wi} onClick={()=>{setSelectedWallet(w2.addr);setReportView("detail");}}
                       style={{cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",
                         padding:"6px 8px",marginBottom:3,borderRadius:4,
@@ -5295,11 +5308,13 @@ export default function DegenCommandCenter(){
                         transition:"background 0.2s"}}>
                       <div>
                         <div style={{fontSize:10,fontWeight:900,color:NEON.text,fontFamily:"monospace"}}>{w2.addr.slice(0,4)}...{w2.addr.slice(-4)}</div>
-                        <div style={{fontSize:9,color:NEON.dimText}}>{w2.wins}W / {w2.losses}L · {w2.totalBought.toFixed(1)} SOL</div>
+                        <div style={{fontSize:9,color:NEON.dimText}}>{w2.wins}W / {w2.losses}L / {w2.holds}H · {w2.totalBought.toFixed(1)} SOL</div>
                       </div>
-                      <div style={{fontSize:18,fontWeight:900,color:tierColor2,fontFamily:"Orbitron"}}>{w2.rate}%</div>
-                    </div>
-                  ))}
+                      <div style={{textAlign:"right"}}>
+                        <div style={{fontSize:16,fontWeight:900,color:tierColor2,fontFamily:"Orbitron"}}>{w2.rate}%</div>
+                        <div style={{fontSize:9,fontWeight:700,color:pnl2>=0?NEON.green:NEON.red}}>{pnl2>=0?"+":""}{pnl2.toFixed(2)} SOL</div>
+                      </div>
+                    </div>)})}
                 </div>);
               }
 
@@ -5336,7 +5351,7 @@ export default function DegenCommandCenter(){
                 ))}
                 <div style={{marginTop:12,padding:"6px 8px",background:"rgba(255,255,255,0.02)",borderRadius:4,
                   fontSize:10,color:NEON.dimText,lineHeight:1.5,textAlign:"center"}}>
-                  Wallets need <b style={{color:NEON.cyan}}>3+ wins</b> for smart money scoring bonus.<br/>
+                  Wallets need <b style={{color:NEON.cyan}}>3+ wins, 60%+ rate, wins &gt; losses</b> for smart money.<br/>
                   All wallets tracked — wins, losses &amp; holds.<br/>
                   Spray-and-pray wallets (10:1 L:W) auto-purged.<br/>
                   <span style={{color:NEON.dimText,fontSize:9}}>{allWallets.length} wallets tracked this session</span>
@@ -5478,7 +5493,7 @@ export default function DegenCommandCenter(){
                 {title:"📡 RIGHT PANEL TABS",color:"#00ffcc",items:[
                   "🔒 LOCKS — your auto-locked runners with live P&L tracking",
                   "🌉 MIGRATE — tokens that graduated to Raydium with post-migration price",
-                  "💰 SMART$ — wallets with 2+ winning trades detected buying",
+                  "💰 SMART$ — wallets with 3+ wins, 60%+ rate, wins > losses detected buying",
                   "⚠ BUNDLES — coordinated buy detection (4+ wallets in 2 seconds)",
                   "🔥 TRENDS — narrative clustering (AI, CAT, PEPE etc.)",
                   "📊 STATS — session statistics and system health",
@@ -5642,7 +5657,7 @@ export default function DegenCommandCenter(){
               {rightTab==="SMART"&&<>
                 {(!live.smartMoneyAlerts||live.smartMoneyAlerts.length===0)&&
                   <div style={{color:NEON.dimText,fontSize:12,textAlign:"center",padding:20,fontStyle:"italic"}}>
-                    TRACKING ALL WALLETS...<br/><span style={{fontSize:10,opacity:0.5}}>Buys, sells &amp; holds tracked. 3+ wins = smart money bonus.</span></div>}
+                    TRACKING ALL WALLETS...<br/><span style={{fontSize:10,opacity:0.5}}>3+ wins, 60%+ rate, wins &gt; losses = smart money</span></div>}
                 {(live.smartMoneyAlerts||[]).map(a=>{
                   const ageS=Math.floor((Date.now()-a.time)/1000);
                   const tokenName=tokens.find(t=>t.addr===a.mint)?.name||a.mint.slice(0,8);
@@ -5652,7 +5667,7 @@ export default function DegenCommandCenter(){
                       <span style={{color:"#ff9500",fontWeight:900,fontSize:13}}>🧠 SMART BUY</span>
                       <span style={{color:NEON.dimText,fontSize:10}}>{ageS<60?ageS+"s":Math.floor(ageS/60)+"m"} ago</span></div>
                     <div style={{color:NEON.text,fontSize:12,marginTop:2}}>
-                      <span style={{color:NEON.cyan}}>{a.wallet.slice(0,6)}...{a.wallet.slice(-4)}</span> bought <span style={{color:NEON.yellow}}>{a.sol.toFixed(2)} SOL</span> into <span onClick={()=>clickAddr(a.mint)} style={{color:NEON.green,fontWeight:700,cursor:"pointer",textDecoration:"underline",textDecorationStyle:"dotted",textUnderlineOffset:2}}>{tokenName}</span>
+                      <span onClick={()=>viewWalletDetail(a.wallet)} style={{color:NEON.cyan,cursor:"pointer",textDecoration:"underline",textDecorationStyle:"dotted",textUnderlineOffset:2}}>{a.wallet.slice(0,6)}...{a.wallet.slice(-4)}</span> bought <span style={{color:NEON.yellow}}>{a.sol.toFixed(2)} SOL</span> into <span onClick={()=>clickAddr(a.mint)} style={{color:NEON.green,fontWeight:700,cursor:"pointer",textDecoration:"underline",textDecorationStyle:"dotted",textUnderlineOffset:2}}>{tokenName}</span>
                       <span onClick={()=>navigator.clipboard.writeText(a.mint)} style={{cursor:"pointer",marginLeft:4,fontSize:11,color:NEON.cyan,opacity:0.6}}>📋</span></div>
                     <div style={{color:NEON.dimText,fontSize:10,marginTop:1}}>
                       {a.wins} wins: {a.winTokens.join(", ")}</div>
