@@ -1710,30 +1710,68 @@ export function useLiveData() {
           if (!td) return;
           // A "winner" = token that ACTUALLY pumped
           const isWinner = (t.qualified && t.mcap > 50000 && (t.health || 0) > 50) || (t.migrated && t.mcap > 30000);
-          // A "loser" = token that died or crashed hard
-          const isLoser = (!t.alive || (t.health || 0) <= 0) && (Date.now() - t.timestamp > 60000);
+          // A "loser" = token that died, crashed hard, OR has been stagnant/declining for a while
+          const age = Date.now() - t.timestamp;
+          const isLoser = ((!t.alive || (t.health || 0) <= 0) && age > 60000) ||
+            (age > 120000 && t.mcap < 5000 && !t.migrated) || // stagnant micro after 2 min
+            (age > 180000 && (t.health || 0) < 30 && t.mcap < 20000); // declining after 3 min
+          // A "hold" = still alive, not yet determined
+          const isHold = !isWinner && !isLoser && t.alive;
           
           Object.entries(td.wallets).forEach(([w, data]) => {
             if (data.bought <= 0.3) return; // min 0.3 SOL, not dust
-            if (!walletScores.current[w]) walletScores.current[w] = { wins: 0, losses: 0, tokens: [], lossTokens: [], totalBought: 0, bigWins: 0, trades: [] };
+            if (!walletScores.current[w]) walletScores.current[w] = { wins: 0, losses: 0, holds: 0, tokens: [], lossTokens: [], holdTokens: [], totalBought: 0, bigWins: 0, trades: [] };
             const ws = walletScores.current[w];
             
+            // Entry mcap = mcap when wallet first bought (estimate from token data)
+            const entryMcap = data.entryMcap || t.mcap;
+            if (!data.entryMcap) data.entryMcap = t.mcap;
+            
             if (isWinner && !ws.tokens.includes(t.name)) {
+              // If it was a hold before, remove from holds and update trade entry
+              if (ws.holdTokens.includes(t.name)) { 
+                ws.holds = Math.max(0, ws.holds - 1); 
+                ws.holdTokens = ws.holdTokens.filter(n => n !== t.name);
+                const holdTrade = ws.trades.find(tr => tr.token === t.name && tr.type === "HOLD");
+                if (holdTrade) { holdTrade.type = "WIN"; holdTrade.mcap = t.mcap; holdTrade.sold = data.sold; }
+              } else {
+                ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "WIN", mcap: t.mcap, entryMcap, time: Date.now() });
+                if (ws.trades.length > 50) ws.trades = ws.trades.slice(-50);
+              }
               ws.wins++;
               ws.tokens.push(t.name);
               ws.totalBought += data.bought;
-              ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "WIN", mcap: t.mcap, time: Date.now() });
-              if (ws.trades.length > 50) ws.trades = ws.trades.slice(-50);
               if (t.mcap > 100000) ws.bigWins = (ws.bigWins || 0) + 1;
               if (ws.wins === 3) console.log(`[SMART$] 🧠 Wallet ${w.slice(0,8)} hit 3 wins: ${ws.tokens.join(", ")}`);
               if (ws.wins === 6) console.log(`[SMART$] 🧠🧠 Wallet ${w.slice(0,8)} hit 6 WINS: ${ws.tokens.join(", ")}`);
             }
             
             if (isLoser && !ws.lossTokens.includes(t.name)) {
+              // If it was a hold before, remove from holds and update trade entry
+              if (ws.holdTokens.includes(t.name)) { 
+                ws.holds = Math.max(0, ws.holds - 1); 
+                ws.holdTokens = ws.holdTokens.filter(n => n !== t.name);
+                const holdTrade = ws.trades.find(tr => tr.token === t.name && tr.type === "HOLD");
+                if (holdTrade) { holdTrade.type = "LOSS"; holdTrade.mcap = t.mcap; holdTrade.sold = data.sold; }
+              } else {
+                ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "LOSS", mcap: t.mcap, entryMcap, time: Date.now() });
+                if (ws.trades.length > 50) ws.trades = ws.trades.slice(-50);
+              }
               ws.losses++;
               ws.lossTokens.push(t.name);
-              ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "LOSS", mcap: t.mcap, time: Date.now() });
+            }
+            
+            if (isHold && !ws.tokens.includes(t.name) && !ws.lossTokens.includes(t.name) && !ws.holdTokens.includes(t.name)) {
+              ws.holds = (ws.holds || 0) + 1;
+              ws.holdTokens = ws.holdTokens || [];
+              ws.holdTokens.push(t.name);
+              ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "HOLD", mcap: t.mcap, entryMcap, time: Date.now() });
               if (ws.trades.length > 50) ws.trades = ws.trades.slice(-50);
+            }
+            // Update existing HOLD entries with current mcap and sold
+            if (isHold) {
+              const existTrade = ws.trades.find(tr => tr.token === t.name && tr.type === "HOLD");
+              if (existTrade) { existTrade.mcap = t.mcap; existTrade.sold = data.sold; }
             }
           });
         });

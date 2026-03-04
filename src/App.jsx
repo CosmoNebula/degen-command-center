@@ -4907,7 +4907,7 @@ export default function DegenCommandCenter(){
             ],[
               {id:"HISTORY",icon:"📜",label:"HISTORY",color:"#8b5cf6",count:lockHistory.length},
               {id:"AI",icon:"🤖",label:"CLAUDE",color:"#00c8ff",count:aiObservations.length},
-              {id:"REPORT",icon:"💰",label:"WALLETS",color:"#ffa500",count:live.walletScoresRef?Object.values(live.walletScoresRef.current).filter(w=>w.wins>=3&&(w.wins/(w.wins+(w.losses||0)))>=0.15).length:0},
+              {id:"REPORT",icon:"💰",label:"WALLETS",color:"#ffa500",count:live.walletScoresRef?Object.values(live.walletScoresRef.current).filter(w=>(w.wins+w.losses+(w.holds||0))>=1).length:0},
             ]].map((row,ri)=>(
               <div key={ri} style={{display:"flex"}}>
                 {row.map(tab=>(
@@ -5210,23 +5210,24 @@ export default function DegenCommandCenter(){
           {leftTab==="REPORT"&&<div style={{padding:"4px 6px"}}>
             {(()=>{
               const wsRef=live.walletScoresRef;
-              const allWallets=wsRef?Object.entries(wsRef.current).filter(([,w])=>w.wins>=1).map(([addr,w])=>{
+              const allWallets=wsRef?Object.entries(wsRef.current).filter(([,w])=>(w.wins+w.losses+(w.holds||0))>=1).map(([addr,w])=>{
                 const total=w.wins+(w.losses||0);
                 const rate=total>0?Math.round(w.wins/total*100):0;
-                return{addr,wins:w.wins,losses:w.losses||0,total,rate,bigWins:w.bigWins||0,totalBought:w.totalBought||0,tokens:w.tokens||[],lossTokens:w.lossTokens||[],trades:w.trades||[]};
-              }).sort((a,b)=>b.rate-a.rate||b.wins-a.wins):[];
-              const genius=allWallets.filter(w=>w.rate>=80&&w.wins>=3);
-              const sharp=allWallets.filter(w=>w.rate>=60&&w.rate<80&&w.wins>=3);
-              const decent=allWallets.filter(w=>w.rate>=40&&w.rate<60&&w.wins>=3);
-              const lucky=allWallets.filter(w=>w.rate>=20&&w.rate<40&&w.wins>=3);
-              const degen=allWallets.filter(w=>w.rate>=5&&w.rate<20&&w.wins>=3);
-              const all3plus=allWallets.filter(w=>w.wins>=3);
+                return{addr,wins:w.wins,losses:w.losses||0,holds:w.holds||0,total,rate,bigWins:w.bigWins||0,totalBought:w.totalBought||0,tokens:w.tokens||[],lossTokens:w.lossTokens||[],holdTokens:w.holdTokens||[],trades:w.trades||[]};
+              }).sort((a,b)=>b.wins-a.wins||b.rate-a.rate):[];
+              const genius=allWallets.filter(w=>w.rate>=80&&w.total>=2);
+              const sharp=allWallets.filter(w=>w.rate>=60&&w.rate<80&&w.total>=2);
+              const decent=allWallets.filter(w=>w.rate>=40&&w.rate<60&&w.total>=2);
+              const lucky=allWallets.filter(w=>w.rate>=20&&w.rate<40&&w.total>=1);
+              const degen=allWallets.filter(w=>w.rate<20&&w.total>=1);
+              const unrated=allWallets.filter(w=>w.total===0); // only holds, no resolved trades
+              const all3plus=allWallets;
 
               if(reportView==="detail"&&selectedWallet){
                 const w=allWallets.find(w2=>w2.addr===selectedWallet);
                 if(!w)return <div style={{color:NEON.dimText,fontSize:11,textAlign:"center",padding:20}}>Wallet not found</div>;
-                const tierColor=w.rate>=80?"#ffd740":w.rate>=60?"#00e5ff":"#ffa500";
-                const tierLabel=w.rate>=80?"GENIUS":w.rate>=60?"SHARP":"TRACKER";
+                const tierColor=w.rate>=80?"#ffd740":w.rate>=60?"#00e5ff":w.rate>=40?"#ffa500":w.rate>=20?"#ba68c8":"#ff5252";
+                const tierLabel=w.rate>=80?"GENIUS":w.rate>=60?"SHARP":w.rate>=40?"DECENT":w.rate>=20?"LUCKY":w.total>0?"DEGEN":"PENDING";
                 return(<div>
                   <div onClick={()=>{setReportView("list");setSelectedWallet(null);}}
                     style={{cursor:"pointer",fontSize:10,color:NEON.cyan,padding:"4px 0",marginBottom:6}}>← BACK TO LIST</div>
@@ -5239,13 +5240,16 @@ export default function DegenCommandCenter(){
                     <div onClick={()=>{navigator.clipboard.writeText(w.addr);}}
                       style={{cursor:"pointer",fontSize:10,fontWeight:700,color:"#111",background:tierColor,
                         borderRadius:4,padding:"4px 8px",textAlign:"center",marginBottom:8}}>📋 COPY ADDRESS</div>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4,marginBottom:8}}>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:4,marginBottom:8}}>
                       <div style={{background:"rgba(0,255,0,0.05)",borderRadius:4,padding:"4px",textAlign:"center"}}>
                         <div style={{fontSize:16,fontWeight:900,color:NEON.green,fontFamily:"Orbitron"}}>{w.wins}</div>
                         <div style={{fontSize:7,color:NEON.dimText}}>WINS</div></div>
                       <div style={{background:"rgba(255,0,0,0.05)",borderRadius:4,padding:"4px",textAlign:"center"}}>
                         <div style={{fontSize:16,fontWeight:900,color:NEON.red,fontFamily:"Orbitron"}}>{w.losses}</div>
                         <div style={{fontSize:7,color:NEON.dimText}}>LOSSES</div></div>
+                      <div style={{background:"rgba(255,200,0,0.05)",borderRadius:4,padding:"4px",textAlign:"center"}}>
+                        <div style={{fontSize:16,fontWeight:900,color:"#ffa500",fontFamily:"Orbitron"}}>{w.holds}</div>
+                        <div style={{fontSize:7,color:NEON.dimText}}>HOLDS</div></div>
                       <div style={{background:"rgba(0,200,255,0.05)",borderRadius:4,padding:"4px",textAlign:"center"}}>
                         <div style={{fontSize:16,fontWeight:900,color:NEON.cyan,fontFamily:"Orbitron"}}>{w.totalBought.toFixed(1)}</div>
                         <div style={{fontSize:7,color:NEON.dimText}}>SOL IN</div></div>
@@ -5257,16 +5261,16 @@ export default function DegenCommandCenter(){
                   {w.trades.slice().reverse().map((tr,ti)=>(
                     <div key={ti} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
                       padding:"4px 6px",marginBottom:2,borderRadius:4,fontSize:10,
-                      background:tr.type==="WIN"?"rgba(0,255,0,0.04)":"rgba(255,0,0,0.04)",
-                      borderLeft:`2px solid ${tr.type==="WIN"?NEON.green:NEON.red}`}}>
+                      background:tr.type==="WIN"?"rgba(0,255,0,0.04)":tr.type==="LOSS"?"rgba(255,0,0,0.04)":"rgba(255,200,0,0.04)",
+                      borderLeft:`2px solid ${tr.type==="WIN"?NEON.green:tr.type==="LOSS"?NEON.red:"#ffa500"}`}}>
                       <div>
-                        <span style={{color:tr.type==="WIN"?NEON.green:NEON.red,fontWeight:900,fontSize:8,marginRight:4}}>{tr.type}</span>
+                        <span style={{color:tr.type==="WIN"?NEON.green:tr.type==="LOSS"?NEON.red:"#ffa500",fontWeight:900,fontSize:8,marginRight:4}}>{tr.type}</span>
                         <span style={{color:NEON.text,fontWeight:700}}>{tr.token}</span>
                       </div>
                       <div style={{textAlign:"right"}}>
                         <div style={{color:NEON.cyan,fontWeight:700}}>{tr.sol.toFixed(2)} SOL in</div>
                         {tr.sold>0&&<div style={{color:NEON.dimText,fontSize:9}}>{tr.sold.toFixed(2)} SOL out</div>}
-                        <div style={{color:NEON.dimText,fontSize:8}}>mcap ${formatNum(tr.mcap)}</div>
+                        <div style={{color:NEON.dimText,fontSize:8}}>entry ${formatNum(tr.entryMcap||tr.mcap)} → {tr.type==="HOLD"?"current":"exit"} ${formatNum(tr.mcap)}</div>
                       </div>
                     </div>
                   ))}
@@ -5274,8 +5278,8 @@ export default function DegenCommandCenter(){
               }
 
               if(reportView==="list"&&reportTier){
-                const tierWallets=reportTier==="GENIUS"?genius:reportTier==="SHARP"?sharp:reportTier==="DECENT"?decent:reportTier==="LUCKY"?lucky:reportTier==="DEGEN"?degen:all3plus;
-                const tierColor2=reportTier==="GENIUS"?"#ffd740":reportTier==="SHARP"?"#00e5ff":reportTier==="DECENT"?"#ffa500":reportTier==="LUCKY"?"#ba68c8":"#ff5252";
+                const tierWallets=reportTier==="GENIUS"?genius:reportTier==="SHARP"?sharp:reportTier==="DECENT"?decent:reportTier==="LUCKY"?lucky:reportTier==="DEGEN"?degen:reportTier==="PENDING"?unrated:all3plus;
+                const tierColor2=reportTier==="GENIUS"?"#ffd740":reportTier==="SHARP"?"#00e5ff":reportTier==="DECENT"?"#ffa500":reportTier==="LUCKY"?"#ba68c8":reportTier==="PENDING"?"#666":"#ff5252";
                 return(<div>
                   <div onClick={()=>{setReportView("tiers");setReportTier(null);}}
                     style={{cursor:"pointer",fontSize:10,color:NEON.cyan,padding:"4px 0",marginBottom:6}}>← BACK TO TIERS</div>
@@ -5308,7 +5312,8 @@ export default function DegenCommandCenter(){
                   {tier:"SHARP",label:"⚡ SHARP",desc:"60-79% win rate",wallets:sharp,color:"#00e5ff",bg:"rgba(0,229,255,0.04)"},
                   {tier:"DECENT",label:"📊 DECENT",desc:"40-59% win rate",wallets:decent,color:"#ffa500",bg:"rgba(255,165,0,0.04)"},
                   {tier:"LUCKY",label:"🍀 LUCKY",desc:"20-39% win rate",wallets:lucky,color:"#ba68c8",bg:"rgba(186,104,200,0.04)"},
-                  {tier:"DEGEN",label:"💀 DEGEN",desc:"5-19% win rate",wallets:degen,color:"#ff5252",bg:"rgba(255,82,82,0.04)"},
+                  {tier:"DEGEN",label:"💀 DEGEN",desc:"<20% win rate",wallets:degen,color:"#ff5252",bg:"rgba(255,82,82,0.04)"},
+                  {tier:"PENDING",label:"⏳ PENDING",desc:"holds only, no resolved trades",wallets:unrated,color:"#666",bg:"rgba(100,100,100,0.04)"},
                 ].map((t2,ti2)=>(
                   <div key={ti2} onClick={()=>{setReportTier(t2.tier);setReportView("list");}}
                     style={{cursor:"pointer",marginBottom:6,borderRadius:6,overflow:"hidden",
@@ -5317,7 +5322,7 @@ export default function DegenCommandCenter(){
                     <div style={{padding:"8px 10px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                       <div>
                         <div style={{fontSize:12,fontWeight:900,color:t2.color,fontFamily:"Orbitron"}}>{t2.label}</div>
-                        <div style={{fontSize:9,color:NEON.dimText,marginTop:2}}>{t2.desc} · 3+ wins req</div>
+                        <div style={{fontSize:9,color:NEON.dimText,marginTop:2}}>{t2.desc}</div>
                       </div>
                       <div style={{textAlign:"right"}}>
                         <div style={{fontSize:22,fontWeight:900,color:t2.color,fontFamily:"Orbitron"}}>{t2.wallets.length}</div>
@@ -5331,9 +5336,10 @@ export default function DegenCommandCenter(){
                 ))}
                 <div style={{marginTop:12,padding:"6px 8px",background:"rgba(255,255,255,0.02)",borderRadius:4,
                   fontSize:10,color:NEON.dimText,lineHeight:1.5,textAlign:"center"}}>
-                  Wallets need <b style={{color:NEON.cyan}}>3+ wins</b> to qualify.<br/>
+                  Wallets need <b style={{color:NEON.cyan}}>3+ wins</b> for smart money scoring bonus.<br/>
+                  All wallets tracked — wins, losses &amp; holds.<br/>
                   Spray-and-pray wallets (10:1 L:W) auto-purged.<br/>
-                  <span style={{color:NEON.dimText,fontSize:9}}>{allWallets.filter(w=>w.wins>=1).length} wallets tracked this session</span>
+                  <span style={{color:NEON.dimText,fontSize:9}}>{allWallets.length} wallets tracked this session</span>
                 </div>
               </div>);
             })()}
@@ -5636,7 +5642,7 @@ export default function DegenCommandCenter(){
               {rightTab==="SMART"&&<>
                 {(!live.smartMoneyAlerts||live.smartMoneyAlerts.length===0)&&
                   <div style={{color:NEON.dimText,fontSize:12,textAlign:"center",padding:20,fontStyle:"italic"}}>
-                    TRACKING WINNER WALLETS...<br/><span style={{fontSize:10,opacity:0.5}}>Wallets in 2+ winning tokens get flagged</span></div>}
+                    TRACKING ALL WALLETS...<br/><span style={{fontSize:10,opacity:0.5}}>Buys, sells &amp; holds tracked. 3+ wins = smart money bonus.</span></div>}
                 {(live.smartMoneyAlerts||[]).map(a=>{
                   const ageS=Math.floor((Date.now()-a.time)/1000);
                   const tokenName=tokens.find(t=>t.addr===a.mint)?.name||a.mint.slice(0,8);
