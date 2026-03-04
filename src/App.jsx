@@ -5245,7 +5245,7 @@ export default function DegenCommandCenter(){
               const allWalletsVisible=allWallets.filter(w=>{
                 if(w.isElite)return true; // smart wallets always visible
                 const rawWs=wsRef?.current?.[w.addr];
-                const lastAct=rawWs?.lastActivity||0;
+                const lastAct=rawWs?.lastActivity||now_disp; // treat missing as "just active"
                 return(now_disp-lastAct)<INACTIVE_MS;
               });
               const elite=allWalletsVisible.filter(w=>w.isElite);
@@ -5578,7 +5578,7 @@ export default function DegenCommandCenter(){
                 ))}
                 <div style={{marginTop:12,padding:"6px 8px",background:"rgba(255,255,255,0.02)",borderRadius:4,
                   fontSize:10,color:NEON.dimText,lineHeight:1.5,textAlign:"center"}}>
-                  Wallets need <b style={{color:NEON.cyan}}>3+ wins, 60%+ rate, wins &gt; losses</b> for smart money.<br/>
+                  Wallets need <b style={{color:NEON.cyan}}>7+ wins, 70%+ rate, 2+ SOL profit, 12K+ coins only</b> for smart money.<br/>
                   All wallets tracked — wins, losses &amp; holds.<br/>
                   Spray-and-pray wallets (10:1 L:W) auto-purged.<br/>
                   <span style={{color:NEON.dimText,fontSize:9}}>{allWallets.length} wallets tracked this session</span>
@@ -5808,7 +5808,7 @@ export default function DegenCommandCenter(){
               {rightTab==="SMART"&&<>
                 {(!live.smartMoneyAlerts||live.smartMoneyAlerts.length===0)&&
                   <div style={{color:NEON.dimText,fontSize:12,textAlign:"center",padding:20,fontStyle:"italic"}}>
-                    TRACKING ALL WALLETS...<br/><span style={{fontSize:10,opacity:0.5}}>3+ wins, 60%+ rate, wins &gt; losses = smart money</span></div>}
+                    TRACKING ALL WALLETS...<br/><span style={{fontSize:10,opacity:0.5}}>7+ wins, 70%+ rate, 2+ SOL = smart money</span></div>}
                 {(live.smartMoneyAlerts||[]).map(a=>{
                   const ageS=Math.floor((Date.now()-a.time)/1000);
                   const tokenName=tokens.find(t=>t.addr===a.mint)?.name||a.mint.slice(0,8);

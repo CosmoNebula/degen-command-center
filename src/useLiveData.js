@@ -247,6 +247,16 @@ export function useLiveData() {
 
           // ─── SMART MONEY: check if buying wallet has wins + win rate ───
           if (!td.smartWallets) td.smartWallets = new Set();
+          // Create walletScores entry immediately on first buy so lastActivity is fresh
+          if (!walletScores.current[wallet]) {
+            walletScores.current[wallet] = {
+              wins: 0, losses: 0, holds: 0,
+              tokens: [], lossTokens: [], holdTokens: [],
+              winAddrs: new Set(), lossAddrs: new Set(), holdAddrs: new Set(),
+              totalBought: 0, totalSold: 0, totalPnl: 0, bigWins: 0, trades: [],
+              lastActivity: now, activeBuys: {},
+            };
+          }
           const ws = walletScores.current[wallet];
           // Update lastActivity on actual trade (not scoring loop)
           if (ws) ws.lastActivity = now;
