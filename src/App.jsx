@@ -5259,40 +5259,40 @@ export default function DegenCommandCenter(){
               const hiddenCount=allWallets.length-allWalletsVisible.length;
 
               // ── Sub-nav: SMART | ALL | TIERS ──
-              const WalletSubNav=()=>(
-                <div>
-                <div style={{display:"flex",gap:3,marginBottom:hiddenCount>0?4:8,padding:"3px",
-                  background:"rgba(0,0,0,0.2)",borderRadius:6,border:"1px solid rgba(255,255,255,0.06)"}}>
-                  {[
-                    {id:"smart",label:"🧠 SMART",color:"#00ff88",count:elite.length},
-                    {id:"tiers",label:"◈ TIERS",color:"#ffa500",count:allWalletsVisible.length},
-                    {id:"all",label:"≡ ALL",color:NEON.cyan,count:all3plus.length},
-                  ].map(btn=>{
-                    const isActive=reportView===btn.id||(btn.id==="tiers"&&reportView==="tiers"&&!reportTier)||(btn.id==="smart"&&reportTier==="SMART"&&reportView==="list");
-                    return(<button key={btn.id} onClick={()=>{
-                      if(btn.id==="smart"){setReportTier("SMART");setReportView("list");setSelectedWallet(null);}
-                      else if(btn.id==="all"){setReportTier("ALL");setReportView("list");setSelectedWallet(null);}
-                      else{setReportView("tiers");setReportTier(null);setSelectedWallet(null);}
-                    }} style={{flex:1,padding:"5px 4px",fontSize:9,fontWeight:900,cursor:"pointer",border:"none",
-                      fontFamily:"'Orbitron',sans-serif",letterSpacing:0.5,borderRadius:4,transition:"all 0.15s",
-                      background:isActive?`${btn.color}18`:"transparent",
-                      color:isActive?btn.color:NEON.dimText,
-                      boxShadow:isActive?`0 0 8px ${btn.color}30`:undefined}}>
-                      {btn.label}
-                      <span style={{marginLeft:4,fontSize:8,opacity:0.7,
-                        background:isActive?`${btn.color}25`:"rgba(255,255,255,0.06)",
-                        padding:"1px 4px",borderRadius:3}}>{btn.count}</span>
-                    </button>);
-                  })}
-                </div>
-                {hiddenCount>0&&<div style={{fontSize:8,color:NEON.dimText,textAlign:"center",marginBottom:6,opacity:0.6,letterSpacing:1}}>
-                  😴 {hiddenCount} wallet{hiddenCount>1?"s":""} inactive &gt;10m — will reappear when active</div>}
+              const subNav=(
+                <div style={{marginBottom:8}}>
+                  <div style={{display:"flex",gap:3,marginBottom:hiddenCount>0?4:0,padding:"3px",
+                    background:"rgba(0,0,0,0.2)",borderRadius:6,border:"1px solid rgba(255,255,255,0.06)"}}>
+                    {[
+                      {id:"smart",label:"🧠 SMART",color:"#00ff88",count:elite.length},
+                      {id:"tiers",label:"◈ TIERS",color:"#ffa500",count:allWalletsVisible.length},
+                      {id:"all",label:"≡ ALL",color:NEON.cyan,count:all3plus.length},
+                    ].map(btn=>{
+                      const isActive=(btn.id==="smart"&&reportTier==="SMART"&&reportView==="list")||(btn.id==="all"&&reportTier==="ALL"&&reportView==="list")||(btn.id==="tiers"&&(reportView==="tiers"||(reportView==="detail")||(reportView==="list"&&reportTier!=="SMART"&&reportTier!=="ALL")));
+                      return(<button key={btn.id} onClick={()=>{
+                        if(btn.id==="smart"){setReportTier("SMART");setReportView("list");setSelectedWallet(null);}
+                        else if(btn.id==="all"){setReportTier("ALL");setReportView("list");setSelectedWallet(null);}
+                        else{setReportView("tiers");setReportTier(null);setSelectedWallet(null);}
+                      }} style={{flex:1,padding:"6px 4px",fontSize:9,fontWeight:900,cursor:"pointer",border:"none",
+                        fontFamily:"'Orbitron',sans-serif",letterSpacing:0.5,borderRadius:4,transition:"all 0.15s",
+                        background:isActive?`${btn.color}22`:"transparent",
+                        color:isActive?btn.color:NEON.dimText,
+                        outline:isActive?`1px solid ${btn.color}40`:"none"}}>
+                        {btn.label}
+                        <span style={{marginLeft:5,fontSize:8,
+                          background:isActive?`${btn.color}30`:"rgba(255,255,255,0.07)",
+                          padding:"1px 5px",borderRadius:3,color:isActive?btn.color:NEON.dimText}}>{btn.count}</span>
+                      </button>);
+                    })}
+                  </div>
+                  {hiddenCount>0&&<div style={{fontSize:8,color:NEON.dimText,textAlign:"center",padding:"2px 0",opacity:0.6,letterSpacing:1}}>
+                    😴 {hiddenCount} wallet{hiddenCount>1?"s":""} inactive &gt;10m</div>}
                 </div>);
 
               // Handle ALL tier in list view
               if(reportView==="list"&&reportTier==="ALL"){
                 return(<div>
-                  <WalletSubNav/>
+                  {subNav}
                   <div style={{fontSize:11,fontWeight:900,color:NEON.cyan,fontFamily:"Orbitron",letterSpacing:1,marginBottom:6,textAlign:"center"}}>
                     ALL WALLETS ({all3plus.length})</div>
                   {all3plus.length===0&&<div style={{color:NEON.dimText,fontSize:11,textAlign:"center",padding:20}}>No wallets tracked yet.</div>}
@@ -5327,7 +5327,7 @@ export default function DegenCommandCenter(){
                 const sigLosses=sigTrades.filter(t=>t.type==="LOSS").length;
                 const sigHolds=sigTrades.filter(t=>t.type==="HOLD").length;
                 return(<div>
-                  <WalletSubNav/>
+                  {subNav}
                   <div style={{background:"rgba(255,215,64,0.04)",border:"1px solid rgba(255,215,64,0.12)",borderRadius:6,padding:8,marginBottom:8}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
                       <div style={{fontSize:10,fontWeight:900,color:tierColor,fontFamily:"Orbitron",letterSpacing:1}}>{tierLabel}</div>
@@ -5517,7 +5517,7 @@ export default function DegenCommandCenter(){
                 const tierWallets=reportTier==="SMART"?elite:reportTier==="GENIUS"?genius:reportTier==="SHARP"?sharp:reportTier==="DECENT"?decent:reportTier==="LUCKY"?lucky:reportTier==="DEGEN"?degen:reportTier==="PENDING"?unrated:all3plus;
                 const tierColor2=reportTier==="SMART"?"#00ff88":reportTier==="GENIUS"?"#ffd740":reportTier==="SHARP"?"#00e5ff":reportTier==="DECENT"?"#ffa500":reportTier==="LUCKY"?"#ba68c8":reportTier==="PENDING"?"#666":"#ff5252";
                 return(<div>
-                  <WalletSubNav/>
+                  {subNav}
                   <div style={{fontSize:12,fontWeight:900,color:tierColor2,fontFamily:"Orbitron",letterSpacing:1,marginBottom:8,textAlign:"center"}}>
                     {reportTier} WALLETS ({tierWallets.length})</div>
                   {tierWallets.length===0&&<div style={{color:NEON.dimText,fontSize:11,textAlign:"center",padding:20}}>
@@ -5544,7 +5544,7 @@ export default function DegenCommandCenter(){
 
               // Default: TIERS view
               return(<div>
-                <WalletSubNav/>
+                {subNav}
                 <div style={{fontSize:12,fontWeight:900,color:"#ffa500",fontFamily:"Orbitron",letterSpacing:1,
                   textAlign:"center",marginBottom:8}}>WALLET TIERS</div>
                 {[
