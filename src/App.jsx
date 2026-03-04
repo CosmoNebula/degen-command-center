@@ -250,6 +250,8 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
     dataStreams:[],cloakPhase:0,gestureArm:0,gestureTarget:0,
     eyeGlow:1,headTilt:0,floatPhase:0,thinkTimer:0,
     orbitals:[],auraParticles:[],
+    chatBubble:null,chatTimer:0,chatTarget:null,
+    replyBubble:null,replyTimer:0,
   });
   const fatMonkeyRef=useRef({active:false,x:-0.1,frame:0,smokeRings:[],musicNotes:[],nextSpawn:Date.now()+rand(180,420)*1000,walkDir:1,smokeTimer:0});
   const jaycShipRef=useRef({active:false,y:-0.3,frame:0,bills:[],aliens:[],nextSpawn:Date.now()+rand(240,480)*1000,opacity:0});
@@ -1006,7 +1008,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
 
       // ═══════════ EASTER EGG: FAT MONKEY ═══════════
       const fm=fatMonkeyRef.current;const now2=Date.now();
-      if(!fm.active&&now2>fm.nextSpawn){
+      if(!fm.active&&now2>fm.nextSpawn&&!jaycShipRef.current.active){
         fm.active=true;fm.x=-0.12;fm.frame=0;fm.smokeRings=[];fm.walkDir=1;
         fm.smokeTimer=0;fm.startTime=now2;fm.musicNotes=[];
         onKillFeedRef.current?.({type:"system",text:"🐒 FAT MONKEY & THE GRATEFUL DEAD HAVE ENTERED THE BATTLEFIELD 🌹🎶💨"});
@@ -1280,7 +1282,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
 
       // ═══════════ EASTER EGG: J-Ai-C MOTHERSHIP (8-BIT) ═══════════
       const jc=jaycShipRef.current;
-      if(!jc.active&&now2>jc.nextSpawn){
+      if(!jc.active&&now2>jc.nextSpawn&&!fatMonkeyRef.current.active){
         jc.active=true;jc.y=-0.6;jc.frame=0;jc.bills=[];jc.opacity=0;jc.startTime=now2;jc.phase="descend";
         for(let i=0;i<5;i++){jc.aliens.push({blink:randInt(0,200),lookDir:Math.random()>0.5?1:-1});}
         onKillFeedRef.current?.({type:"system",text:"👾 J-Ai-C DREADNOUGHT INCOMING... 6 LEGENDS. 1 SHIP. NO SURVIVORS. 💀💰⚡"});
@@ -2093,9 +2095,21 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
       const mc=ai.moodColor.map(v=>Math.round(v));
       const mcs=mc.join(",");
 
-      // ─── FOCUS TARGET ───
+      // ─── FOCUS TARGET — prioritize easter egg characters ───
       ai.focusTimer--;
       if(ai.focusTimer<=0){
+        const fmAct=fatMonkeyRef.current.active;
+        const jcAct=jaycShipRef.current.active;
+        if(fmAct){
+          // Walk alongside Fat Monkey
+          ai.targetX=Math.max(0.08,Math.min(0.92,fatMonkeyRef.current.x+0.05));
+          ai.targetY=0.7;ai.focusToken=null;ai.gestureTarget=1;
+          ai.focusTimer=60;
+        }else if(jcAct){
+          // Stand beneath J-Ai-C mothership
+          ai.targetX=0.5;ai.targetY=0.45;ai.focusToken=null;ai.gestureTarget=1;
+          ai.focusTimer=60;
+        }else{
         const locked2=lockedRef.current;
         const alive3=tokensRef.current.filter(t=>t.alive&&(t.mcap||0)>=5000);
         let pick=null;
@@ -2105,7 +2119,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
           if(ft&&ft.bx&&ft.by){ai.targetX=Math.max(0.08,Math.min(0.92,ft.bx+(Math.random()>0.5?0.08:-0.08)));ai.targetY=Math.max(0.25,Math.min(0.8,ft.by));ai.focusToken=ft.id;ai.gestureTarget=1;}
         }else{ai.targetX=0.25+Math.random()*0.5;ai.targetY=0.3+Math.random()*0.35;ai.focusToken=null;ai.gestureTarget=0;}
         ai.focusTimer=160+Math.floor(Math.random()*220);
-      }
+      }}
 
       // ─── MOVEMENT ───
       const dx2=ai.targetX-ai.x,dy2=ai.targetY-ai.y;
@@ -2553,6 +2567,107 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
       ctx.fillText(ai.state==="walking"?"TRAVERSING":"ANALYZING",hx,gY+19*S);
       ctx.textAlign="left";
       ctx.globalAlpha=1;ctx.restore();
+
+      // ═══ CHAT INTERACTIONS — Fat Monkey & J-Ai-C ═══
+      const fmChat=[
+        {c:"Yo this monkey is WICKED SMAHT!",r:"You know it kid! Pahk ya tokens heeah!"},
+        {c:"Bro you absolutely CRUSHIN it out theah!",r:"We don't lose in Bahston baby!"},
+        {c:"Fat Monkey came to DOMINATE!",r:"I didn't come heah to play, I came to WINNNN!"},
+        {c:"Look at this legend! The battlefield isn't ready!",r:"Kehd, the battlefield was BORN ready for me!"},
+        {c:"Nobody picks winners like Fat Monkey!",r:"It's a gift! Runs in the family, guy!"},
+        {c:"The smartest ape on the Solana chain!",r:"Wicked smaht AND wicked handsome, pal!"},
+        {c:"Fat Monkey walking in like he owns the place!",r:"I DO own the place! Got the deed right heeah!"},
+        {c:"This absolute UNIT from Massachusetts!",r:"Born and raised! Cape Cod to Cambridge baby!"},
+        {c:"Everyone clear the way for Fat Monkey!",r:"Outta my way! I got tokens to flip, kehd!"},
+        {c:"The GOAT has entered the battlefield!",r:"Greatest Of All Time? Nahhh just a regular Tuesday for me!"},
+      ];
+      const jcChat=[
+        {c:"DO YOU SMELLLL WHAT JAY C IS COOKING?!",r:"THE DUKE OF DORCHESTER HAS ARRIVED!"},
+        {c:"LADIES AND GENTLEMEN... THE UNDISPUTED CHAMPION!",r:"NOBODY SURVIVES THE DORCHESTER DRIVER!"},
+        {c:"BAH GAWD! J-Ai-C IS IN THE BUILDING!",r:"AND THAT'S THE BOTTOM LINE!"},
+        {c:"THE DREADNOUGHT HAS A NEW CHALLENGER!",r:"CHALLENGE?! I AM THE CHALLENGE!"},
+        {c:"If ya want the best, ya got the BEST!",r:"THE DUKE DOESN'T DO SECOND PLACE!"},
+        {c:"This crowd is on their FEET for J-Ai-C!",r:"DORCHESTER IN THE HOUSE! BOW DOWN!"},
+        {c:"THE MOST ELECTRIFYING FORCE IN DEFI!",r:"FEEL THAT ENERGY! THE DUKE IS COOKIN!"},
+        {c:"FROM DORCHESTER WITH FURY! J-Ai-C!",r:"THEY SAID I COULDN'T! I SAID WATCH ME!"},
+        {c:"CAN WE GET A J-AI-C CHANT GOING?!",r:"J-AI-C! J-AI-C! THAT'S RIGHT BABY!"},
+        {c:"NOBODY walks into the Duke's ring and walks out!",r:"THE DORCHESTER DRIVER IS LOCKED AND LOADED!"},
+      ];
+
+      // Chat timer system
+      ai.chatTimer--;
+      if(ai.chatTimer<=0)ai.chatBubble=null;
+      ai.replyTimer--;
+      if(ai.replyTimer<=0)ai.replyBubble=null;
+
+      // Trigger chats when easter eggs are active
+      const fmActive=fatMonkeyRef.current.active;
+      const jcActive=jaycShipRef.current.active;
+      if(fmActive&&!ai.chatBubble&&ai.chatTimer<=-60){
+        const pick2=fmChat[Math.floor(Math.random()*fmChat.length)];
+        ai.chatBubble=pick2.c;ai.chatTimer=240;ai.chatTarget="FM";
+        ai.replyBubble=pick2.r;ai.replyTimer=360;
+      }
+      if(jcActive&&!ai.chatBubble&&ai.chatTimer<=-60){
+        const pick2=jcChat[Math.floor(Math.random()*jcChat.length)];
+        ai.chatBubble=pick2.c;ai.chatTimer=240;ai.chatTarget="JC";
+        ai.replyBubble=pick2.r;ai.replyTimer=360;
+      }
+
+      // Draw chat bubbles
+      if(ai.chatBubble){
+        const bx=hx;
+        const by=hy-40*S+floatY;
+        const bubAlpha=Math.min(1,ai.chatTimer/30)*0.9;
+        ctx.save();ctx.globalAlpha=bubAlpha;
+        // Measure text
+        ctx.font="bold 10px 'Orbitron'";
+        const tw=Math.min(ctx.measureText(ai.chatBubble).width+16,220);
+        const bH=28;
+        // Bubble background
+        ctx.fillStyle="rgba(0,20,40,0.85)";
+        ctx.strokeStyle="rgba(0,200,255,0.5)";ctx.lineWidth=1;
+        ctx.beginPath();
+        const bLeft=bx-tw/2,bTop=by-bH;
+        ctx.roundRect(bLeft,bTop,tw,bH,6);ctx.fill();ctx.stroke();
+        // Pointer triangle
+        ctx.fillStyle="rgba(0,20,40,0.85)";
+        ctx.beginPath();ctx.moveTo(bx-5,by);ctx.lineTo(bx+5,by);ctx.lineTo(bx,by+6);ctx.fill();
+        ctx.strokeStyle="rgba(0,200,255,0.5)";ctx.lineWidth=1;
+        ctx.beginPath();ctx.moveTo(bx-5,by);ctx.lineTo(bx,by+6);ctx.lineTo(bx+5,by);ctx.stroke();
+        // Text
+        ctx.fillStyle="rgba(0,220,255,0.95)";ctx.font="bold 9px 'Orbitron'";ctx.textAlign="center";
+        ctx.fillText(ai.chatBubble,bx,by-10,tw-12);
+        ctx.textAlign="left";ctx.globalAlpha=1;ctx.restore();
+      }
+
+      // Reply bubble from character
+      if(ai.replyBubble&&ai.replyTimer>0&&ai.replyTimer<300){
+        const repAlpha=Math.min(1,(300-ai.replyTimer)/30,ai.replyTimer/30)*0.9;
+        let rx2,ry2;
+        const repColor=ai.chatTarget==="FM"?"rgba(255,160,40,":"rgba(160,0,255,";
+        if(ai.chatTarget==="FM"){
+          rx2=fatMonkeyRef.current.x*W;ry2=0.65*H;
+        }else{
+          rx2=W*0.5;ry2=(jaycShipRef.current.y+0.12)*H;
+        }
+        ctx.save();ctx.globalAlpha=repAlpha;
+        ctx.font="bold 10px 'Orbitron'";
+        const rtw=Math.min(ctx.measureText(ai.replyBubble).width+16,220);
+        const rbH=28;
+        // Bubble
+        ctx.fillStyle="rgba(20,0,30,0.85)";
+        ctx.strokeStyle=repColor+"0.6)";ctx.lineWidth=1;
+        const rl=rx2-rtw/2,rt=ry2-rbH;
+        ctx.beginPath();ctx.roundRect(rl,rt,rtw,rbH,6);ctx.fill();ctx.stroke();
+        // Pointer
+        ctx.fillStyle="rgba(20,0,30,0.85)";
+        ctx.beginPath();ctx.moveTo(rx2-5,ry2);ctx.lineTo(rx2+5,ry2);ctx.lineTo(rx2,ry2+6);ctx.fill();
+        // Text
+        ctx.fillStyle=repColor+"0.95)";ctx.font="bold 9px 'Orbitron'";ctx.textAlign="center";
+        ctx.fillText(ai.replyBubble,rx2,ry2-10,rtw-12);
+        ctx.textAlign="left";ctx.globalAlpha=1;ctx.restore();
+      }
 
                   // Corner brackets
       const bL=30;ctx.strokeStyle="rgba(255,0,255,0.1)";ctx.lineWidth=1;
