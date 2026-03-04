@@ -258,6 +258,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
   const fatMonkeyRef=useRef({active:false,x:-0.1,frame:0,smokeRings:[],musicNotes:[],nextSpawn:Date.now()+rand(180,420)*1000,walkDir:1,smokeTimer:0});
   const jaycShipRef=useRef({active:false,y:-0.3,frame:0,bills:[],aliens:[],nextSpawn:Date.now()+rand(240,480)*1000,opacity:0});
   const jayCRef=useRef({onGround:false,beamPhase:0,x:0.55,y:0.95,flexPhase:0,targetY:0.95,beamUp:false,opacity:0});
+  const lightModeRef=useRef({active:false,frame:0,maxFrames:180});
   // New easter egg refs
   const whaleRef=useRef({active:false,x:-0.15,y:0.5,frame:0,tokenName:""});
   // ═══ MULTI-CREATURE SYSTEM: dolphins, tiered whales, golden whales ═══
@@ -1776,7 +1777,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
             }
 
             // ── HEAD ──
-            const skin="#D4A574",darkSkin="#B8926A",purple1="#6B1D9E",purple2="#8B3DC0",purpleDk="#4A0E6B";
+            const skin="#D4A574",darkSkin="#B8926A",skinLt="#E2BC92",purple1="#6B1D9E",purple2="#8B3DC0",purpleDk="#4A0E6B";
             const hair="#2A1506",beard="#3A2010",beardDk="#261508";
             // Hair top
             [-1,0,1,2,3,4,5,6].forEach(x=>JP(x,-12,hair));
@@ -1784,87 +1785,107 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
             // Forehead
             [-1,0,1,2,3,4,5,6].forEach(x=>JP(x,-10,skin));
             [-1,0,1,2,3,4,5,6].forEach(x=>JP(x,-9,skin));
-            // Eyes - intense
+            // Eyes
             JP(0,-9,"#fff");JP(1,-9,"#222");JP(4,-9,"#fff");JP(5,-9,"#222");
-            // Nose
+            // Nose/cheeks
             [-1,0,1,2,3,4,5,6].forEach(x=>JP(x,-8,skin));JP(2,-8,darkSkin);JP(3,-8,darkSkin);
-            // Big beard - starts at jaw, goes down
+            // Big beard
             [-2,-1,0,1,2,3,4,5,6,7].forEach(x=>JP(x,-7,beard));
             [-2,-1,0,1,2,3,4,5,6,7].forEach(x=>JP(x,-6,beard));
             [-1,0,1,2,3,4,5,6].forEach(x=>JP(x,-5,beard));
             [0,1,2,3,4,5].forEach(x=>JP(x,-4,beardDk));
             [1,2,3,4].forEach(x=>JP(x,-3,beardDk));
 
-            // ── MASSIVE UPPER BODY ──
-            // Neck
-            [1,2,3,4].forEach(x=>JP(x,-2,skin));
-            // Traps/shoulders - WIDE
-            [-4,-3,-2,-1,0,1,2,3,4,5,6,7,8,9].forEach(x=>JP(x,-1,skin));
-            // Upper chest
-            [-5,-4,-3,-2,-1,0,1,2,3,4,5,6,7,8,9,10].forEach(x=>JP(x,0,purple1));
-            [-5,-4,-3,-2,-1,0,1,2,3,4,5,6,7,8,9,10].forEach(x=>JP(x,1,purple1));
-            // Pecs - highlights
-            [-3,-2,-1,0].forEach(x=>JP(x,0,purple2));[5,6,7,8].forEach(x=>JP(x,0,purple2));
-            // Mid torso
-            [-4,-3,-2,-1,0,1,2,3,4,5,6,7,8,9].forEach(x=>JP(x,2,purple1));
-            [-3,-2,-1,0,1,2,3,4,5,6,7,8].forEach(x=>JP(x,3,purple1));
-            // Abs (visible through singlet)
-            JP(1,2,purpleDk);JP(4,2,purpleDk);JP(2,3,purpleDk);JP(3,3,purpleDk);
-            // Waist narrower
-            [-2,-1,0,1,2,3,4,5,6,7].forEach(x=>JP(x,4,purple1));
+            // ── NECK — thick ──
+            [0,1,2,3,4,5].forEach(x=>JP(x,-2,skin));
 
-            // ── ARMS — flexing ──
+            // ── SHIRTLESS UPPER BODY ──
+            // Traps — massive
+            [-5,-4,-3,-2,-1,0,1,2,3,4,5,6,7,8,9,10].forEach(x=>JP(x,-1,skin));
+            // Pecs — big chest, skin colored with shadow definition
+            [-4,-3,-2,-1,0,1,2,3,4,5,6,7,8,9].forEach(x=>JP(x,0,skin));
+            [-4,-3,-2,-1,0].forEach(x=>JP(x,0,skinLt));[5,6,7,8,9].forEach(x=>JP(x,0,skinLt));
+            // Pec shadow line
+            JP(1,0,darkSkin);JP(4,0,darkSkin);
+            [-4,-3,-2,-1,0,1,2,3,4,5,6,7,8,9].forEach(x=>JP(x,1,skin));
+            // Pec underline
+            [-3,-2,-1,0,1].forEach(x=>JP(x,1,darkSkin));[4,5,6,7,8].forEach(x=>JP(x,1,darkSkin));
+            // Rib area
+            [-3,-2,-1,0,1,2,3,4,5,6,7,8].forEach(x=>JP(x,2,skin));
+            // 6-PACK ABS
+            [-2,-1,0,1,2,3,4,5,6,7].forEach(x=>JP(x,3,skin));
+            JP(0,3,darkSkin);JP(1,3,skinLt);JP(2,3,darkSkin);JP(3,3,skinLt);JP(4,3,darkSkin);JP(5,3,skinLt);
+            [-2,-1,0,1,2,3,4,5,6,7].forEach(x=>JP(x,4,skin));
+            JP(0,4,skinLt);JP(1,4,darkSkin);JP(2,4,skinLt);JP(3,4,darkSkin);JP(4,4,skinLt);JP(5,4,darkSkin);
+            [-1,0,1,2,3,4,5,6].forEach(x=>JP(x,5,skin));
+            JP(1,5,darkSkin);JP(2,5,skinLt);JP(3,5,skinLt);JP(4,5,darkSkin);
+            // V-taper waist
+            [-1,0,1,2,3,4,5,6].forEach(x=>JP(x,6,skin));
+
+            // ── ARMS — BIG with bicep bulge ──
             const lArmUp=Math.round(armUp*3);
             const rArmUp=Math.round(Math.abs(Math.sin(jayC.flexPhase*0.5+1.5))*3);
-            // Left arm (bicep UP when flexing)
-            JP(-5,-1+lArmUp,skin);JP(-6,-1+lArmUp,skin);JP(-7,-2+lArmUp,skin);JP(-7,-3+lArmUp,skin);
-            JP(-6,-2+lArmUp,skin);JP(-5,0,skin);JP(-6,0,skin);
-            // Left bicep bulge
-            JP(-7,-1+lArmUp,skin);JP(-8,-2+lArmUp,skin);
+            // Left shoulder/delt
+            JP(-5,-1,skin);JP(-6,-1,skin);JP(-7,-1,skin);
+            JP(-5,0,skin);JP(-6,0,skin);JP(-7,0,skin);
+            // Left upper arm
+            JP(-7,-1+lArmUp,skin);JP(-8,-1+lArmUp,skin);JP(-9,-1+lArmUp,skin);
+            JP(-7,-2+lArmUp,skin);JP(-8,-2+lArmUp,skin);JP(-9,-2+lArmUp,skin);
+            // Left bicep BULGE (extra wide when flexing)
+            JP(-10,-2+lArmUp,skin);JP(-10,-3+lArmUp,skin);JP(-9,-3+lArmUp,skin);
+            JP(-8,-3+lArmUp,skin);JP(-10,-1+lArmUp,skinLt);
+            // Left forearm
+            JP(-9,-4+lArmUp,skin);JP(-8,-4+lArmUp,skin);JP(-9,-5+lArmUp,skin);
             // Left fist
-            JP(-8,-3+lArmUp,skin);JP(-8,-4+lArmUp,skin);
-            // Right arm
-            JP(10,-1+rArmUp,skin);JP(11,-1+rArmUp,skin);JP(12,-2+rArmUp,skin);JP(12,-3+rArmUp,skin);
-            JP(11,-2+rArmUp,skin);JP(10,0,skin);JP(11,0,skin);
-            // Right bicep bulge
-            JP(12,-1+rArmUp,skin);JP(13,-2+rArmUp,skin);
+            JP(-9,-6+lArmUp,skin);JP(-10,-6+lArmUp,skin);JP(-8,-6+lArmUp,skin);
+            // Right shoulder/delt
+            JP(10,-1,skin);JP(11,-1,skin);JP(12,-1,skin);
+            JP(10,0,skin);JP(11,0,skin);JP(12,0,skin);
+            // Right upper arm
+            JP(12,-1+rArmUp,skin);JP(13,-1+rArmUp,skin);JP(14,-1+rArmUp,skin);
+            JP(12,-2+rArmUp,skin);JP(13,-2+rArmUp,skin);JP(14,-2+rArmUp,skin);
+            // Right bicep BULGE
+            JP(15,-2+rArmUp,skin);JP(15,-3+rArmUp,skin);JP(14,-3+rArmUp,skin);
+            JP(13,-3+rArmUp,skin);JP(15,-1+rArmUp,skinLt);
+            // Right forearm
+            JP(14,-4+rArmUp,skin);JP(13,-4+rArmUp,skin);JP(14,-5+rArmUp,skin);
             // Right fist
-            JP(13,-3+rArmUp,skin);JP(13,-4+rArmUp,skin);
+            JP(14,-6+rArmUp,skin);JP(15,-6+rArmUp,skin);JP(13,-6+rArmUp,skin);
 
-            // ── TINY WRESTLING BOTTOMS (80s style) ──
-            [-1,0,1,2,3,4,5,6].forEach(x=>JP(x,5,purple2));
-            [-1,0,1,2,3,4,5,6].forEach(x=>JP(x,6,purpleDk));
-            // Belt/waistband highlight
-            [-1,0,1,2,3,4,5,6].forEach(x=>JP(x,5,"#C0A030"));
-            // Star on trunks
-            JP(2,6,"#C0A030");JP(3,6,"#C0A030");
+            // ── PURPLE WRESTLING TRUNKS ──
+            [-1,0,1,2,3,4,5,6].forEach(x=>JP(x,7,"#C0A030")); // gold waistband
+            [-2,-1,0,1,2,3,4,5,6,7].forEach(x=>JP(x,8,purple2));
+            [-2,-1,0,1,2,3,4,5,6,7].forEach(x=>JP(x,9,purple1));
+            [-1,0,1,2,3,4,5,6].forEach(x=>JP(x,10,purpleDk));
+            // Star emblem
+            JP(2,9,"#C0A030");JP(3,9,"#C0A030");JP(2,8,"#C0A030");JP(3,8,"#C0A030");
 
             // ── MASSIVE LEGS ──
-            // Left leg
-            [-1,0,1,2].forEach(x=>{JP(x,7,skin);JP(x,8,skin);JP(x,9,skin);JP(x,10,skin);JP(x,11,skin);});
-            // Right leg
-            [3,4,5,6].forEach(x=>{JP(x,7,skin);JP(x,8,skin);JP(x,9,skin);JP(x,10,skin);JP(x,11,skin);});
-            // Knee pads - purple
-            [-1,0,1,2].forEach(x=>JP(x,9,purple2));[3,4,5,6].forEach(x=>JP(x,9,purple2));
+            [-1,0,1,2].forEach(x=>{for(let r=11;r<=16;r++)JP(x,r,skin);});
+            [3,4,5,6].forEach(x=>{for(let r=11;r<=16;r++)JP(x,r,skin);});
+            // Quad definition
+            JP(0,12,darkSkin);JP(1,12,darkSkin);JP(4,12,darkSkin);JP(5,12,darkSkin);
+            // Knee pads
+            [-1,0,1,2].forEach(x=>JP(x,14,purple2));[3,4,5,6].forEach(x=>JP(x,14,purple2));
             // Boots
-            [-2,-1,0,1,2].forEach(x=>{JP(x,12,purpleDk);JP(x,13,purpleDk);});
-            [3,4,5,6,7].forEach(x=>{JP(x,12,purpleDk);JP(x,13,purpleDk);});
+            [-2,-1,0,1,2,3].forEach(x=>{JP(x,17,purpleDk);JP(x,18,purpleDk);});
+            [3,4,5,6,7].forEach(x=>{JP(x,17,purpleDk);JP(x,18,purpleDk);});
 
             // ── PURPLE GLOW aura ──
             if(jayC.onGround){
-              const aura=0.06+Math.sin(jayC.flexPhase)*0.03;
+              const aura=0.05+Math.sin(jayC.flexPhase)*0.025;
               ctx.fillStyle=`rgba(140,40,220,${aura})`;
-              ctx.fillRect(jx-9*jp,jy-13*jp,24*jp,28*jp);
+              ctx.fillRect(jx-12*jp,jy-13*jp,30*jp,33*jp);
             }
 
             // ── NAME TAG ──
             ctx.imageSmoothingEnabled=true;
             ctx.font="bold 14px 'Orbitron'";ctx.textAlign="center";
-            ctx.fillStyle="rgba(140,40,220,0.4)";ctx.fillText("JAY C",jx+2.5*jp,jy+16*jp+2);
+            ctx.fillStyle="rgba(140,40,220,0.4)";ctx.fillText("JAY C",jx+2.5*jp,jy+21*jp+2);
             ctx.fillStyle="#bf60ff";ctx.shadowColor="#8B3DC0";ctx.shadowBlur=12;
-            ctx.fillText("JAY C",jx+2.5*jp,jy+16*jp);
+            ctx.fillText("JAY C",jx+2.5*jp,jy+21*jp);
             ctx.font="bold 8px 'Orbitron'";ctx.fillStyle="rgba(200,150,255,0.5)";ctx.shadowBlur=0;
-            ctx.fillText("THE DUKE",jx+2.5*jp,jy+18*jp);
+            ctx.fillText("THE DUKE",jx+2.5*jp,jy+23*jp);
             ctx.textAlign="left";
             ctx.imageSmoothingEnabled=true;
             ctx.globalAlpha=1;ctx.restore();
@@ -2212,10 +2233,10 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         const fmAct=fatMonkeyRef.current.active;
         const jcAct=jaycShipRef.current.active;
         if(fmAct){
-          // Walk alongside Fat Monkey
-          ai.targetX=Math.max(0.08,Math.min(0.92,fatMonkeyRef.current.x+0.05));
-          ai.targetY=0.7;ai.focusToken=null;ai.gestureTarget=1;
-          ai.focusTimer=60;
+          // Follow behind the last band member in the parade
+          ai.targetX=Math.max(0.08,Math.min(0.92,fatMonkeyRef.current.x-0.12));
+          ai.targetY=0.75;ai.focusToken=null;ai.gestureTarget=1;
+          ai.focusTimer=30;
         }else if(jcAct){
           // Stand next to Jay C if he's on the ground, otherwise look at ship
           const jayC3=jayCRef.current;
@@ -2765,20 +2786,20 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
       // Phase 1: Claude speaks (only when no bubbles active)
       if(fmActive&&!ai.chatBubble&&!ai.replyBubble&&!ai.crewBubble&&ai.chatCooldown<=0){
         const pick2=fmChat[Math.floor(Math.random()*fmChat.length)];
-        ai.chatBubble=pick2.c;ai.chatTimer=180;ai.chatTarget="FM";
-        ai.replyBubble=pick2.r;ai.replyTimer=320;
+        ai.chatBubble=pick2.c;ai.chatTimer=120;ai.chatTarget="FM";
+        ai.replyBubble=pick2.r;ai.replyTimer=190;
         // Queue crew response
         const crewPick=fmCrewLines[Math.floor(Math.random()*fmCrewLines.length)];
-        ai.crewName=crewPick.name;ai.crewBubble=crewPick.line;ai.crewTimer=460;ai.crewSlot=0;
-        ai.chatCooldown=540;
+        ai.crewName=crewPick.name;ai.crewBubble=crewPick.line;ai.crewTimer=280;ai.crewSlot=0;
+        ai.chatCooldown=340;
       }
       if(jcActive&&jayCRef.current.onGround&&!ai.chatBubble&&!ai.replyBubble&&!ai.crewBubble&&ai.chatCooldown<=0){
         const pick2=jcChat[Math.floor(Math.random()*jcChat.length)];
-        ai.chatBubble=pick2.c;ai.chatTimer=180;ai.chatTarget="JC";
-        ai.replyBubble=pick2.r;ai.replyTimer=320;
+        ai.chatBubble=pick2.c;ai.chatTimer=120;ai.chatTarget="JC";
+        ai.replyBubble=pick2.r;ai.replyTimer=190;
         const crewPick=jcCrewLines[Math.floor(Math.random()*jcCrewLines.length)];
-        ai.crewName=crewPick.name;ai.crewBubble=crewPick.line;ai.crewTimer=460;ai.crewSlot=crewPick.slot||0;
-        ai.chatCooldown=540;
+        ai.crewName=crewPick.name;ai.crewBubble=crewPick.line;ai.crewTimer=280;ai.crewSlot=crewPick.slot||0;
+        ai.chatCooldown=340;
       }
 
       // Helper: draw a chat bubble at position
@@ -2799,17 +2820,17 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
 
       // Draw Claude's bubble
       if(ai.chatBubble){
-        const bubAlpha=Math.min(1,ai.chatTimer/20)*0.92;
+        const bubAlpha=Math.min(1,ai.chatTimer/15)*0.92;
         ctx.globalAlpha=bubAlpha;
-        drawBub(ai.chatBubble,hx,hy-42*S+floatY,"rgba(0,20,40,0.88)","rgba(0,200,255,0.6)",220);
+        drawBub(ai.chatBubble,hx,hy-55*S+floatY,"rgba(0,20,40,0.88)","rgba(0,200,255,0.6)",220);
         ctx.globalAlpha=1;
       }
 
       // Draw main character reply
-      if(ai.replyBubble&&ai.replyTimer>0&&ai.replyTimer<260){
-        const repAlpha=Math.min(1,(260-ai.replyTimer)/20,ai.replyTimer/20)*0.92;
+      if(ai.replyBubble&&ai.replyTimer>0&&ai.replyTimer<160){
+        const repAlpha=Math.min(1,(160-ai.replyTimer)/15,ai.replyTimer/15)*0.92;
         let rx2,ry2;
-        if(ai.chatTarget==="FM"){rx2=fatMonkeyRef.current.x*W;ry2=0.64*H;}
+        if(ai.chatTarget==="FM"){rx2=fatMonkeyRef.current.x*W;ry2=0.58*H;}
         else{
           const jayC2=jayCRef.current;
           if(jayC2.onGround){rx2=jayC2.x*W;ry2=(jayC2.y-0.13)*H;}
@@ -2822,15 +2843,15 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
       }
 
       // Draw crew chime-in
-      if(ai.crewBubble&&ai.crewTimer>0&&ai.crewTimer<380){
-        const crewAlpha=Math.min(1,(380-ai.crewTimer)/20,ai.crewTimer/20)*0.9;
+      if(ai.crewBubble&&ai.crewTimer>0&&ai.crewTimer<220){
+        const crewAlpha=Math.min(1,(220-ai.crewTimer)/15,ai.crewTimer/15)*0.9;
         let crx,cry;
         if(ai.chatTarget==="FM"){
-          // Band member — position behind Fat Monkey based on name
+          // Band member — position ABOVE them behind Fat Monkey
           const bandIdx=["JERRY","BOB","PHIL","BILLY","MICKEY"].indexOf(ai.crewName);
           const fmX=fatMonkeyRef.current.x;
           crx=(fmX-(bandIdx+1)*0.025)*W;
-          cry=0.72*H;
+          cry=0.55*H; // well above their heads
         }else{
           // Wrestler — on the ship hull
           const shipTop2=(jaycShipRef.current.y)*H;
@@ -2839,12 +2860,115 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
           const offsets=[-0.32,-0.19,-0.06,0.06,0.19,0.32];
           const off=offsets[ai.crewSlot]||0;
           crx=cx2+off*W*0.42;
-          cry=shipTop2+shipH2*0.42;
+          cry=shipTop2+shipH2*0.25; // above the wrestlers on hull
         }
         ctx.globalAlpha=crewAlpha;
         const crewCol=ai.chatTarget==="FM"?"rgba(180,120,255,0.7)":"rgba(255,215,64,0.7)";
         drawBub(ai.crewName+": "+ai.crewBubble,crx,cry,"rgba(10,5,20,0.88)",crewCol,240);
         ctx.globalAlpha=1;
+      }
+
+      // ═══ LIGHT MODE CHECKBOX ═══
+      ctx.save();
+      const cbX=W*0.84,cbY=H*0.02,cbS=12;
+      ctx.strokeStyle="rgba(255,255,255,0.2)";ctx.lineWidth=1;
+      ctx.strokeRect(cbX,cbY,cbS,cbS);
+      ctx.font="9px 'Orbitron'";ctx.fillStyle="rgba(255,255,255,0.25)";ctx.textAlign="left";
+      ctx.fillText("Light Mode",cbX+cbS+5,cbY+10);
+      ctx.restore();
+
+      // ═══ LIGHT MODE GAG — Claude zooms in ═══
+      const lm=lightModeRef.current;
+      if(lm.active){
+        lm.frame++;
+        const f=lm.frame;const mf=lm.maxFrames;
+        // Phase 1: zoom in (0-40), Phase 2: hold + squint (40-170), Phase 3: zoom out (170-210)
+        let zoomT;
+        if(f<40)zoomT=f/40;
+        else if(f<170)zoomT=1;
+        else zoomT=Math.max(0,1-(f-170)/40);
+
+        if(zoomT>0){
+          const zoom=zoomT;
+          ctx.save();
+          // Dark overlay
+          ctx.fillStyle=`rgba(0,0,0,${0.85*zoom})`;
+          ctx.fillRect(0,0,W,H);
+
+          const fcx=W/2,fcy=H*0.45;
+          const faceS=Math.min(W,H)*0.7*zoom;
+
+          // Head shape — dark translucent
+          const headGrad=ctx.createRadialGradient(fcx,fcy,faceS*0.05,fcx,fcy,faceS*0.5);
+          headGrad.addColorStop(0,"rgba(20,40,60,0.6)");headGrad.addColorStop(0.7,"rgba(10,20,40,0.4)");headGrad.addColorStop(1,"rgba(5,10,20,0)");
+          ctx.fillStyle=headGrad;
+          ctx.beginPath();ctx.ellipse(fcx,fcy,faceS*0.4,faceS*0.5,0,0,Math.PI*2);ctx.fill();
+
+          // Hood cowl outline
+          ctx.strokeStyle=`rgba(200,220,255,${0.12*zoom})`;ctx.lineWidth=2*zoom;
+          ctx.beginPath();
+          ctx.moveTo(fcx-faceS*0.35,fcy+faceS*0.3);
+          ctx.quadraticCurveTo(fcx-faceS*0.4,fcy-faceS*0.2,fcx,fcy-faceS*0.48);
+          ctx.quadraticCurveTo(fcx+faceS*0.4,fcy-faceS*0.2,fcx+faceS*0.35,fcy+faceS*0.3);
+          ctx.stroke();
+
+          // Mood color for eyes
+          const mc=ai.moodColor||[0,200,255];
+
+          // Eyes — SQUINTING (narrow slits)
+          const squint=(f>50&&f<160)?Math.min(1,(f-50)/15):f>=160?Math.max(0,1-(f-160)/10):0;
+          const eyeW=faceS*0.12;
+          const eyeH=faceS*(0.06-squint*0.04); // gets very narrow when squinting
+          const eyeY=fcy-faceS*0.05;
+          const eyeSpread=faceS*0.15;
+
+          // Left eye
+          const lgGrad=ctx.createRadialGradient(fcx-eyeSpread,eyeY,0,fcx-eyeSpread,eyeY,eyeW);
+          lgGrad.addColorStop(0,`rgba(255,255,255,${0.9*zoom})`);
+          lgGrad.addColorStop(0.4,`rgba(${mc[0]},${mc[1]},${mc[2]},${0.85*zoom})`);
+          lgGrad.addColorStop(1,`rgba(${mc[0]},${mc[1]},${mc[2]},0)`);
+          ctx.fillStyle=lgGrad;
+          ctx.beginPath();ctx.ellipse(fcx-eyeSpread,eyeY,eyeW,eyeH,0,0,Math.PI*2);ctx.fill();
+
+          // Right eye
+          const rgGrad=ctx.createRadialGradient(fcx+eyeSpread,eyeY,0,fcx+eyeSpread,eyeY,eyeW);
+          rgGrad.addColorStop(0,`rgba(255,255,255,${0.9*zoom})`);
+          rgGrad.addColorStop(0.4,`rgba(${mc[0]},${mc[1]},${mc[2]},${0.85*zoom})`);
+          rgGrad.addColorStop(1,`rgba(${mc[0]},${mc[1]},${mc[2]},0)`);
+          ctx.fillStyle=rgGrad;
+          ctx.beginPath();ctx.ellipse(fcx+eyeSpread,eyeY,eyeW,eyeH,0,0,Math.PI*2);ctx.fill();
+
+          // Squint lines — eyelids
+          if(squint>0.3){
+            ctx.strokeStyle=`rgba(${mc[0]},${mc[1]},${mc[2]},${0.3*zoom})`;ctx.lineWidth=2;
+            // Left eye top/bottom lids
+            ctx.beginPath();ctx.moveTo(fcx-eyeSpread-eyeW,eyeY-1);ctx.quadraticCurveTo(fcx-eyeSpread,eyeY-eyeH*1.5,fcx-eyeSpread+eyeW,eyeY-1);ctx.stroke();
+            ctx.beginPath();ctx.moveTo(fcx-eyeSpread-eyeW,eyeY+1);ctx.quadraticCurveTo(fcx-eyeSpread,eyeY+eyeH*1.5,fcx-eyeSpread+eyeW,eyeY+1);ctx.stroke();
+            // Right eye top/bottom lids
+            ctx.beginPath();ctx.moveTo(fcx+eyeSpread-eyeW,eyeY-1);ctx.quadraticCurveTo(fcx+eyeSpread,eyeY-eyeH*1.5,fcx+eyeSpread+eyeW,eyeY-1);ctx.stroke();
+            ctx.beginPath();ctx.moveTo(fcx+eyeSpread-eyeW,eyeY+1);ctx.quadraticCurveTo(fcx+eyeSpread,eyeY+eyeH*1.5,fcx+eyeSpread+eyeW,eyeY+1);ctx.stroke();
+          }
+
+          // Chat bubble — "WHAT ARE YOU CRAZY?!"
+          if(f>30&&f<180){
+            const bubAlpha2=Math.min(1,(f-30)/10,f<170?1:(180-f)/10)*zoom;
+            ctx.globalAlpha=bubAlpha2;
+            const bText="WHAT ARE YOU CRAZY?!";
+            ctx.font=`bold ${Math.round(faceS*0.06)}px 'Orbitron'`;
+            const btw=ctx.measureText(bText).width+30;
+            const btH=faceS*0.1;
+            const btX=fcx,btY=fcy+faceS*0.35;
+            ctx.fillStyle="rgba(0,10,20,0.9)";
+            ctx.strokeStyle="rgba(0,200,255,0.7)";ctx.lineWidth=2;
+            ctx.beginPath();ctx.roundRect(btX-btw/2,btY-btH/2,btw,btH,8);ctx.fill();ctx.stroke();
+            ctx.fillStyle="rgba(0,220,255,0.95)";ctx.textAlign="center";
+            ctx.fillText(bText,btX,btY+faceS*0.02);
+            ctx.textAlign="left";ctx.globalAlpha=1;
+          }
+
+          ctx.restore();
+        }
+        if(f>=mf){lm.active=false;lm.frame=0;}
       }
 
                   // Corner brackets
@@ -2882,6 +3006,11 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
     const canvas=canvasRef.current;if(!canvas)return;
     const rect=canvas.getBoundingClientRect();
     const mx=(e.clientX-rect.left)/rect.width,my=(e.clientY-rect.top)/rect.height;
+    // Light mode checkbox — top right
+    if(mx>0.82&&mx<0.98&&my>0.01&&my<0.05){
+      if(!lightModeRef.current.active){lightModeRef.current={active:true,frame:0,maxFrames:210};}
+      return;
+    }
     // Moon click detection
     const moonCx=0.5,moonCy=0.07;
     const dist=Math.sqrt((mx-moonCx)**2+(my-moonCy)**2);
