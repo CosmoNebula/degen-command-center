@@ -258,7 +258,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
   const fatMonkeyRef=useRef({active:false,x:-0.1,frame:0,smokeRings:[],musicNotes:[],nextSpawn:Date.now()+rand(180,420)*1000,walkDir:1,smokeTimer:0});
   const jaycShipRef=useRef({active:false,y:-0.3,frame:0,bills:[],aliens:[],nextSpawn:Date.now()+rand(240,480)*1000,opacity:0});
   const jayCRef=useRef({onGround:false,beamPhase:0,x:0.55,y:0.95,flexPhase:0,targetY:0.95,beamUp:false,opacity:0,beltHolder:"claude"});
-  const lightModeRef=useRef({active:false,frame:0,maxFrames:300});
+  const lightModeRef=useRef({active:false,frame:0,maxFrames:180});
   const titleFlashRef=useRef({active:false,frame:0});
   // New easter egg refs
   const whaleRef=useRef({active:false,x:-0.15,y:0.5,frame:0,tokenName:""});
@@ -1881,20 +1881,34 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
               ctx.fillRect(jx-12*jp,jy-13*jp,30*jp,33*jp);
             }
 
-            // ── CHAMPIONSHIP BELT above head when Jay C holds it ──
+            // ── CHAMPIONSHIP BELT above head when Jay C holds it — DOUBLE SIZE ──
             if(jayC.beltHolder==="jayc"){
-              const beltY=-16-Math.round(Math.abs(Math.sin(jayC.flexPhase*0.3))*2);
-              // Gold belt plate
-              [-2,-1,0,1,2,3,4,5,6,7].forEach(x=>JP(x,beltY,"#E8C840"));
-              [-1,0,1,2,3,4,5,6].forEach(x=>JP(x,beltY-1,"#C0A030"));
-              // Center plate
-              [1,2,3,4].forEach(x=>JP(x,beltY,"#fff"));
-              [1,2,3,4].forEach(x=>JP(x,beltY-1,"#fff"));
-              // Side gems
-              JP(-1,beltY,"#ff4444");JP(6,beltY,"#4444ff");
-              // Arms up holding belt (override normal arms)
-              JP(0,beltY+1,"#D4A574");JP(5,beltY+1,"#D4A574");
-              JP(-1,beltY+2,"#D4A574");JP(6,beltY+2,"#D4A574");
+              const beltY=-18-Math.round(Math.abs(Math.sin(jayC.flexPhase*0.3))*2);
+              const bp=2; // double pixel multiplier
+              const BP=(gx,gy,col)=>{ctx.fillStyle=col;ctx.fillRect(jx+gx*jp*bp/2,jy+(beltY+gy)*jp,jp*bp,jp*bp);};
+              const bg="#C0A030",gd="#E8C840",wh="#fff",ruby="#ff2244",sap="#2266ff",em="#22cc44",dia="#aaeeff";
+              // Main belt plate — huge
+              for(let row=-1;row<=2;row++){
+                [-6,-5,-4,-3,-2,-1,0,1,2,3,4,5,6,7].forEach(x=>BP(x,row,row%2===0?gd:bg));
+              }
+              // Center diamond
+              [-1,0,1,2].forEach(x=>{for(let r=-1;r<=2;r++)BP(x,r,wh);});
+              [0,1].forEach(x=>{for(let r=0;r<=1;r++)BP(x,r,dia);});
+              // Rubies
+              BP(-5,0,ruby);BP(-5,1,ruby);BP(-4,0,ruby);BP(-4,1,sap);
+              BP(6,0,sap);BP(6,1,ruby);BP(5,0,sap);BP(5,1,sap);
+              // Emeralds
+              BP(-3,0,em);BP(4,0,em);BP(-3,1,em);BP(4,1,em);
+              // Gold accents
+              BP(-2,0,"#ffffa0");BP(3,0,"#ffffa0");
+              // Sparkle effect
+              if(jayC.flexPhase%3<1.5){BP(0,-2,"#ffffcc");BP(1,-2,"#ffffcc");}
+              if(jayC.flexPhase%4<1){BP(-4,-1,"#ffffaa");BP(5,-1,"#ffffaa");}
+              // Arms up holding belt
+              const skin2="#D4A574";
+              JP(-2,beltY+3,skin2);JP(-1,beltY+3,skin2);JP(-2,beltY+4,skin2);JP(-1,beltY+4,skin2);
+              JP(6,beltY+3,skin2);JP(7,beltY+3,skin2);JP(6,beltY+4,skin2);JP(7,beltY+4,skin2);
+              JP(-1,beltY+5,skin2);JP(6,beltY+5,skin2);
             }
 
             // ── NAME TAG ──
@@ -2244,17 +2258,17 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         const fmAct=fatMonkeyRef.current.active;
         const jcAct=jaycShipRef.current.active;
         if(fmAct){
-          // Teleport behind last band member instantly
-          const fmTargetX=Math.max(0.08,Math.min(0.92,fatMonkeyRef.current.x-0.12));
-          if(ai.morphMode==="monkey"&&ai.morphFrame<5){ai.x=fmTargetX;ai.y=0.75;}
+          // Teleport behind last band member (MICKEY) — well behind the group
+          const fmTargetX=Math.max(0.05,Math.min(0.92,fatMonkeyRef.current.x-0.22));
+          if(ai.morphMode==="monkey"&&ai.morphFrame<5){ai.x=fmTargetX;ai.y=0.78;}
           ai.targetX=fmTargetX;
-          ai.targetY=0.75;ai.focusToken=null;ai.gestureTarget=1;
+          ai.targetY=0.78;ai.focusToken=null;ai.gestureTarget=1;
           ai.focusTimer=30;
         }else if(jcAct){
           // Teleport next to Jay C instantly with space between
           const jayC3=jayCRef.current;
           if(jayC3.onGround){
-            const jcTargetX=jayC3.x-0.14;
+            const jcTargetX=jayC3.x-0.35;
             if(ai.morphMode==="wrestler"&&ai.morphFrame<5){ai.x=jcTargetX;ai.y=0.83;}
             ai.targetX=jcTargetX;ai.targetY=0.83;
           }else{
@@ -2394,20 +2408,28 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
           // Data pattern on trunks
           P(2,4,cyanD);P(3,4,cyanD);P(2,5,cyanL);P(3,5,cyanL);
 
-          // CHAMPIONSHIP BELT (if Claude holds it) — BIG and GOLD
+          // CHAMPIONSHIP BELT (if Claude holds it) — MASSIVE ORNATE GOLD
           if(jayCRef.current.beltHolder==="claude"){
-            // Belt plate — extends wide
-            [-3,-2,-1,0,1,2,3,4,5,6,7,8].forEach(x=>P(x,3,"#C0A030")); // gold band wide
-            [-3,-2,-1,0,1,2,3,4,5,6,7,8].forEach(x=>P(x,2,"#E8C840")); // upper gold row
-            [-2,-1,0,1,2,3,4,5,6,7].forEach(x=>P(x,1,"#DAB835")); // top plate
-            // Center plate — white/diamond
-            [1,2,3,4].forEach(x=>P(x,2,"#fff"));[1,2,3,4].forEach(x=>P(x,1,"#fff"));
-            [2,3].forEach(x=>P(x,3,"#fff"));
-            // Side gems
-            P(-2,2,"#ff4444");P(-1,2,"#ff6666");P(7,2,"#4488ff");P(6,2,"#66aaff");
-            P(-2,1,"#ff2222");P(7,1,"#2266ff");
-            // Sparkle effect
-            if(mf2%30<15){P(2,0,"#ffffa0");P(3,0,"#ffffa0");}
+            const bg="#C0A030",gd="#E8C840",wh="#fff",ruby="#ff2244",sap="#2266ff",em="#22cc44",dia="#aaeeff";
+            // Main plate — wide and tall
+            [-5,-4,-3,-2,-1,0,1,2,3,4,5,6,7,8,9,10].forEach(x=>P(x,1,bg));
+            [-5,-4,-3,-2,-1,0,1,2,3,4,5,6,7,8,9,10].forEach(x=>P(x,2,gd));
+            [-5,-4,-3,-2,-1,0,1,2,3,4,5,6,7,8,9,10].forEach(x=>P(x,3,bg));
+            [-4,-3,-2,-1,0,1,2,3,4,5,6,7,8,9].forEach(x=>P(x,0,gd));
+            // Center diamond plate
+            [1,2,3,4].forEach(x=>{P(x,0,wh);P(x,1,wh);P(x,2,wh);P(x,3,dia);});
+            // Side gems — rubies and sapphires
+            P(-4,1,ruby);P(-4,2,ruby);P(-3,1,ruby);P(-3,2,sap);
+            P(8,1,sap);P(8,2,ruby);P(9,1,sap);P(9,2,sap);
+            // Emeralds
+            P(-2,1,em);P(7,1,em);P(-2,3,em);P(7,3,em);
+            // Edge detail — ornate border
+            [-5,10].forEach(x=>{P(x,0,bg);P(x,1,"#a08828");P(x,2,"#a08828");P(x,3,bg);});
+            // Inner gold accents
+            P(0,1,"#ffffa0");P(5,1,"#ffffa0");P(0,2,"#ffffa0");P(5,2,"#ffffa0");
+            // Sparkle
+            if(mf2%20<10){P(2,0,"#ffffcc");P(3,0,"#ffffcc");P(2,-1,"#ffffcc");P(3,-1,"#ffffcc");}
+            if(mf2%30<8){P(-3,0,"#ffffaa");P(8,0,"#ffffaa");}
           }
 
           // Legs — dark energy
@@ -3151,33 +3173,42 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
       if(lm.active){
         lm.frame++;
         const f=lm.frame;const mf=lm.maxFrames;
-        // Phase 1: zoom in (0-40), Phase 2: squint (40-130), Phase 3: head shake (130-220), Phase 4: zoom out (220-300)
+        // ~3 sec: zoom in (0-15), squint+hold (15-60), 3D head shake (60-130), zoom out (130-180)
         let zoomT;
-        if(f<40)zoomT=f/40;
-        else if(f<220)zoomT=1;
-        else zoomT=Math.max(0,1-(f-220)/80);
+        if(f<15)zoomT=f/15;
+        else if(f<130)zoomT=1;
+        else zoomT=Math.max(0,1-(f-130)/50);
 
         if(zoomT>0){
           const zoom=zoomT;
           ctx.save();
-          // Dark overlay
           ctx.fillStyle=`rgba(0,0,0,${0.85*zoom})`;
           ctx.fillRect(0,0,W,H);
 
           const fcx0=W/2,fcy=H*0.45;
           const faceS=Math.min(W,H)*0.7*zoom;
-          // Head shake offset (phase 3: frames 130-220)
-          const shakeActive=f>130&&f<220;
-          const shakeX=shakeActive?Math.sin((f-130)*0.35)*faceS*0.08:0;
-          const fcx=fcx0+shakeX;
+          const mc=ai.moodColor||[0,200,255];
 
-          // Head shape — dark translucent
+          // 3D head rotation (phase 3: 60-130)
+          const shakeActive=f>60&&f<130;
+          const headAngle=shakeActive?Math.sin((f-60)*0.25)*0.35:0; // radians, ~20 deg max
+          const headX=headAngle*faceS*0.25; // lateral shift
+          const headScaleX=1-Math.abs(headAngle)*0.3; // compress face when turned
+          const fcx=fcx0+headX;
+
+          // Draw head with 3D transform
+          ctx.save();
+          ctx.translate(fcx,fcy);
+          ctx.scale(headScaleX,1);
+          ctx.translate(-fcx,-fcy);
+
+          // Head shape
           const headGrad=ctx.createRadialGradient(fcx,fcy,faceS*0.05,fcx,fcy,faceS*0.5);
           headGrad.addColorStop(0,"rgba(20,40,60,0.6)");headGrad.addColorStop(0.7,"rgba(10,20,40,0.4)");headGrad.addColorStop(1,"rgba(5,10,20,0)");
           ctx.fillStyle=headGrad;
           ctx.beginPath();ctx.ellipse(fcx,fcy,faceS*0.4,faceS*0.5,0,0,Math.PI*2);ctx.fill();
 
-          // Hood cowl outline
+          // Hood cowl
           ctx.strokeStyle=`rgba(200,220,255,${0.12*zoom})`;ctx.lineWidth=2*zoom;
           ctx.beginPath();
           ctx.moveTo(fcx-faceS*0.35,fcy+faceS*0.3);
@@ -3185,52 +3216,53 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
           ctx.quadraticCurveTo(fcx+faceS*0.4,fcy-faceS*0.2,fcx+faceS*0.35,fcy+faceS*0.3);
           ctx.stroke();
 
-          // Mood color for eyes
-          const mc=ai.moodColor||[0,200,255];
-
-          // Eyes — SQUINTING (narrow slits)
-          const squint=(f>50&&f<220)?Math.min(1,(f-50)/15):f>=220?Math.max(0,1-(f-220)/10):0;
+          // Eyes — squint
+          const squint=(f>20&&f<140)?Math.min(1,(f-20)/10):f>=140?Math.max(0,1-(f-140)/10):0;
           const eyeW=faceS*0.12;
-          const eyeH=faceS*(0.06-squint*0.04); // gets very narrow when squinting
+          const eyeH=faceS*(0.06-squint*0.045);
           const eyeY=fcy-faceS*0.05;
           const eyeSpread=faceS*0.15;
+          // Shift eyes with head turn — near eye compresses, far eye stretches
+          const eyeShift=headAngle*faceS*0.03;
 
           // Left eye
-          const lgGrad=ctx.createRadialGradient(fcx-eyeSpread,eyeY,0,fcx-eyeSpread,eyeY,eyeW);
+          const leX=fcx-eyeSpread+eyeShift;
+          const lgGrad=ctx.createRadialGradient(leX,eyeY,0,leX,eyeY,eyeW);
           lgGrad.addColorStop(0,`rgba(255,255,255,${0.9*zoom})`);
           lgGrad.addColorStop(0.4,`rgba(${mc[0]},${mc[1]},${mc[2]},${0.85*zoom})`);
           lgGrad.addColorStop(1,`rgba(${mc[0]},${mc[1]},${mc[2]},0)`);
           ctx.fillStyle=lgGrad;
-          ctx.beginPath();ctx.ellipse(fcx-eyeSpread,eyeY,eyeW,eyeH,0,0,Math.PI*2);ctx.fill();
+          ctx.beginPath();ctx.ellipse(leX,eyeY,eyeW,eyeH,0,0,Math.PI*2);ctx.fill();
 
           // Right eye
-          const rgGrad=ctx.createRadialGradient(fcx+eyeSpread,eyeY,0,fcx+eyeSpread,eyeY,eyeW);
+          const reX=fcx+eyeSpread+eyeShift;
+          const rgGrad=ctx.createRadialGradient(reX,eyeY,0,reX,eyeY,eyeW);
           rgGrad.addColorStop(0,`rgba(255,255,255,${0.9*zoom})`);
           rgGrad.addColorStop(0.4,`rgba(${mc[0]},${mc[1]},${mc[2]},${0.85*zoom})`);
           rgGrad.addColorStop(1,`rgba(${mc[0]},${mc[1]},${mc[2]},0)`);
           ctx.fillStyle=rgGrad;
-          ctx.beginPath();ctx.ellipse(fcx+eyeSpread,eyeY,eyeW,eyeH,0,0,Math.PI*2);ctx.fill();
+          ctx.beginPath();ctx.ellipse(reX,eyeY,eyeW,eyeH,0,0,Math.PI*2);ctx.fill();
 
-          // Squint lines — eyelids
+          // Squint lid lines
           if(squint>0.3){
             ctx.strokeStyle=`rgba(${mc[0]},${mc[1]},${mc[2]},${0.3*zoom})`;ctx.lineWidth=2;
-            // Left eye top/bottom lids
-            ctx.beginPath();ctx.moveTo(fcx-eyeSpread-eyeW,eyeY-1);ctx.quadraticCurveTo(fcx-eyeSpread,eyeY-eyeH*1.5,fcx-eyeSpread+eyeW,eyeY-1);ctx.stroke();
-            ctx.beginPath();ctx.moveTo(fcx-eyeSpread-eyeW,eyeY+1);ctx.quadraticCurveTo(fcx-eyeSpread,eyeY+eyeH*1.5,fcx-eyeSpread+eyeW,eyeY+1);ctx.stroke();
-            // Right eye top/bottom lids
-            ctx.beginPath();ctx.moveTo(fcx+eyeSpread-eyeW,eyeY-1);ctx.quadraticCurveTo(fcx+eyeSpread,eyeY-eyeH*1.5,fcx+eyeSpread+eyeW,eyeY-1);ctx.stroke();
-            ctx.beginPath();ctx.moveTo(fcx+eyeSpread-eyeW,eyeY+1);ctx.quadraticCurveTo(fcx+eyeSpread,eyeY+eyeH*1.5,fcx+eyeSpread+eyeW,eyeY+1);ctx.stroke();
+            [leX,reX].forEach(ex=>{
+              ctx.beginPath();ctx.moveTo(ex-eyeW,eyeY-1);ctx.quadraticCurveTo(ex,eyeY-eyeH*1.5,ex+eyeW,eyeY-1);ctx.stroke();
+              ctx.beginPath();ctx.moveTo(ex-eyeW,eyeY+1);ctx.quadraticCurveTo(ex,eyeY+eyeH*1.5,ex+eyeW,eyeY+1);ctx.stroke();
+            });
           }
 
-          // Chat bubble — "WHAT ARE YOU CRAZY?!"
-          if(f>30&&f<240){
-            const bubAlpha2=Math.min(1,(f-30)/10,f<220?1:(240-f)/20)*zoom;
+          ctx.restore(); // pop the 3D transform — text renders without it
+
+          // Chat bubble — stays dead center, no shake
+          if(f>15&&f<155){
+            const bubAlpha2=Math.min(1,(f-15)/8,f<140?1:(155-f)/15)*zoom;
             ctx.globalAlpha=bubAlpha2;
             const bText="WHAT ARE YOU CRAZY?!";
             ctx.font=`bold ${Math.round(faceS*0.06)}px 'Orbitron'`;
             const btw=ctx.measureText(bText).width+30;
             const btH=faceS*0.1;
-            const btX=fcx,btY=fcy+faceS*0.35;
+            const btX=fcx0,btY=fcy+faceS*0.35;
             ctx.fillStyle="rgba(0,10,20,0.9)";
             ctx.strokeStyle="rgba(0,200,255,0.7)";ctx.lineWidth=2;
             ctx.beginPath();ctx.roundRect(btX-btw/2,btY-btH/2,btw,btH,8);ctx.fill();ctx.stroke();
@@ -3281,7 +3313,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
     const mx=(e.clientX-rect.left)/rect.width,my=(e.clientY-rect.top)/rect.height;
     // Light mode checkbox — top right
     if(mx>0.82&&mx<0.98&&my>0.01&&my<0.05){
-      if(!lightModeRef.current.active){lightModeRef.current={active:true,frame:0,maxFrames:300};}
+      if(!lightModeRef.current.active){lightModeRef.current={active:true,frame:0,maxFrames:180};}
       return;
     }
     // Moon click detection
