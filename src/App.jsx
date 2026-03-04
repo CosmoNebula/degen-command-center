@@ -253,12 +253,12 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
     chatBubble:null,chatTimer:0,chatTarget:null,
     replyBubble:null,replyTimer:0,
     crewBubble:null,crewTimer:0,crewName:null,crewSlot:0,
-    chatCooldown:0,
+    chatCooldown:0,morphMode:"normal",morphFrame:0,
   });
   const fatMonkeyRef=useRef({active:false,x:-0.1,frame:0,smokeRings:[],musicNotes:[],nextSpawn:Date.now()+rand(180,420)*1000,walkDir:1,smokeTimer:0});
   const jaycShipRef=useRef({active:false,y:-0.3,frame:0,bills:[],aliens:[],nextSpawn:Date.now()+rand(240,480)*1000,opacity:0});
-  const jayCRef=useRef({onGround:false,beamPhase:0,x:0.55,y:0.95,flexPhase:0,targetY:0.95,beamUp:false,opacity:0});
-  const lightModeRef=useRef({active:false,frame:0,maxFrames:180});
+  const jayCRef=useRef({onGround:false,beamPhase:0,x:0.55,y:0.95,flexPhase:0,targetY:0.95,beamUp:false,opacity:0,beltHolder:"claude"});
+  const lightModeRef=useRef({active:false,frame:0,maxFrames:300});
   // New easter egg refs
   const whaleRef=useRef({active:false,x:-0.15,y:0.5,frame:0,tokenName:""});
   // ═══ MULTI-CREATURE SYSTEM: dolphins, tiered whales, golden whales ═══
@@ -1302,7 +1302,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         }else if(jc.phase==="ascend"){
           jc.y-=0.003;jc.opacity=Math.max(0,jc.opacity-0.01);
           if(jc.opacity<=0){jc.active=false;jc.nextSpawn=now2+rand(900,1500)*1000;
-            jayCRef.current={onGround:false,beamPhase:0,x:0.55,y:0.95,flexPhase:0,targetY:0.95,beamUp:false,opacity:0};
+            jayCRef.current={onGround:false,beamPhase:0,x:0.55,y:0.95,flexPhase:0,targetY:0.95,beamUp:false,opacity:0,beltHolder:"claude"};
             onKillFeedRef.current?.({type:"system",text:"👾 J-Ai-C Dreadnought has departed... 💸"});}
         }
         // ═══ JAY C CHARACTER — beam down from mothership ═══
@@ -1318,7 +1318,8 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         if(jayC.onGround){jayC.flexPhase+=0.04;}
         if(jc.phase==="ascend"&&jayC.onGround&&!jayC.beamUp){
           jayC.beamUp=true;jayC.onGround=false;
-          onKillFeedRef.current?.({type:"system",text:"🤼 Jay C beams back to the Dreadnought... UNTIL NEXT TIME! 💪"});
+          jayC.beltHolder="jayc"; // belt transfers!
+          onKillFeedRef.current?.({type:"system",text:"🤼 Jay C beams back to the Dreadnought WITH THE BELT! 🏆💪"});
         }
         if(jayC.beamUp){
           jayC.y-=0.008;jayC.opacity=Math.max(0,jayC.opacity-0.012);
@@ -1878,6 +1879,22 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
               ctx.fillRect(jx-12*jp,jy-13*jp,30*jp,33*jp);
             }
 
+            // ── CHAMPIONSHIP BELT above head when Jay C holds it ──
+            if(jayC.beltHolder==="jayc"){
+              const beltY=-16-Math.round(Math.abs(Math.sin(jayC.flexPhase*0.3))*2);
+              // Gold belt plate
+              [-2,-1,0,1,2,3,4,5,6,7].forEach(x=>JP(x,beltY,"#E8C840"));
+              [-1,0,1,2,3,4,5,6].forEach(x=>JP(x,beltY-1,"#C0A030"));
+              // Center plate
+              [1,2,3,4].forEach(x=>JP(x,beltY,"#fff"));
+              [1,2,3,4].forEach(x=>JP(x,beltY-1,"#fff"));
+              // Side gems
+              JP(-1,beltY,"#ff4444");JP(6,beltY,"#4444ff");
+              // Arms up holding belt (override normal arms)
+              JP(0,beltY+1,"#D4A574");JP(5,beltY+1,"#D4A574");
+              JP(-1,beltY+2,"#D4A574");JP(6,beltY+2,"#D4A574");
+            }
+
             // ── NAME TAG ──
             ctx.imageSmoothingEnabled=true;
             ctx.font="bold 14px 'Orbitron'";ctx.textAlign="center";
@@ -2238,15 +2255,15 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
           ai.targetY=0.75;ai.focusToken=null;ai.gestureTarget=1;
           ai.focusTimer=30;
         }else if(jcAct){
-          // Stand next to Jay C if he's on the ground, otherwise look at ship
+          // Stand opposite Jay C like opponents facing off
           const jayC3=jayCRef.current;
           if(jayC3.onGround){
-            ai.targetX=jayC3.x-0.06;ai.targetY=0.7;
+            ai.targetX=jayC3.x-0.1;ai.targetY=0.83;
           }else{
             ai.targetX=0.5;ai.targetY=0.45;
           }
           ai.focusToken=null;ai.gestureTarget=1;
-          ai.focusTimer=60;
+          ai.focusTimer=30;
         }else{
         const locked2=lockedRef.current;
         const alive3=tokensRef.current.filter(t=>t.alive&&(t.mcap||0)>=5000);
@@ -2277,6 +2294,14 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
       ai.auraParticles.forEach(ap=>{ap.angle+=ap.speed;ap.life--;});
       ai.auraParticles=ai.auraParticles.filter(ap=>ap.life>0).slice(-30);
 
+      // ═══ MORPH MODE ═══
+      const fmActive2=fatMonkeyRef.current.active;
+      const jcActive2=jaycShipRef.current.active&&jayCRef.current.onGround;
+      if(fmActive2&&ai.morphMode!=="monkey"){ai.morphMode="monkey";ai.morphFrame=0;}
+      else if(jcActive2&&ai.morphMode!=="wrestler"){ai.morphMode="wrestler";ai.morphFrame=0;}
+      else if(!fmActive2&&!jcActive2&&ai.morphMode!=="normal"){ai.morphMode="normal";ai.morphFrame=0;}
+      ai.morphFrame++;
+
       // ═══ DRAW ═══
       const hx=ai.x*W,hy=ai.y*H;
       const S=2.0;
@@ -2286,7 +2311,198 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
       ctx.save();
       ctx.globalAlpha=flicker*0.92;
 
-      // ═══ GROUND PROJECTION ═══
+      if(ai.morphMode!=="normal"){
+        // ═══ PIXEL ART MORPHS ═══
+        ctx.imageSmoothingEnabled=false;
+        const jp=6; // pixel size matching Jay C
+        const mf2=ai.morphFrame;
+        const JP2=(gx,gy,col)=>{ctx.fillStyle=col;ctx.fillRect(hx+gx*jp,hy+gy*jp,jp,jp);};
+
+        if(ai.morphMode==="wrestler"){
+          // ═══ PIXEL WRESTLER CLAUDE — data entity in wrestling form ═══
+          const cyanD="#0af",cyanL="#6ef",dark="#0a1428",darkB="#061018",hood="#1a2a40";
+          const mc2=ai.moodColor||[0,200,255];
+          const mcStr=`rgb(${mc2[0]},${mc2[1]},${mc2[2]})`;
+          const bob2=Math.round(Math.sin(mf2*0.06)*1);
+          const flex2=Math.sin(mf2*0.04)*0.5;
+          const armUp2=Math.abs(Math.sin(mf2*0.05));
+          const lA=Math.round(armUp2*3);
+          const rA=Math.round(Math.abs(Math.sin(mf2*0.05+1.5))*3);
+          const P=(gx,gy,c)=>JP2(gx,gy+bob2,c);
+          // Hood
+          [-1,0,1,2,3,4,5,6].forEach(x=>P(x,-13,hood));
+          [-2,-1,0,1,2,3,4,5,6,7].forEach(x=>P(x,-12,hood));
+          [-2,-1,0,1,2,3,4,5,6,7].forEach(x=>P(x,-11,dark));
+          // Face — dark translucent
+          [-1,0,1,2,3,4,5,6].forEach(x=>P(x,-10,dark));
+          [-1,0,1,2,3,4,5,6].forEach(x=>P(x,-9,dark));
+          // Glowing eyes
+          P(0,-9,cyanD);P(1,-9,"#fff");P(4,-9,cyanD);P(5,-9,"#fff");
+          [-1,0,1,2,3,4,5,6].forEach(x=>P(x,-8,dark));
+          // Data beard (lines of code)
+          [-1,0,1,2,3,4,5,6].forEach(x=>P(x,-7,darkB));
+          [0,2,4].forEach(x=>P(x,-7,cyanD));
+          [-1,0,1,2,3,4,5,6].forEach(x=>P(x,-6,darkB));
+          [1,3,5].forEach(x=>P(x,-6,cyanD));
+          [0,1,2,3,4,5].forEach(x=>P(x,-5,darkB));
+          [0,3].forEach(x=>P(x,-5,cyanD));
+          // Neck
+          [1,2,3,4].forEach(x=>P(x,-4,dark));
+          // Massive shoulders/traps — dark energy
+          [-5,-4,-3,-2,-1,0,1,2,3,4,5,6,7,8,9,10].forEach(x=>P(x,-3,dark));
+          // Chest — defined pecs with data lines
+          [-4,-3,-2,-1,0,1,2,3,4,5,6,7,8,9].forEach(x=>P(x,-2,dark));
+          [-3,-2,-1,0].forEach(x=>P(x,-2,darkB));[5,6,7,8].forEach(x=>P(x,-2,darkB));
+          P(1,-2,cyanD);P(4,-2,cyanD); // pec data highlights
+          [-4,-3,-2,-1,0,1,2,3,4,5,6,7,8,9].forEach(x=>P(x,-1,dark));
+          P(-2,-1,cyanL);P(7,-1,cyanL); // pec underline glow
+          // Abs — six pack with data grid
+          [-3,-2,-1,0,1,2,3,4,5,6,7,8].forEach(x=>P(x,0,dark));
+          P(1,0,cyanD);P(2,0,darkB);P(3,0,cyanD);P(4,0,darkB);
+          [-2,-1,0,1,2,3,4,5,6,7].forEach(x=>P(x,1,dark));
+          P(1,1,darkB);P(2,1,cyanD);P(3,1,darkB);P(4,1,cyanD);
+          [-1,0,1,2,3,4,5,6].forEach(x=>P(x,2,dark));
+          P(2,2,cyanD);P(3,2,cyanD);
+          // Arms — BIG with data energy
+          // Left shoulder
+          P(-5,-3,dark);P(-6,-3,dark);P(-7,-3,dark);P(-5,-2,dark);P(-6,-2,dark);P(-7,-2,dark);
+          // Left upper arm
+          P(-7,-3+lA,dark);P(-8,-3+lA,dark);P(-9,-3+lA,dark);
+          P(-7,-4+lA,dark);P(-8,-4+lA,dark);P(-9,-4+lA,dark);
+          // Left bicep bulge
+          P(-10,-4+lA,dark);P(-10,-5+lA,dark);P(-9,-5+lA,dark);P(-8,-5+lA,dark);
+          P(-10,-3+lA,cyanD); // glow on bicep
+          // Left forearm + fist
+          P(-9,-6+lA,dark);P(-8,-6+lA,dark);P(-9,-7+lA,dark);
+          P(-9,-8+lA,dark);P(-10,-8+lA,dark);P(-8,-8+lA,dark);
+          // Right shoulder
+          P(10,-3,dark);P(11,-3,dark);P(12,-3,dark);P(10,-2,dark);P(11,-2,dark);P(12,-2,dark);
+          // Right upper arm
+          P(12,-3+rA,dark);P(13,-3+rA,dark);P(14,-3+rA,dark);
+          P(12,-4+rA,dark);P(13,-4+rA,dark);P(14,-4+rA,dark);
+          // Right bicep bulge
+          P(15,-4+rA,dark);P(15,-5+rA,dark);P(14,-5+rA,dark);P(13,-5+rA,dark);
+          P(15,-3+rA,cyanD);
+          // Right forearm + fist
+          P(14,-6+rA,dark);P(13,-6+rA,dark);P(14,-7+rA,dark);
+          P(14,-8+rA,dark);P(15,-8+rA,dark);P(13,-8+rA,dark);
+
+          // Wrestling trunks — cyan/dark
+          [-1,0,1,2,3,4,5,6].forEach(x=>P(x,3,cyanD)); // waistband
+          [-2,-1,0,1,2,3,4,5,6,7].forEach(x=>P(x,4,dark));
+          [-2,-1,0,1,2,3,4,5,6,7].forEach(x=>P(x,5,darkB));
+          [-1,0,1,2,3,4,5,6].forEach(x=>P(x,6,dark));
+          // Data pattern on trunks
+          P(2,4,cyanD);P(3,4,cyanD);P(2,5,cyanL);P(3,5,cyanL);
+
+          // CHAMPIONSHIP BELT (if Claude holds it)
+          if(jayCRef.current.beltHolder==="claude"){
+            [-2,-1,0,1,2,3,4,5,6,7].forEach(x=>P(x,3,"#C0A030")); // gold band
+            [-1,0,1,2,3,4,5,6].forEach(x=>P(x,2,"#E8C840")); // top gold
+            P(1,2,"#fff");P(2,2,"#C0A030");P(3,2,"#fff");P(4,2,"#C0A030"); // jewels
+            P(2,3,"#fff");P(3,3,"#fff"); // center plate
+          }
+
+          // Legs — dark energy
+          [-1,0,1,2].forEach(x=>{for(let r=7;r<=12;r++)P(x,r,dark);});
+          [3,4,5,6].forEach(x=>{for(let r=7;r<=12;r++)P(x,r,dark);});
+          P(0,8,cyanD);P(1,8,cyanD);P(4,8,cyanD);P(5,8,cyanD);
+          [-1,0,1,2].forEach(x=>P(x,10,cyanD));[3,4,5,6].forEach(x=>P(x,10,cyanD)); // knee glow
+          // Boots
+          [-2,-1,0,1,2,3].forEach(x=>{P(x,13,darkB);P(x,14,darkB);});
+          [3,4,5,6,7].forEach(x=>{P(x,13,darkB);P(x,14,darkB);});
+
+          // Aura glow
+          const wa=0.04+Math.sin(mf2*0.04)*0.02;
+          ctx.fillStyle=`rgba(0,180,255,${wa})`;ctx.fillRect(hx-12*jp,hy-14*jp+bob2*jp,30*jp,30*jp);
+
+          // Name tag
+          ctx.imageSmoothingEnabled=true;
+          ctx.font="bold 14px 'Orbitron'";ctx.textAlign="center";
+          ctx.fillStyle="rgba(0,180,255,0.4)";ctx.fillText("CLAUDE",hx+2.5*jp,hy+17*jp+2);
+          ctx.fillStyle="#0af";ctx.shadowColor="#0af";ctx.shadowBlur=12;
+          ctx.fillText("CLAUDE",hx+2.5*jp,hy+17*jp);
+          ctx.font="bold 8px 'Orbitron'";ctx.fillStyle="rgba(0,220,255,0.5)";ctx.shadowBlur=0;
+          ctx.fillText("THE MACHINE",hx+2.5*jp,hy+19*jp);
+          ctx.textAlign="left";
+
+        }else if(ai.morphMode==="monkey"){
+          // ═══ PIXEL MONKEY CLAUDE — data ape walking with the Dead ═══
+          const cyanD2="#0af",cyanL2="#6ef",fur2="#1a2a3a",furL="#2a3a4a",dark2="#0a1428";
+          const mc2=ai.moodColor||[0,200,255];
+          const stride2=ai.morphFrame;
+          const walk2=Math.floor(stride2/8)%4;
+          const bob2=Math.round(Math.sin(stride2*0.1)*1);
+          const P=(gx,gy,c)=>JP2(gx,gy+bob2,c);
+
+          // Monkey head — dark data-fur
+          [2,3,4,5].forEach(x=>P(x,-10,fur2));
+          [1,2,3,4,5,6].forEach(x=>P(x,-9,fur2));
+          [0,1,2,3,4,5,6,7].forEach(x=>P(x,-8,fur2));
+          // Face area — darker
+          [2,3,4,5].forEach(x=>P(x,-8,dark2));
+          [1,2,3,4,5,6].forEach(x=>P(x,-7,dark2));
+          // Glowing cyan eyes
+          P(2,-8,cyanD2);P(3,-8,"#fff");P(5,-8,cyanD2);P(4,-8,"#fff");
+          // Snout
+          [2,3,4,5].forEach(x=>P(x,-6,furL));P(3,-6,dark2);P(4,-6,dark2);
+          // Data patterns in fur
+          P(1,-9,cyanD2);P(6,-9,cyanD2);
+          // Ears
+          P(-1,-9,fur2);P(8,-9,fur2);P(-1,-8,cyanD2);P(8,-8,cyanD2);
+
+          // Body — stocky monkey torso with data cloak hints
+          [1,2,3,4,5,6].forEach(x=>P(x,-5,fur2));
+          [0,1,2,3,4,5,6,7].forEach(x=>P(x,-4,fur2));
+          [0,1,2,3,4,5,6,7].forEach(x=>P(x,-3,fur2));
+          [-1,0,1,2,3,4,5,6,7,8].forEach(x=>P(x,-2,fur2));
+          [-1,0,1,2,3,4,5,6,7,8].forEach(x=>P(x,-1,fur2));
+          // Data cloak lines
+          P(1,-4,cyanD2);P(4,-4,cyanD2);P(6,-3,cyanD2);P(2,-2,cyanL2);P(5,-1,cyanL2);
+          // Hood hint on top
+          [1,2,3,4,5,6].forEach(x=>P(x,-11,"#1a2a40"));
+          P(3,-11,cyanD2);
+
+          // Arms — longer monkey arms
+          // Left arm
+          P(-1,-4,fur2);P(-2,-3,fur2);P(-2,-2,fur2);P(-3,-1,fur2);P(-3,0,fur2);P(-2,0,furL);
+          // Right arm
+          P(8,-4,fur2);P(9,-3,fur2);P(9,-2,fur2);P(10,-1,fur2);P(10,0,fur2);P(9,0,furL);
+          // Arm glow
+          P(-3,-1,cyanD2);P(10,-1,cyanD2);
+
+          // Legs — walking
+          if(walk2===0||walk2===2){
+            [2,3].forEach(x=>{P(x,0,fur2);P(x,1,fur2);P(x,2,furL);});
+            [5,6].forEach(x=>{P(x,0,fur2);P(x,1,fur2);P(x,2,furL);});
+          }else if(walk2===1){
+            [1,2].forEach(x=>{P(x,0,fur2);P(x,1,fur2);P(x,2,furL);});
+            [6,7].forEach(x=>{P(x,0,fur2);P(x,1,fur2);P(x,2,furL);});
+          }else{
+            [3,4].forEach(x=>{P(x,0,fur2);P(x,1,fur2);P(x,2,furL);});
+            [4,5].forEach(x=>{P(x,0,fur2);P(x,1,fur2);P(x,2,furL);});
+          }
+          // Tail — curling data stream
+          const tailCurl=Math.sin(stride2*0.08);
+          P(8,-3,cyanD2);P(9,-4,cyanD2);P(10,-4+Math.round(tailCurl),cyanL2);P(11,-5+Math.round(tailCurl),cyanD2);
+
+          // Aura
+          const ma=0.03+Math.sin(stride2*0.04)*0.015;
+          ctx.fillStyle=`rgba(0,180,255,${ma})`;ctx.fillRect(hx-4*jp,hy-12*jp+bob2*jp,18*jp,17*jp);
+
+          // Name
+          ctx.imageSmoothingEnabled=true;
+          ctx.font="bold 10px 'Orbitron'";ctx.textAlign="center";
+          ctx.fillStyle="#0af";ctx.shadowColor="#0af";ctx.shadowBlur=8;
+          ctx.fillText("CLAUDE",hx+4*jp,hy+5*jp);
+          ctx.shadowBlur=0;ctx.textAlign="left";
+        }
+
+        ctx.imageSmoothingEnabled=true;
+        ctx.globalAlpha=1;ctx.restore();
+      }else{
+
+      // ═══ NORMAL HOLOGRAPHIC AVATAR ═══
       const gY=hy+52*S+floatY;
       for(let gr=0;gr<5;gr++){
         const grA=0.1-gr*0.016;
@@ -2705,6 +2921,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
       ctx.fillText(ai.state==="walking"?"TRAVERSING":"ANALYZING",hx,gY+19*S);
       ctx.textAlign="left";
       ctx.globalAlpha=1;ctx.restore();
+      } // end normal holographic avatar else block
 
       // ═══ CHAT INTERACTIONS — Fat Monkey & J-Ai-C w/ CREW ═══
       const fmChat=[
@@ -2882,11 +3099,11 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
       if(lm.active){
         lm.frame++;
         const f=lm.frame;const mf=lm.maxFrames;
-        // Phase 1: zoom in (0-40), Phase 2: hold + squint (40-170), Phase 3: zoom out (170-210)
+        // Phase 1: zoom in (0-40), Phase 2: squint (40-130), Phase 3: head shake (130-220), Phase 4: zoom out (220-300)
         let zoomT;
         if(f<40)zoomT=f/40;
-        else if(f<170)zoomT=1;
-        else zoomT=Math.max(0,1-(f-170)/40);
+        else if(f<220)zoomT=1;
+        else zoomT=Math.max(0,1-(f-220)/80);
 
         if(zoomT>0){
           const zoom=zoomT;
@@ -2895,8 +3112,12 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
           ctx.fillStyle=`rgba(0,0,0,${0.85*zoom})`;
           ctx.fillRect(0,0,W,H);
 
-          const fcx=W/2,fcy=H*0.45;
+          const fcx0=W/2,fcy=H*0.45;
           const faceS=Math.min(W,H)*0.7*zoom;
+          // Head shake offset (phase 3: frames 130-220)
+          const shakeActive=f>130&&f<220;
+          const shakeX=shakeActive?Math.sin((f-130)*0.35)*faceS*0.08:0;
+          const fcx=fcx0+shakeX;
 
           // Head shape — dark translucent
           const headGrad=ctx.createRadialGradient(fcx,fcy,faceS*0.05,fcx,fcy,faceS*0.5);
@@ -2916,7 +3137,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
           const mc=ai.moodColor||[0,200,255];
 
           // Eyes — SQUINTING (narrow slits)
-          const squint=(f>50&&f<160)?Math.min(1,(f-50)/15):f>=160?Math.max(0,1-(f-160)/10):0;
+          const squint=(f>50&&f<220)?Math.min(1,(f-50)/15):f>=220?Math.max(0,1-(f-220)/10):0;
           const eyeW=faceS*0.12;
           const eyeH=faceS*(0.06-squint*0.04); // gets very narrow when squinting
           const eyeY=fcy-faceS*0.05;
@@ -2950,8 +3171,8 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
           }
 
           // Chat bubble — "WHAT ARE YOU CRAZY?!"
-          if(f>30&&f<180){
-            const bubAlpha2=Math.min(1,(f-30)/10,f<170?1:(180-f)/10)*zoom;
+          if(f>30&&f<240){
+            const bubAlpha2=Math.min(1,(f-30)/10,f<220?1:(240-f)/20)*zoom;
             ctx.globalAlpha=bubAlpha2;
             const bText="WHAT ARE YOU CRAZY?!";
             ctx.font=`bold ${Math.round(faceS*0.06)}px 'Orbitron'`;
@@ -3008,7 +3229,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
     const mx=(e.clientX-rect.left)/rect.width,my=(e.clientY-rect.top)/rect.height;
     // Light mode checkbox — top right
     if(mx>0.82&&mx<0.98&&my>0.01&&my<0.05){
-      if(!lightModeRef.current.active){lightModeRef.current={active:true,frame:0,maxFrames:210};}
+      if(!lightModeRef.current.active){lightModeRef.current={active:true,frame:0,maxFrames:300};}
       return;
     }
     // Moon click detection
