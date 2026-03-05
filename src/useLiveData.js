@@ -1818,8 +1818,6 @@ export function useLiveData() {
             );
             // HOLD: always tracked if still alive, regardless of mcap
             const walletHold = !walletWin && !walletLoss && tokenAlive;
-            // HOLD: alive token, position still open, outcome not yet determined
-            const walletHold = !walletWin && !walletLoss && tokenAlive;
 
             const sellEvents = data.sellEvents || [];
             const anyQualSell = sellEvents.some(s => s.mcap >= 12000);
