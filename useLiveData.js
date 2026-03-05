@@ -1852,7 +1852,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
           const tokenAlive = !tokenDead && t.alive;
 
           Object.entries(td.wallets).forEach(([w, data]) => {
-            if (data.bought <= 0.3) return;
+            if (data.bought <= 0.01) return;
             if (!walletScores.current[w]) walletScores.current[w] = {
               wins: 0, losses: 0, holds: 0,
               tokens: [], lossTokens: [], holdTokens: [],   // display names only
@@ -1902,7 +1902,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
 
             const exitMcap = positionClosed ? (data.exitMcap || t.mcap || 0) : (t.mcap || 0);
 
-            const walletWin = positionClosed && pnl > 0 && (pnl >= 0.15 || positionFullyExited);
+            const walletWin = positionClosed && pnl > 0 && (soldRatio >= 1.2 || positionFullyExited);
             const walletLoss = !walletWin && (
               (tokenDead && pnl < 0) ||
               (positionFullyExited && pnl < 0)
