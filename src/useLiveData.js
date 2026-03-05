@@ -1784,8 +1784,12 @@ export function useLiveData() {
 
             // ─── WALLET-LEVEL OUTCOME (actual SOL P&L, not token price) ───
             const pnl = (data.sold || 0) - data.bought;
-            // "Closed" = wallet sold back ≥50% of cost basis in SOL (handles partial exits)
-            const positionClosed = (data.sold || 0) >= data.bought * 0.5;
+            const soldRatio = data.bought > 0 ? (data.sold || 0) / data.bought : 0;
+            // WIN: sold ≥50% of position back (took profit = done)
+            const positionClosed = soldRatio >= 0.5;
+            // LOSS: requires either token dead OR sold ≥80% (substantially exited at loss)
+            // Prevents partial exits at slight negative from immediately counting as losses
+            const positionSubstantiallyClosed = soldRatio >= 0.8;
 
             // exitMcap must be declared BEFORE walletWin check (uses it for 12K gate)
             const exitMcap = positionClosed
@@ -1795,10 +1799,11 @@ export function useLiveData() {
 
             // WIN: sold enough, came out profitable by ≥0.15 SOL, AND exit mcap was ≥$12K
             const walletWin = positionClosed && pnl >= 0.15 && exitMcap >= 12000;
-            // LOSS: token dead and wallet didn't win AND lost ≥0.15 SOL, OR closed at ≥0.15 SOL loss
+            // LOSS: token dead OR substantially exited (80%+) at ≥0.15 SOL loss
+            // Partial exits at slight negative stay as HOLD until token dies or they fully exit
             const walletLoss = !walletWin && (
               (tokenDead && pnl <= -0.15) ||
-              (positionClosed && pnl <= -0.15)
+              (positionSubstantiallyClosed && pnl <= -0.15)
             );
             // HOLD: alive token, position still open, outcome not yet determined
             const walletHold = !walletWin && !walletLoss && tokenAlive;
@@ -1811,7 +1816,7 @@ export function useLiveData() {
                 ws.holdAddrs.delete(t.addr);
                 ws.holdTokens = ws.holdTokens.filter(n => n !== t.name);
                 const holdTrade = ws.trades.find(tr => tr.addr === t.addr && tr.type === "HOLD");
-                if (holdTrade) { holdTrade.type = "WIN"; holdTrade.mcap = data.exitMcap||exitMcap; holdTrade.sold = data.sold; holdTrade.pnl = pnl; }
+                if (holdTrade) { holdTrade.type = "WIN"; holdTrade.mcap = data.exitMcap||exitMcap; holdTrade.sold = data.sold; holdTrade.pnl = pnl; holdTrade.athMcap = Math.max(td.athMcap||0, data.exitMcap||exitMcap, holdTrade.athMcap||0); }
               } else {
                 ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "WIN", mcap: exitMcap, entryMcap, pnl,
                   entryTime: data.firstBuyTime || now3, exitTime: data.lastSellTime || now3,
@@ -1842,7 +1847,7 @@ export function useLiveData() {
                 ws.holdAddrs.delete(t.addr);
                 ws.holdTokens = ws.holdTokens.filter(n => n !== t.name);
                 const holdTrade = ws.trades.find(tr => tr.addr === t.addr && tr.type === "HOLD");
-                if (holdTrade) { holdTrade.type = "LOSS"; holdTrade.mcap = data.exitMcap||exitMcap; holdTrade.sold = data.sold; holdTrade.pnl = pnl; }
+                if (holdTrade) { holdTrade.type = "LOSS"; holdTrade.mcap = data.exitMcap||exitMcap; holdTrade.sold = data.sold; holdTrade.pnl = pnl; holdTrade.athMcap = Math.max(td.athMcap||0, data.exitMcap||exitMcap, holdTrade.athMcap||0); }
               } else {
                 ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "LOSS", mcap: exitMcap, entryMcap, pnl,
                   entryTime: data.firstBuyTime || now3, exitTime: data.lastSellTime || now3,
@@ -1873,10 +1878,10 @@ export function useLiveData() {
                 athMcap: td.athMcap || exitMcap, startMcap: td.startMcap || entryMcap, time: now3 });
               if (ws.trades.length > 50) ws.trades = ws.trades.slice(-50);
             }
-            // Refresh live HOLD entries with current mcap/pnl
+            // Refresh live HOLD entries with current mcap/pnl/athMcap
             if (walletHold && ws.holdAddrs.has(t.addr)) {
               const existTrade = ws.trades.find(tr => tr.addr === t.addr && tr.type === "HOLD");
-              if (existTrade) { existTrade.mcap = exitMcap; existTrade.sold = data.sold; existTrade.pnl = pnl; }
+              if (existTrade) { existTrade.mcap = exitMcap; existTrade.sold = data.sold; existTrade.pnl = pnl; existTrade.athMcap = Math.max(td.athMcap||0, existTrade.athMcap||0); }
             }
           });
         });
