@@ -251,7 +251,7 @@ export function useSupabase({ onStatus } = {}) {
       return ws && (ws.wins > 0 || ws.losses > 0);
     });
 
-    if (!qualifying.length) { syncingRef.current = false; return; }
+    console.log(`[SUPABASE] syncDirty — ${toSync.length} dirty, ${qualifying.length} qualifying`);
 
     try {
       const BATCH = 50;
@@ -282,7 +282,7 @@ export function useSupabase({ onStatus } = {}) {
   const upsertToken = useCallback(async (token) => {
     if (!token?.addr) return;
     try {
-      await sb.upsert("token_history", [{
+      const row = {
         addr: token.addr,
         name: token.name || "???",
         peak_mcap: token.peakMcap || token.mcap || 0,
@@ -292,9 +292,12 @@ export function useSupabase({ onStatus } = {}) {
         graduated: token.migrated || false,
         platform: token.platform || "PumpFun",
         updated_at: new Date().toISOString(),
-      }], "addr");
+      };
+      console.log("[SUPABASE] upsertToken →", token.name, token.addr?.slice(0,8));
+      const r = await sb.upsert("token_history", [row], "addr");
+      console.log("[SUPABASE] upsertToken ✅", token.name, r?.status);
     } catch (e) {
-      console.warn("[SUPABASE] upsertToken failed:", e.message);
+      console.warn("[SUPABASE] upsertToken FAILED:", e.message);
     }
   }, []);
 

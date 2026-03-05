@@ -915,7 +915,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
           peakMcap: Math.max(t.peakMcap || 0, mcap > 0 ? mcap : t.mcap),
         };
         // Write to DB when newly qualified or when mcap hits new peak
-        if (onUpsertToken && (qualified && !t.qualified) || (updatedToken.peakMcap > (t.peakMcap || 0))) {
+        if (onUpsertToken && ((qualified && !t.qualified) || (updatedToken.peakMcap > (t.peakMcap || 0)))) {
           onUpsertToken(updatedToken);
         }
         return updatedToken;
