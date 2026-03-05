@@ -275,14 +275,12 @@ export function useLiveData() {
           // Compute unrealized loss drag from open holds
           const unrealizedPnl = ws ? (ws.trades||[]).filter(tr=>tr.type==="HOLD")
             .reduce((s,tr)=>s+(tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol)),0) : 0;
-          // Only count qualifying trades (coin ATH >= 12K) for smart wallet gate
-          const qualWinCount = ws ? (ws.trades||[]).filter(tr=>tr.type==="WIN"&&(tr.athMcap||0)>=12000).length : 0;
-          const qualLossCount = ws ? (ws.trades||[]).filter(tr=>tr.type==="LOSS"&&(tr.athMcap||0)>=12000).length : 0;
+          const qualWinCount = ws ? (ws.trades||[]).filter(tr=>tr.type==="WIN").length : 0;
+          const qualLossCount = ws ? (ws.trades||[]).filter(tr=>tr.type==="LOSS").length : 0;
           const qualTotal = qualWinCount + qualLossCount;
           const qualRate = qualTotal > 0 ? qualWinCount / qualTotal : 0;
           const adjustedPnl = ws ? (ws.totalPnl||0) + unrealizedPnl : 0;
-          // Elite criteria: 7+ qualifying wins, 70%+ rate on 12K+ coins, wins >= losses*3, 2.0+ SOL realized, adjusted PnL > 1.0
-          const isElite = ws && qualWinCount >= 7 && qualRate >= 0.70 && qualWinCount >= (qualLossCount*3) && qualTotal >= 8 && (ws.totalPnl||0) >= 2.0 && adjustedPnl > 1.0 && sol > 0.3;
+          const isElite = ws && qualWinCount >= 4 && qualRate >= 0.60 && qualWinCount >= (qualLossCount*2) && qualTotal >= 5 && (ws.totalPnl||0) >= 1.0 && adjustedPnl > 0.5 && sol > 0.3;
           if (isElite) {
             td.smartWallets.add(wallet);
             const alertKey = `${wallet.slice(0,8)}-${mint}`;
@@ -1787,7 +1785,7 @@ export function useLiveData() {
             if (!ws.lossAddrs) ws.lossAddrs = new Set();
             if (!ws.holdAddrs) ws.holdAddrs = new Set();
 
-            // ─── BOT FILTER — ignore sub-30s flips entirely ───
+            // ─── BOT FILTER — ignore sub-30s flips ───
             const holdDuration = (data.lastSellTime || now3) - (data.firstBuyTime || now3);
             const hasExited = (data.sold || 0) >= data.bought * 0.5;
             if (hasExited && holdDuration < 30000) return;
@@ -1795,7 +1793,6 @@ export function useLiveData() {
             const sellEvts = (data.sellEvents || []).filter(s =>
               s.time >= (data.firstBuyTime || 0) && s.time <= (data.lastSellTime || Infinity)
             );
-            const peakMcap = Math.max(td.athMcap || 0, t.mcap || 0, data.exitMcap || 0, ...sellEvts.map(s => s.mcap));
 
             // ─── WALLET-LEVEL OUTCOME ───
             const pnl = (data.sold || 0) - data.bought;
@@ -1803,25 +1800,17 @@ export function useLiveData() {
             const positionClosed = soldRatio >= 0.5;
             const positionFullyExited = soldRatio >= 0.95;
 
-            const exitMcap = positionClosed
-              ? (data.exitMcap || t.mcap || 0)
-              : (t.mcap || 0);
+            const exitMcap = positionClosed ? (data.exitMcap || t.mcap || 0) : (t.mcap || 0);
             const entryMcap = data.entryMcap || 0;
 
-            // 12K gate only applies to WIN/LOSS — open holds always tracked
-            const qualifiesForScoring = peakMcap >= 12000;
-
-            // WIN: sold ≥50%, profitable, token peaked at ≥$12K (they exited after a real pump)
-            const walletWin = qualifiesForScoring && positionClosed && pnl > 0 && (pnl >= 0.15 || positionFullyExited);
-            const walletLoss = qualifiesForScoring && !walletWin && (
+            const walletWin = positionClosed && pnl > 0 && (pnl >= 0.15 || positionFullyExited);
+            const walletLoss = !walletWin && (
               (tokenDead && pnl < 0) ||
               (positionFullyExited && pnl < 0)
             );
-            // HOLD: always tracked if still alive, regardless of mcap
             const walletHold = !walletWin && !walletLoss && tokenAlive;
 
             const sellEvents = data.sellEvents || [];
-            const anyQualSell = sellEvents.some(s => s.mcap >= 12000);
 
             // ── WIN ──
             if (walletWin && !ws.winAddrs.has(t.addr)) {
@@ -1984,13 +1973,13 @@ export function useLiveData() {
           ...s, tokensScanned: prev.length, qualified, dead,
           bestToken: best || s.bestToken, bestPct: bestPct || s.bestPct,
           smartWallets: Object.values(walletScores.current).filter(w => {
-            const qualWins=(w.trades||[]).filter(tr=>tr.type==="WIN"&&(tr.athMcap||0)>=12000).length;
-            const qualLosses=(w.trades||[]).filter(tr=>tr.type==="LOSS"&&(tr.athMcap||0)>=12000).length;
-            const qualTotal=qualWins+qualLosses;
-            const qualRate=qualTotal>0?qualWins/qualTotal:0;
+            const wins=(w.trades||[]).filter(tr=>tr.type==="WIN").length;
+            const losses=(w.trades||[]).filter(tr=>tr.type==="LOSS").length;
+            const total=wins+losses;
+            const rate=total>0?wins/total:0;
             const unrealized=(w.trades||[]).filter(tr=>tr.type==="HOLD").reduce((s,tr)=>s+(tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol)),0);
             const adjustedPnl=(w.totalPnl||0)+unrealized;
-            return qualWins>=7&&qualRate>=0.70&&qualWins>=(qualLosses*3)&&qualTotal>=8&&(w.totalPnl||0)>=2.0&&adjustedPnl>1.0;
+            return wins>=4&&rate>=0.60&&wins>=(losses*2)&&total>=5&&(w.totalPnl||0)>=1.0&&adjustedPnl>0.5;
           }).length,
           solPrice: SOL_USD, mcapCorr: MCAP_CORRECTION,
         }));

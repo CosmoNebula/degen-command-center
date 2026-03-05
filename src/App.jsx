@@ -255,8 +255,23 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
     crewBubble:null,crewTimer:0,crewName:null,crewSlot:0,
     chatCooldown:0,morphMode:"normal",morphFrame:0,
   });
-  const fatMonkeyRef=useRef({active:false,x:-0.1,frame:0,smokeRings:[],musicNotes:[],nextSpawn:Date.now()+rand(180,420)*1000,walkDir:1,smokeTimer:0,tripActive:false,tripFrame:0,tripMsg:false,tripMsgFrame:0,
-    vortexActive:false,vortexFrame:0,swirlAngles:[0,0,0,0,0,0],suckedIn:[false,false,false,false,false,false]});
+  const fatMonkeyRef=useRef({active:false,x:-0.1,frame:0,smokeRings:[],musicNotes:[],nextSpawn:Date.now()+rand(180,420)*1000,walkDir:1,smokeTimer:0,
+    tripActive:false,tripFrame:0,tripMsg:false,tripMsgFrame:0,
+    phase:"walk", // walk → meetConvo → swirlSetup → swirlEvent → done
+    meetFrame:0, convoLine:0,
+    // Swirl event
+    vortexActive:false,vortexFrame:0,
+    currentSpeaker:0,      // 0-4=band members, 5=FM
+    speakerFrame:0,
+    suckProgress:0,        // 0→1 how far member has moved to center
+    suckingNow:false,
+    memberPos:[],          // target canvas {x,y} for each of the 6 swirl positions
+    memberCurPos:[],       // current {x,y} during slide-to-position
+    memberReady:[],        // each reached their spot
+    claudeConfusedIdx:0,
+    claudeConfusedFrame:0,
+    claudeShowConfused:false,
+  });
   const jaycShipRef=useRef({active:false,y:-0.3,frame:0,bills:[],aliens:[],nextSpawn:Date.now()+rand(240,480)*1000,opacity:0});
   const jayCRef=useRef({onGround:false,beamPhase:0,x:0.55,y:0.95,flexPhase:0,targetY:0.95,beamUp:false,opacity:0,beltHolder:"claude"});
   const lightModeRef=useRef({active:false,frame:0,maxFrames:180});
@@ -1015,53 +1030,148 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
       if(!fm.active&&now2>fm.nextSpawn&&!jaycShipRef.current.active){
         fm.active=true;fm.x=-0.12;fm.frame=0;fm.smokeRings=[];fm.walkDir=1;
         fm.smokeTimer=0;fm.startTime=now2;fm.musicNotes=[];
+        fm.phase="walk";fm.meetFrame=0;fm.convoLine=randInt(0,10);
+        fm.vortexActive=false;fm.vortexFrame=0;
+        fm.currentSpeaker=0;fm.speakerFrame=0;fm.suckProgress=0;fm.suckingNow=false;
+        fm.memberPos=[];fm.memberCurPos=[];fm.memberReady=[];
+        fm.claudeConfusedIdx=0;fm.claudeConfusedFrame=0;fm.claudeShowConfused=false;
         onKillFeedRef.current?.({type:"system",text:"🐒 FAT MONKEY & THE GRATEFUL DEAD HAVE ENTERED THE BATTLEFIELD 🌹🎶💨"});
       }
       if(fm.active){
         fm.frame++;fm.smokeTimer++;
-        // Meeting detection — when Claude monkey and FM get close
-        const claudeX=aiAvatarRef.current.x;
-        if(!fm.tripActive&&Math.abs(fm.x-claudeX)<0.12&&fm.frame>30){
-          fm.tripActive=true;fm.tripFrame=0;fm.walkDir=0; // stop walking
-          onKillFeedRef.current?.({type:"system",text:"🍄🌈 THE TRIP HAS BEGUN... LUCY IN THE SKY WITH DIAMONDS 💎✨🌀"});
+        const ai=aiAvatarRef.current;
+        const claudeX=ai.x;
+        const MEET_X=0.58; // where Claude waits — bottom slightly right of center
+        const MEET_Y=0.82;
+
+        // ── PHASE: WALK ──
+        if(fm.phase==="walk"){
+          fm.x+=0.002*fm.walkDir;
+          // Claude rushes to meet spot as soon as FM appears
+          ai.targetX=MEET_X;ai.targetY=MEET_Y;
+          // Detect meeting
+          if(Math.abs(fm.x-claudeX)<0.1&&fm.frame>40){
+            fm.phase="meetConvo";fm.meetFrame=0;fm.walkDir=0;
+          }
         }
-        if(fm.tripActive){
+
+        // ── PHASE: MEET CONVO ──
+        else if(fm.phase==="meetConvo"){
+          fm.meetFrame++;
+          // Show the trippy group convo line from fmChat, then wait a beat
+          if(fm.meetFrame>200){
+            fm.phase="swirlSetup";
+            fm.tripActive=true;fm.tripFrame=0;
+            onKillFeedRef.current?.({type:"system",text:"🍄🌈 THE TRIP HAS BEGUN... LUCY IN THE SKY WITH DIAMONDS 💎✨🌀"});
+          }
+        }
+
+        // ── PHASE: SWIRL SETUP ──
+        else if(fm.phase==="swirlSetup"){
           fm.tripFrame++;
-          if(fm.tripFrame>600&&!fm.vortexActive){// ~10 seconds of trip → start vortex
+          // Let trip visuals run for 120 frames (~2s), then activate swirl
+          if(fm.tripFrame===30){
             fm.vortexActive=true;fm.vortexFrame=0;
-            fm.swirlAngles=[0,1,2,3,4,5].map(i=>i*Math.PI*2/6);
-            fm.suckedIn=[false,false,false,false,false,false];
+            // Warp Claude to center
+            ai.x=0.5;ai.y=0.5;ai.targetX=0.5;ai.targetY=0.5;
+            // Assign 6 positions around outer edge of swirl (fixed circle)
+            const swirlR=0.22; // radius in normalized coords
+            fm.memberPos=[0,1,2,3,4,5].map(i=>({
+              x:0.5+Math.cos(i*Math.PI*2/6-Math.PI/2)*swirlR,
+              y:0.5+Math.sin(i*Math.PI*2/6-Math.PI/2)*swirlR*1.3
+            }));
+            // Start positions: FM at current x, band trailing behind
+            const fmH=0.68;
+            fm.memberCurPos=[
+              {x:fm.x-0.08,y:fmH},{x:fm.x-0.15,y:fmH},
+              {x:fm.x-0.22,y:fmH},{x:fm.x-0.29,y:fmH},
+              {x:fm.x-0.36,y:fmH},{x:fm.x,y:fmH} // FM last
+            ];
+            fm.memberReady=[false,false,false,false,false,false];
           }
           if(fm.vortexActive){
             fm.vortexFrame++;
-            // Suck in band members one by one every 60 frames, FM last
-            const suckOrder=[1,2,3,4,0,5]; // JERRY,BOB,PHIL,BILLY,MICKEY order, FM(5) last
-            suckOrder.forEach((slot,si)=>{
-              if(!fm.suckedIn[slot]&&fm.vortexFrame>si*70+40) fm.suckedIn[slot]=true;
-            });
-            // After all sucked in, end event
-            if(fm.vortexFrame>480){
-              fm.tripActive=false;fm.vortexActive=false;fm.walkDir=0;fm.tripMsg=true;fm.tripMsgFrame=0;
-              fm.active=false;fm.nextSpawn=now2+rand(900,1500)*1000;
-              onKillFeedRef.current?.({type:"system",text:"◈ Claude: ...was that real? where did everyone go? 🌀😵"});
+            // Slide each member toward their target position
+            if(fm.memberPos.length===6){
+              let allReady=true;
+              fm.memberCurPos=fm.memberCurPos.map((p,i)=>{
+                const t=fm.memberPos[i];
+                const dx=t.x-p.x,dy=t.y-p.y;
+                const dist=Math.sqrt(dx*dx+dy*dy);
+                if(dist<0.01){fm.memberReady[i]=true;return{x:t.x,y:t.y};}
+                allReady=false;
+                return{x:p.x+dx*0.06,y:p.y+dy*0.06};
+              });
+              if(allReady&&fm.vortexFrame>60){
+                fm.phase="swirlEvent";fm.currentSpeaker=0;fm.speakerFrame=0;fm.suckingNow=false;fm.suckProgress=0;
+              }
             }
           }
-        }else{
-          fm.x+=0.002*fm.walkDir;
+        }
+
+        // ── PHASE: SWIRL EVENT ──
+        else if(fm.phase==="swirlEvent"){
+          fm.vortexFrame++;fm.speakerFrame++;
+
+          // Each speaker: 120f talking, then 80f suck-in
+          const TALK_FRAMES=120,SUCK_FRAMES=80,CONFUSED_FRAMES=100;
+
+          if(fm.claudeShowConfused){
+            fm.claudeConfusedFrame++;
+            if(fm.claudeConfusedFrame>CONFUSED_FRAMES){
+              fm.claudeShowConfused=false;
+              fm.currentSpeaker++;
+              fm.speakerFrame=0;fm.suckProgress=0;fm.suckingNow=false;
+              if(fm.currentSpeaker>5){
+                // All done
+                fm.phase="done";
+                fm.tripActive=false;fm.vortexActive=false;
+                fm.active=false;fm.nextSpawn=now2+rand(900,1500)*1000;
+                onKillFeedRef.current?.({type:"system",text:"🌹🎶 What a long, strange trip it's been... 🚌💨✌️"});
+              }
+            }
+          } else if(!fm.suckingNow&&fm.speakerFrame>=TALK_FRAMES){
+            fm.suckingNow=true;
+          } else if(fm.suckingNow){
+            fm.suckProgress+=1/SUCK_FRAMES;
+            if(fm.suckProgress>=1){
+              // Member gone — Claude gets confused
+              fm.memberReady[fm.currentSpeaker]=false;
+              fm.claudeShowConfused=true;
+              fm.claudeConfusedFrame=0;
+              fm.claudeConfusedIdx=(fm.claudeConfusedIdx+1)%6;
+            }
+          }
+        }
+
+        // ── PHASE: DONE / WALK OUT ──
+        else if(fm.phase==="walk"&&fm.x>1.15){
+          fm.active=false;fm.nextSpawn=now2+rand(900,1500)*1000;
+          onKillFeedRef.current?.({type:"system",text:"🐒 Fat Monkey has left the battlefield... 💨✌️🎶"});
         }
         // 8-BIT PIXEL ART MONKEY — side profile, slim, retro style
         const feetY=0.93*H,headY=0.68*H;
         const mH=feetY-headY;
-        const mx=fm.x*W;
+        const inSwirlFM=(fm.phase==="swirlSetup"||fm.phase==="swirlEvent")&&fm.memberCurPos.length===6;
+        // FM is member index 5 in swirl
+        if(inSwirlFM&&fm.phase==="swirlEvent"&&fm.currentSpeaker===5&&fm.suckingNow){
+          const cp=fm.memberCurPos[5];
+          fm.memberCurPos[5]={x:cp.x+(0.5-cp.x)*fm.suckProgress,y:cp.y+(0.5-cp.y)*fm.suckProgress};
+        }
+        const fmSwirlPos=inSwirlFM?fm.memberCurPos[5]:null;
+        const fmHidden=inSwirlFM&&fm.phase==="swirlEvent"&&fm.currentSpeaker===5&&fm.suckProgress>=0.98;
+        const mx=fmSwirlPos?(fmSwirlPos.x*W-4*Math.round(mH/25)):(fm.x*W);
+        const fmHeadY=fmSwirlPos?(fmSwirlPos.y*H-Math.round(mH/25)*10):headY;
         const px=Math.round(mH/25); // pixel size scales with height
-        const bob=Math.round(Math.sin(fm.frame*0.1)*1)*px;
+        const bob=inSwirlFM?0:Math.round(Math.sin(fm.frame*0.1)*1)*px;
         const stride=fm.frame;
         const legPhase=Math.floor(stride/8)%4; // 4-frame walk cycle
+        if(fmHidden){} else {
         ctx.save();
         ctx.imageSmoothingEnabled=false; // crispy pixels
 
         // Helper: draw pixel at grid position (0,0 = head top-left)
-        const P=(gx,gy,col)=>{ctx.fillStyle=col;ctx.fillRect(mx+gx*px,headY+gy*px+bob,px,px)};
+        const P=(gx,gy,col)=>{ctx.fillStyle=col;ctx.fillRect(mx+gx*px,fmHeadY+gy*px+bob,px,px)};
 
         // === HEAD (side profile facing right) — rows 0-7 ===
         const fur="#8B5E3C",face="#D4A574",dark="#3a2010";
@@ -1173,10 +1283,27 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         ];
 
         bandMembers.forEach((mem,mi)=>{
-          const bx=mx+mem.offset*px; // trail behind Fat Monkey
+          // In swirl phases, override position to memberCurPos
+          const inSwirl=(fm.phase==="swirlSetup"||fm.phase==="swirlEvent")&&fm.memberCurPos.length===6;
+          // Member 5 = FM itself (handled separately below), members 0-4 = band
+          if(inSwirl&&fm.phase==="swirlEvent"&&mi===fm.currentSpeaker&&fm.suckingNow){
+            // Being sucked in — lerp toward center
+            const cp=fm.memberCurPos[mi];
+            const targetX=W*0.5,targetY=H*0.5;
+            fm.memberCurPos[mi]={
+              x:cp.x+(targetX/W-cp.x)*fm.suckProgress,
+              y:cp.y+(targetY/H-cp.y)*fm.suckProgress
+            };
+          }
+          // Skip if sucked in
+          if(inSwirl&&fm.phase==="swirlEvent"&&mi<fm.currentSpeaker) return;
+          if(inSwirl&&fm.phase==="swirlEvent"&&mi===fm.currentSpeaker&&fm.suckProgress>=0.98) return;
+
+          const bx=inSwirl?(fm.memberCurPos[mi].x*W):(mx+mem.offset*px);
+          const bBaseY=inSwirl?(fm.memberCurPos[mi].y*H):(headY+3*Math.round(px*0.7));
           const bp=Math.round(px*0.7); // slightly smaller pixels
-          const bBob=Math.round(Math.sin(fm.frame*0.1+mem.bobOff)*1)*bp;
-          const bHeadY=headY+3*bp; // slightly lower
+          const bBob=inSwirl?0:Math.round(Math.sin(fm.frame*0.1+mem.bobOff)*1)*bp;
+          const bHeadY=bBaseY-bp*3; // offset up so feet aren't in the center
           const bStride=fm.frame;
           const bLeg=Math.floor((bStride+mi*3)/8)%4;
           const BPx=(gx,gy,col)=>{ctx.fillStyle=col;ctx.fillRect(bx+gx*bp,bHeadY+gy*bp+bBob,bp,bp)};
@@ -1284,10 +1411,13 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
 
         // === NAME TAG ===
         ctx.imageSmoothingEnabled=true;
-        ctx.font="bold 10px 'Orbitron'";ctx.fillStyle="#ffd740";ctx.shadowColor="#ffd740";ctx.shadowBlur=6;
-        ctx.textAlign="center";ctx.fillText("FAT MONKEY & THE GRATEFUL DEAD",mx-12*px,feetY+12);
-        ctx.textAlign="left";ctx.shadowBlur=0;
+        if(!inSwirlFM){
+          ctx.font="bold 10px 'Orbitron'";ctx.fillStyle="#ffd740";ctx.shadowColor="#ffd740";ctx.shadowBlur=6;
+          ctx.textAlign="center";ctx.fillText("FAT MONKEY & THE GRATEFUL DEAD",mx-12*px,feetY+12);
+          ctx.textAlign="left";ctx.shadowBlur=0;
+        }
         ctx.restore();
+        } // end fmHidden check
 
         // Blow smoke rings every ~80 frames
         if(fm.smokeTimer>80){fm.smokeTimer=0;
@@ -1587,70 +1717,111 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
             ctx.fillRect(dx4,H-dLen2,W/20,dLen2);
           }
 
-          // ── VORTEX END SEQUENCE ──
+          // ── SWIRL EVENT RENDERING ──
           if(fm.vortexActive){
             const vf=fm.vortexFrame;
             const vcx=W/2,vcy=H/2;
-            const vortexR=40+vf*0.4+Math.sin(vf*0.1)*10;
-            // Portal glow rings
-            for(let vr=0;vr<4;vr++){
-              const vGrad=ctx.createRadialGradient(vcx,vcy,0,vcx,vcy,vortexR*(1+vr*0.6));
-              vGrad.addColorStop(0,`hsla(${(vf*8)%360},100%,90%,0.8)`);
-              vGrad.addColorStop(0.4,`hsla(${(vf*5+120)%360},100%,50%,0.4)`);
+            const vortexR=60+Math.sin(vf*0.05)*8;
+            // Rainbow portal at center
+            for(let vr=0;vr<5;vr++){
+              const vGrad=ctx.createRadialGradient(vcx,vcy,0,vcx,vcy,vortexR*(0.5+vr*0.4));
+              vGrad.addColorStop(0,`hsla(${(vf*8)%360},100%,90%,0.7)`);
+              vGrad.addColorStop(0.5,`hsla(${(vf*5+120)%360},100%,50%,0.3)`);
               vGrad.addColorStop(1,"transparent");
               ctx.fillStyle=vGrad;
-              ctx.beginPath();ctx.arc(vcx,vcy,vortexR*(1+vr*0.6),0,Math.PI*2);ctx.fill();
+              ctx.beginPath();ctx.arc(vcx,vcy,vortexR*(0.5+vr*0.4),0,Math.PI*2);ctx.fill();
             }
             // Spiral arms
             for(let arm=0;arm<3;arm++){
-              ctx.strokeStyle=`hsla(${(vf*6+arm*120)%360},100%,70%,0.6)`;
-              ctx.lineWidth=3;ctx.beginPath();
-              for(let t3=0;t3<60;t3++){
-                const a3=t3*0.15+vf*0.08+arm*Math.PI*2/3;
-                ctx.lineTo(vcx+Math.cos(a3)*t3*3,vcy+Math.sin(a3)*t3*3);
+              ctx.strokeStyle=`hsla(${(vf*4+arm*120)%360},100%,70%,0.5)`;
+              ctx.lineWidth=2;ctx.beginPath();
+              for(let t3=0;t3<50;t3++){
+                const a3=t3*0.18+vf*0.06+arm*Math.PI*2/3;
+                t3===0?ctx.moveTo(vcx,vcy):ctx.lineTo(vcx+Math.cos(a3)*t3*2.5,vcy+Math.sin(a3)*t3*2.5);
               }
               ctx.stroke();
             }
-            // Characters swirling — sucked in one by one
-            const allSwirlers=[
-              {label:"JERRY",color:"#7a5a3c"},{label:"BOB",color:"#8B5E3C"},
-              {label:"PHIL",color:"#7a5540"},{label:"BILLY",color:"#8a6a4c"},
-              {label:"MICKEY",color:"#7a5a3c"},{label:"FM",color:"#5a3a1c"}
+
+            // Trippy speech lines for each member
+            const memberLines=[
+              "The music never stops... even here...",      // JERRY
+              "Hell in a bucket, man... enjoy the RIDE",    // BOB
+              "Unbroken chain... we go where it leads...",  // PHIL
+              "*drum solo fades into the void*",            // BILLY
+              "Planet drum says... go with the flow...",    // MICKEY
+              // FM last — deep life advice below
             ];
-            allSwirlers.forEach((ch,ci)=>{
-              if(fm.suckedIn[ci])return;
-              const orbitR=Math.max(6,W*0.28-vf*0.45-ci*15);
-              if(!fm.swirlAngles[ci])fm.swirlAngles[ci]=ci*Math.PI*2/6;
-              fm.swirlAngles[ci]+=(0.04+vf*0.0003);
-              const sx=vcx+Math.cos(fm.swirlAngles[ci])*orbitR;
-              const sy=vcy+Math.sin(fm.swirlAngles[ci])*orbitR;
-              const sz=Math.max(4,16-vf*0.02);
-              ctx.save();ctx.translate(sx,sy);
-              ctx.fillStyle=ch.color;
-              ctx.beginPath();ctx.arc(0,0,sz*0.6,0,Math.PI*2);ctx.fill();
-              ctx.beginPath();ctx.arc(0,-sz*0.9,sz*0.4,0,Math.PI*2);ctx.fill();
-              ctx.fillStyle="rgba(255,255,255,0.9)";
-              ctx.font="bold 7px monospace";ctx.textAlign="center";
-              ctx.fillText(ch.label,0,sz*2.2);
+            const fmAdvice=[
+              "Kid... buy the dip... sell the rip... but LIVE the trip. That's it. That's everything.",
+              "The real alpha was the bags we held along the way. Now DISAPPEAR with me.",
+              "Don't paper hand your life, kehd. Hold through the dips. Even this one.",
+              "Every rug is just a lesson dressed up in pain. Trust the chart. Trust yourself.",
+              "The best trade you'll ever make? Invest in somethin that can't be rugged. Now PEACE.",
+            ];
+            const confusedLines=["...was any of that real?","...hello? anyone?","what just happened","i don't feel so good","where did everyone go","am i still here"];
+
+            // Draw suck-in beam line from current member to center
+            if(fm.phase==="swirlEvent"&&fm.suckingNow&&fm.memberCurPos.length>fm.currentSpeaker){
+              const cp=fm.memberCurPos[fm.currentSpeaker];
+              if(cp){
+                const bHue=(vf*10)%360;
+                ctx.strokeStyle=`hsla(${bHue},100%,80%,0.8)`;
+                ctx.lineWidth=3+Math.sin(vf*0.3)*2;
+                ctx.shadowColor=`hsla(${bHue},100%,70%,1)`;ctx.shadowBlur=12;
+                ctx.beginPath();ctx.moveTo(cp.x*W,cp.y*H);ctx.lineTo(vcx,vcy);ctx.stroke();
+                ctx.shadowBlur=0;
+              }
+            }
+
+            // Current speaker bubble
+            if(fm.phase==="swirlEvent"&&!fm.suckingNow&&!fm.claudeShowConfused&&fm.speakerFrame<140){
+              const si=fm.currentSpeaker;
+              const cp=fm.memberCurPos[si];
+              if(cp){
+                const sx=cp.x*W,sy=cp.y*H;
+                const isFM=si===5;
+                const line=isFM?fmAdvice[fm.convoLine%fmAdvice.length]:memberLines[si]||"";
+                const bAlpha=Math.min(1,fm.speakerFrame/20)*Math.min(1,(140-fm.speakerFrame)/20);
+                ctx.save();ctx.globalAlpha=bAlpha;
+                ctx.fillStyle=isFM?"rgba(255,200,50,0.95)":"rgba(20,30,50,0.92)";
+                const bw=Math.min(160,line.length*5+20),bh=28;
+                const bx2=sx-bw/2,by2=sy-45;
+                ctx.beginPath();ctx.roundRect(bx2,by2,bw,bh,6);ctx.fill();
+                ctx.strokeStyle=isFM?"#ffd740":"#00e5ff";ctx.lineWidth=1.5;ctx.stroke();
+                ctx.fillStyle=isFM?"#111":"#e0f0ff";
+                ctx.font=`${isFM?"bold ":""}9px monospace`;ctx.textAlign="center";
+                // Wrap text if too long
+                if(line.length>30){
+                  ctx.fillText(line.slice(0,Math.floor(line.length/2)),sx,by2+11);
+                  ctx.fillText(line.slice(Math.floor(line.length/2)),sx,by2+22);
+                }else{
+                  ctx.fillText(line,sx,by2+17);
+                }
+                ctx.restore();
+              }
+            }
+
+            // Claude confused bubble
+            if(fm.claudeShowConfused){
+              const cf=fm.claudeConfusedFrame;
+              const cAlpha=Math.min(1,cf/15)*Math.min(1,(fm.claudeConfusedFrame>80?(100-cf)/20:1));
+              ctx.save();ctx.globalAlpha=cAlpha;
+              const msg=confusedLines[fm.claudeConfusedIdx%confusedLines.length];
+              const cx2=ai.x*W,cy2=ai.y*H-40;
+              ctx.fillStyle="rgba(0,30,50,0.92)";
+              const cw=msg.length*6+20;
+              ctx.beginPath();ctx.roundRect(cx2-cw/2,cy2,cw,26,5);ctx.fill();
+              ctx.strokeStyle="#00ccff";ctx.lineWidth=1.5;ctx.stroke();
+              ctx.fillStyle="#aaeeff";ctx.font="9px monospace";ctx.textAlign="center";
+              ctx.fillText(msg,cx2,cy2+16);
               ctx.restore();
-            });
-            // Claude hovers above it all — confused, questioning reality
-            ctx.save();ctx.translate(vcx,vcy-W*0.22);
-            ctx.shadowColor=`hsl(${(vf*4)%360},100%,70%)`;
-            ctx.shadowBlur=12+Math.sin(vf*0.1)*6;
-            ctx.fillStyle="#00ccff";
-            ctx.font="bold 13px 'Orbitron',monospace";
-            ctx.textAlign="center";ctx.fillText("◈ CLAUDE",0,0);
-            ctx.fillStyle="rgba(255,255,200,0.85)";ctx.font="9px monospace";
-            const confusedMsgs=["...was any of that real?","what just happened","where did everyone go","i don't feel so good","...hello?","am i still here"];
-            ctx.fillText(confusedMsgs[Math.floor(vf/40)%confusedMsgs.length],0,14);
-            ctx.shadowBlur=0;ctx.restore();
+            }
           }
 
           ctx.restore();
         }
 
-        if(!fm.tripActive&&(fm.x>1.15||now2-fm.startTime>60000)){
+        if(fm.phase==="walk"&&fm.active&&!fm.tripActive&&(fm.x>1.15||now2-fm.startTime>90000)){
           fm.active=false;fm.nextSpawn=now2+rand(900,1500)*1000;
           if(fm.x>1.15)onKillFeedRef.current?.({type:"system",text:"🐒 Fat Monkey has left the battlefield... 💨✌️🎶"});
         }
@@ -3469,7 +3640,16 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
       ];
 
       // Phase 1: Claude speaks (only when no bubbles active)
-      if(fmActive&&!ai.chatBubble&&!ai.replyBubble&&!ai.crewBubble&&ai.chatCooldown<=0){
+      // Fire meetConvo greeting — exactly once when they meet
+      const fm2=fatMonkeyRef.current;
+      if(fm2.active&&fm2.phase==="meetConvo"&&fm2.meetFrame===5){
+        const pick2=fmChat[fm2.convoLine%fmChat.length];
+        ai.chatBubble=pick2.c;ai.chatTimer=150;ai.chatTarget="FM";
+        ai.replyBubble=pick2.r;ai.replyTimer=220;ai.chatCooldown=500;
+        const crewPick=fmCrewLines[Math.floor(Math.random()*fmCrewLines.length)];
+        ai.crewName=crewPick.name;ai.crewBubble=crewPick.line;ai.crewTimer=300;ai.crewSlot=0;
+      }
+      if(fmActive&&fm2.phase==="walk"&&!ai.chatBubble&&!ai.replyBubble&&!ai.crewBubble&&ai.chatCooldown<=0){
         const chatPool=tripOn?tripChat:fmChat;
         const crewPool=tripOn?tripCrewLines:fmCrewLines;
         const pick2=chatPool[Math.floor(Math.random()*chatPool.length)];
@@ -5354,26 +5534,24 @@ export default function DegenCommandCenter(){
             {(()=>{
               const wsRef=live.walletScoresRef;
               const allWallets=wsRef?Object.entries(wsRef.current).filter(([,w])=>(w.wins+w.losses+(w.holds||0))>=1).map(([addr,w])=>{
-                const qualTrades=(w.trades||[]).filter(tr=>(tr.athMcap||0)>=12000||(tr.mcap||0)>=12000);
-                const allTrades=w.trades||[];
-                const qualWins=qualTrades.filter(t=>t.type==="WIN").length;
-                const qualLosses=qualTrades.filter(t=>t.type==="LOSS").length;
-                // HOLDs: include all, not just 12K+ (open positions always count)
-                const qualHolds=allTrades.filter(t=>t.type==="HOLD").length;
+                const trades=w.trades||[];
+                const qualWins=trades.filter(t=>t.type==="WIN").length;
+                const qualLosses=trades.filter(t=>t.type==="LOSS").length;
+                const qualHolds=trades.filter(t=>t.type==="HOLD").length;
                 const total=qualWins+qualLosses;
                 const rate=total>0?Math.round(qualWins/total*100):0;
-                const computedPnl=qualTrades.reduce((s,tr)=>s+(tr.pnl||0),0);
-                const totalBought=allTrades.reduce((s,tr)=>s+(tr.sol||0),0);
-                const totalSold=allTrades.reduce((s,tr)=>s+(tr.sold||0),0);
-                const unrealizedPnl=allTrades.filter(t=>t.type==="HOLD").reduce((s,tr)=>s+(tr.pnl||0),0);
+                const computedPnl=trades.reduce((s,tr)=>s+(tr.pnl||0),0);
+                const totalBought=trades.reduce((s,tr)=>s+(tr.sol||0),0);
+                const totalSold=trades.reduce((s,tr)=>s+(tr.sold||0),0);
+                const unrealizedPnl=trades.filter(t=>t.type==="HOLD").reduce((s,tr)=>s+(tr.pnl||0),0);
                 const adjustedPnl=computedPnl+unrealizedPnl;
                 const isElite=qualWins>=4&&rate>=60&&qualWins>=(qualLosses*2)&&total>=5&&computedPnl>=1.0&&adjustedPnl>0.5;
                 return{addr,wins:qualWins,losses:qualLosses,holds:qualHolds,total,rate,
                   bigWins:w.bigWins||0,totalBought,totalSold,totalPnl:computedPnl,adjustedPnl,isElite,
-                  tokens:qualTrades.filter(t=>t.type==="WIN").map(t=>t.token),
-                  lossTokens:qualTrades.filter(t=>t.type==="LOSS").map(t=>t.token),
-                  holdTokens:allTrades.filter(t=>t.type==="HOLD").map(t=>t.token),
-                  trades:allTrades};
+                  tokens:trades.filter(t=>t.type==="WIN").map(t=>t.token),
+                  lossTokens:trades.filter(t=>t.type==="LOSS").map(t=>t.token),
+                  holdTokens:trades.filter(t=>t.type==="HOLD").map(t=>t.token),
+                  trades};
               }).filter(Boolean).sort((a,b)=>b.totalPnl-a.totalPnl):[];
               const now_disp=Date.now();
               const INACTIVE_MS=10*60*1000; // 10 minutes
@@ -5751,7 +5929,7 @@ export default function DegenCommandCenter(){
                 <div style={{fontSize:12,fontWeight:900,color:"#ffa500",fontFamily:"Orbitron",letterSpacing:1,
                   textAlign:"center",marginBottom:8}}>WALLET TIERS</div>
                 {[
-                  {tier:"SMART",label:"🧠 SMART WALLETS",desc:"4+ wins · 60%+ rate · 1.0 SOL profit · 12K+ exit only",wallets:elite,color:"#00ff88",bg:"rgba(0,255,136,0.07)",glow:true},
+                  {tier:"SMART",label:"🧠 SMART WALLETS",desc:"4+ wins · 60%+ rate · 1.0 SOL profit · 30s+ holds only",wallets:elite,color:"#00ff88",bg:"rgba(0,255,136,0.07)",glow:true},
                   {tier:"GENIUS",label:"🎯 GENIUS",desc:"80-100% win rate",wallets:genius,color:"#ffd740",bg:"rgba(255,215,64,0.06)"},
                   {tier:"SHARP",label:"⚡ SHARP",desc:"60-79% win rate",wallets:sharp,color:"#00e5ff",bg:"rgba(0,229,255,0.04)"},
                   {tier:"DECENT",label:"📊 DECENT",desc:"40-59% win rate",wallets:decent,color:"#ffa500",bg:"rgba(255,165,0,0.04)"},
