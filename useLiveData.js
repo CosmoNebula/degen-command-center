@@ -40,7 +40,7 @@ function tdMcapUsd(td) {
     : td.lastMcapSol * SOL_USD * MCAP_CORRECTION;
 }
 
-export function useLiveData() {
+export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
   const [tokens, setTokens] = useState([]);
   const tokensRef = useRef([]); // synchronous access for intervals
   tokensRef.current = tokens; // sync during render — always up to date
@@ -119,6 +119,8 @@ export function useLiveData() {
           deployerSellPct: 0,
           totalBoughtSol: 0,
           totalSoldSol: 0,
+          startMcap: (newToken.marketCapSol || 0) * SOL_USD * MCAP_CORRECTION, // mcap at birth
+          athMcap: (newToken.marketCapSol || 0) * SOL_USD * MCAP_CORRECTION,   // tracks all-time high
           // ─── EDGE DETECTION ───
           freshBuyers: 0,          // buyers never seen before
           totalBuyers: 0,          // total unique buyers
@@ -190,12 +192,37 @@ export function useLiveData() {
         td.lastTradeTime = now;  // track staleness
 
         // Track per-wallet activity
-        if (!td.wallets[wallet]) td.wallets[wallet] = { bought: 0, sold: 0, entryMcap: 0, firstBuyTime: now };
+        if (!td.wallets[wallet]) td.wallets[wallet] = { bought: 0, sold: 0, entryMcap: 0, firstBuyTime: now, sellEvents: [] };
 
         if (trade.type === "buy") {
+          // ─── CYCLE RESET: if wallet previously fully exited this token, start fresh ───
+          const wData = td.wallets[wallet];
+          if (wData && wData.bought > 0) {
+            const prevSoldRatio = wData.bought > 0 ? (wData.sold || 0) / wData.bought : 0;
+            if (prevSoldRatio >= 0.90) {
+              // New buy cycle — wipe old position data
+              td.wallets[wallet] = { bought: 0, sold: 0, entryMcap: 0, firstBuyTime: now, lastSellTime: null, exitMcap: 0, sellEvents: [] };
+              // Also clear from wallet scores so new HOLD can be tracked cleanly
+              const wsNow = walletScores.current[wallet];
+              if (wsNow) {
+                // Remove from holdAddrs so scoring loop treats this as a new position
+                if (wsNow.holdAddrs?.has(mint)) {
+                  wsNow.holdAddrs.delete(mint);
+                  wsNow.holds = Math.max(0, (wsNow.holds||0) - 1);
+                  wsNow.holdTokens = (wsNow.holdTokens||[]).filter(a => a !== mint);
+                  // Keep the old resolved HOLD trade in history but allow new one
+                  const oldHold = wsNow.trades?.find(tr => tr.addr === mint && tr.type === "HOLD");
+                  if (oldHold) oldHold.type = "CLOSED_HOLD"; // archive it, stop refreshing
+                }
+                // Reset activeBuys for fresh entry
+                if (wsNow.activeBuys) delete wsNow.activeBuys[mint];
+              }
+            }
+          }
           td.buys++;
           td.totalBoughtSol += sol;
           td.wallets[wallet].bought += sol;
+          if (!td.wallets[wallet].firstBuyTime) td.wallets[wallet].firstBuyTime = now;
           // Store entry mcap on first buy for this wallet on this token
           if (!td.wallets[wallet].entryMcap) {
             const mcapNow = (trade.marketCapSol || td.lastMcapSol || 0) * SOL_USD * MCAP_CORRECTION;
@@ -245,21 +272,52 @@ export function useLiveData() {
 
           // ─── SMART MONEY: check if buying wallet has wins + win rate ───
           if (!td.smartWallets) td.smartWallets = new Set();
+          // Create walletScores entry immediately on first buy so lastActivity is fresh
+          if (!walletScores.current[wallet]) {
+            walletScores.current[wallet] = {
+              wins: 0, losses: 0, holds: 0,
+              tokens: [], lossTokens: [], holdTokens: [],
+              winAddrs: new Set(), lossAddrs: new Set(), holdAddrs: new Set(),
+              totalBought: 0, totalSold: 0, totalPnl: 0, bigWins: 0, trades: [],
+              lastActivity: now, activeBuys: {},
+            };
+          }
           const ws = walletScores.current[wallet];
           // Update lastActivity on actual trade (not scoring loop)
           if (ws) ws.lastActivity = now;
-          const wsTotal = ws ? (ws.wins + ws.losses) : 0;
-          const wsRate = wsTotal > 0 ? ws.wins / wsTotal : 0;
-          if (ws && ws.wins >= 3 && wsRate >= 0.60 && ws.wins > (ws.losses||0) && wsTotal >= 4 && sol > 0.3) {
+
+          // ─── TRACK ACTIVE POSITION so it shows in wallet detail immediately ───
+          if (ws) {
+            if (!ws.activeBuys) ws.activeBuys = {};
+            const entryMcNow = tdMcapUsd(td);
+            if (!ws.activeBuys[mint]) {
+              const _tid = mintToId.current[mint];
+              const _tname = _tid ? (tokensRef.current.find(t2=>t2.id===_tid)?.name || mint.slice(0,8)) : mint.slice(0,8);
+              ws.activeBuys[mint] = { token: _tname, addr: mint, sol: 0, entryMcap: entryMcNow||0, time: now };
+            }
+            ws.activeBuys[mint].sol += sol;
+          }
+          // Compute unrealized loss drag from open holds
+          const unrealizedPnl = ws ? (ws.trades||[]).filter(tr=>tr.type==="HOLD")
+            .reduce((s,tr)=>s+(tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol)),0) : 0;
+          const qualWinCount = ws ? (ws.trades||[]).filter(tr=>tr.type==="WIN").length : 0;
+          const qualLossCount = ws ? (ws.trades||[]).filter(tr=>tr.type==="LOSS").length : 0;
+          const qualTotal = qualWinCount + qualLossCount;
+          const qualRate = qualTotal > 0 ? qualWinCount / qualTotal : 0;
+          const adjustedPnl = ws ? (ws.totalPnl||0) + unrealizedPnl : 0;
+          const isElite = ws && qualWinCount >= 3 && qualRate >= 0.60 && qualWinCount >= (qualLossCount*2) && qualTotal >= 4 && (ws.totalPnl||0) >= 0.5 && adjustedPnl > 0.2 && sol > 0.2;
+          if (isElite) {
             td.smartWallets.add(wallet);
             const alertKey = `${wallet.slice(0,8)}-${mint}`;
             if (!copyTradeAlerts.current.has(alertKey)) {
               copyTradeAlerts.current.add(alertKey);
-              setSmartMoneyAlerts(p => [{
+              const alertObj = {
                 id: Date.now() + Math.random(), wallet, mint, sol,
                 wins: ws.wins, winTokens: ws.tokens.slice(-3),
                 time: now,
-              }, ...p].slice(0, 30));
+              };
+              setSmartMoneyAlerts(p => [alertObj, ...p].slice(0, 30));
+              if (onSmartAlert) onSmartAlert(alertObj);
               console.log(`[SMART$] 🧠 Winner wallet (${ws.wins}w) bought ${sol.toFixed(2)} SOL into ${mint.slice(0,8)}`);
             }
           }
@@ -270,6 +328,14 @@ export function useLiveData() {
 
           // Update lastActivity on sell
           if (walletScores.current[wallet]) walletScores.current[wallet].lastActivity = now;
+          td.wallets[wallet].lastSellTime = now;
+          // Capture mcap at time of sell for accurate exit display
+          const sellMcapNow = tdMcapUsd(td);
+          td.wallets[wallet].exitMcap = sellMcapNow;
+
+          // Track individual sell events for trade card breakdown
+          if (!td.wallets[wallet].sellEvents) td.wallets[wallet].sellEvents = [];
+          td.wallets[wallet].sellEvents.push({ sol, mcap: sellMcapNow, time: now });
 
           // ─── SELL VELOCITY ───
           td.sellTimes.push(now);
@@ -296,6 +362,8 @@ export function useLiveData() {
           td.lastMcapSol = trade.marketCapSol;
           td.mcapSource = "pp"; // PumpPortal raw value, needs correction
           const newMcapUsd = trade.marketCapSol * SOL_USD * MCAP_CORRECTION;
+          // ─── ATH TRACKING ───
+          if (!td.athMcap || newMcapUsd > td.athMcap) td.athMcap = newMcapUsd;
           const elapsed = now - td.launchTime;
           [10000, 20000, 30000, 50000].forEach(m => {
             if (!td.milestones[m] && newMcapUsd >= m && oldMcap < m) {
@@ -361,6 +429,7 @@ export function useLiveData() {
               buys: td.buys, sells: td.sells,
               vol: volUsd,
               mcap: newMcap > 0 ? newMcap : t.mcap,
+              athMcap: Math.max(t.athMcap || 0, newMcap > 0 ? newMcap : 0, td.athMcap || 0),
               holders: uniqueWallets,
               topHolderPct: Math.round(topHolderPct),
               devWallet: Math.round(devPct),
@@ -492,6 +561,13 @@ export function useLiveData() {
             warpIn: false, alive: true,
             qualified: true, health: 95,
           } : t));
+          // Write migration to DB
+          if (onUpsertToken) onUpsertToken({
+            addr: migration.mint, name: tokenName,
+            mcap: mcapUsd, peakMcap: mcapUsd,
+            timestamp: Date.now(), migrated: true,
+            alive: true, platform: "Raydium",
+          });
         }
 
         setIntelEvents(prev => [{
@@ -813,7 +889,7 @@ export function useLiveData() {
           }
         }
 
-        return {
+        const updatedToken = {
           ...t, qualified, qualScore: score, qualChecks: checks,
           riskScore: risk, threat, threatColor,
           mcap: mcap > 0 ? mcap : t.mcap, vol: volUsd,
@@ -821,7 +897,6 @@ export function useLiveData() {
           topHolderPct: Math.round(topPct),
           devWallet: Math.round(devPct),
           health: qualified ? 70 + (risk - 50) * 0.6 : 20 + risk * 0.3,
-          // Edge data for display
           freshPct: Math.round(freshPct),
           velocity, accelerating,
           smallBuyRatio: Math.round(smallBuyRatio * 100),
@@ -833,12 +908,17 @@ export function useLiveData() {
           mcapTrajectory: Math.round(mcapTrajectory * 10) / 10,
           serialDeployer, deployerLaunches: depHist ? depHist.launches : 0,
           staleSec, isStale, isDead, sellDumping,
-          // New intel
           bundleDetected, bundleSize,
           hasSmartMoney, smartWalletCount,
           narrativeMatch, narrativeWord,
           deployerGrade,
+          peakMcap: Math.max(t.peakMcap || 0, mcap > 0 ? mcap : t.mcap),
         };
+        // Write to DB when newly qualified or when mcap hits new peak
+        if (onUpsertToken && (qualified && !t.qualified) || (updatedToken.peakMcap > (t.peakMcap || 0))) {
+          onUpsertToken(updatedToken);
+        }
+        return updatedToken;
       });
       return result;
       });
@@ -1269,6 +1349,47 @@ export function useLiveData() {
       }
     }, 5000);
 
+    // ─── DEAD FIELD CHECK: Verify DB-hydrated + stale tokens every 2 mins ───
+    const deadCheckInterval = setInterval(async () => {
+      const now = Date.now();
+      const candidates = tokensRef.current.filter(t => {
+        if (!t.alive) return false;
+        const td = tradeData.current[t.addr];
+        const lastTrade = td?.lastTradeTime || t.timestamp;
+        const silentMs = now - lastTrade;
+        // Check DB tokens after 3 mins silence, live tokens after 8 mins
+        return t.fromDB ? silentMs > 180000 : (silentMs > 480000 && t.qualified);
+      }).slice(0, 5); // max 5 at a time
+
+      for (const t of candidates) {
+        try {
+          const res = await fetch(`https://api.dexscreener.com/tokens/v1/solana/${t.addr}`);
+          const data = await res.json();
+          const pair = data?.pairs?.[0] || (Array.isArray(data) ? data[0] : null);
+          const liveMcap = pair?.marketCap || pair?.fdv || 0;
+          const peakMcap = t.peakMcap || t.mcap || 0;
+          const isDead = !pair || liveMcap < 1000 || (peakMcap > 5000 && liveMcap < peakMcap * 0.12);
+
+          if (isDead) {
+            console.log(`[DEADCHECK] 💀 ${t.name} — no activity, mcap $${liveMcap?.toFixed(0)||0} (peak $${peakMcap?.toFixed(0)}) — removing`);
+            setTokens(prev => prev.map(tok => tok.addr === t.addr ? { ...tok, alive: false, health: 0, deathTime: now } : tok));
+            if (onUpsertToken) onUpsertToken({ ...t, alive: false, mcap: liveMcap, peakMcap });
+          } else if (liveMcap > 0 && Math.abs(liveMcap - t.mcap) / (t.mcap || 1) > 0.05) {
+            // Still alive but mcap changed — update position + DB
+            const zz=[[5000,0.95],[10000,0.63],[20000,0.47],[50000,0.32],[100000,0.20],[300000,0.10]];
+            let targetY=0.95;
+            if(liveMcap>=300000)targetY=0.08;
+            else{for(let i=0;i<zz.length-1;i++){if(liveMcap>=zz[i][0]&&liveMcap<zz[i+1][0]){const pct=(liveMcap-zz[i][0])/(zz[i+1][0]-zz[i][0]);targetY=zz[i][1]+(zz[i+1][1]-zz[i][1])*pct;break;}}}
+            setTokens(prev => prev.map(tok => tok.addr === t.addr ? {
+              ...tok, mcap: liveMcap, targetY,
+              peakMcap: Math.max(tok.peakMcap || 0, liveMcap),
+            } : tok));
+            if (onUpsertToken) onUpsertToken({ ...t, mcap: liveMcap, peakMcap: Math.max(peakMcap, liveMcap), alive: true });
+          }
+        } catch(e) { /* network err, skip */ }
+      }
+    }, 120000); // every 2 mins
+
     return () => {
       if (typeof pf === 'function') pf();
       else if (pf && pf.cleanup) pf.cleanup();
@@ -1279,6 +1400,7 @@ export function useLiveData() {
       clearInterval(solPriceInterval);
       clearInterval(migratedInterval);
       clearInterval(migFallbackInterval);
+      clearInterval(deadCheckInterval);
     };
   }, []);
 
@@ -1743,66 +1865,106 @@ export function useLiveData() {
             if (!ws.lossAddrs) ws.lossAddrs = new Set();
             if (!ws.holdAddrs) ws.holdAddrs = new Set();
 
-            // ─── WALLET-LEVEL OUTCOME (actual SOL P&L, not token price) ───
-            const pnl = (data.sold || 0) - data.bought;
-            // "Closed" = wallet sold back ≥50% of cost basis in SOL (handles partial exits)
-            const positionClosed = (data.sold || 0) >= data.bought * 0.5;
+            // ─── BOT FILTER — ignore sub-30s flips ───
+            const holdDuration = (data.lastSellTime || now3) - (data.firstBuyTime || now3);
+            const hasExited = (data.sold || 0) >= data.bought * 0.5;
+            if (hasExited && holdDuration < 30000) return;
 
-            // WIN: sold enough and came out profitable (includes bailing before rug!)
-            const walletWin = positionClosed && pnl > 0;
-            // LOSS: token dead and wallet didn't win, OR closed position at >20% loss
-            const walletLoss = !walletWin && (
-              tokenDead ||
-              (positionClosed && pnl < -(data.bought * 0.2))
+            const sellEvts = (data.sellEvents || []).filter(s =>
+              s.time >= (data.firstBuyTime || 0) &&
+              (!data.lastSellTime || s.time <= data.lastSellTime)
             );
-            // HOLD: alive token, position still open, outcome not yet determined
+            // Cap sell amounts to bought so bleed can't inflate sells beyond buy size
+            let capRemaining = data.bought;
+            const cappedSellEvts = sellEvts.filter(s => {
+              if (capRemaining <= 0.001) return false;
+              capRemaining -= s.sol;
+              return true;
+            });
+
+            // ─── WALLET-LEVEL OUTCOME ───
+            // PumpPortal reports solAmount on sells as original cost basis, NOT SOL received.
+            // Detect this: if sold ≈ bought but mcap moved significantly, estimate real SOL out.
+            const rawSold = data.sold || 0;
+            const entryMcap = data.entryMcap || 0;
+            const exitMcapRaw = data.exitMcap || t.mcap || 0;
+            const mcapRatio = entryMcap > 0 && exitMcapRaw > 0 ? exitMcapRaw / entryMcap : 1;
+            const soldRatioRaw = data.bought > 0 ? rawSold / data.bought : 0;
+            // If sold ≈ bought (within 2%) but mcap moved >10% — cost-basis reporting detected
+            const costBasisReporting = soldRatioRaw >= 0.9 && soldRatioRaw <= 1.1 && Math.abs(mcapRatio - 1) > 0.1;
+            // Estimated actual SOL received = bought * mcapRatio (bonding curve approximation)
+            const estimatedSold = costBasisReporting ? data.bought * mcapRatio : rawSold;
+            const sold = estimatedSold;
+            const pnl = sold - data.bought;
+            const soldRatio = data.bought > 0 ? sold / data.bought : 0;
+            const positionClosed = soldRatioRaw >= 0.5; // use raw ratio to detect exit
+            const positionFullyExited = soldRatioRaw >= 0.95;
+
+            const exitMcap = positionClosed ? (data.exitMcap || t.mcap || 0) : (t.mcap || 0);
+
+            const walletWin = positionClosed && pnl > 0 && (pnl >= 0.15 || positionFullyExited);
+            const walletLoss = !walletWin && (
+              (tokenDead && pnl < 0) ||
+              (positionFullyExited && pnl < 0)
+            );
             const walletHold = !walletWin && !walletLoss && tokenAlive;
 
-            const exitMcap = t.mcap || 0;
-            const entryMcap = data.entryMcap || 0;
+            // Use capped+filtered sell events for all trade records
+            const sellEvents = cappedSellEvts;
 
             // ── WIN ──
             if (walletWin && !ws.winAddrs.has(t.addr)) {
               if (ws.holdAddrs.has(t.addr)) {
-                // Upgrade HOLD → WIN
                 ws.holds = Math.max(0, ws.holds - 1);
                 ws.holdAddrs.delete(t.addr);
-                ws.holdTokens = ws.holdTokens.filter(n => n !== t.name);
+                ws.holdTokens = (ws.holdTokens||[]).filter(a => a !== t.addr);
                 const holdTrade = ws.trades.find(tr => tr.addr === t.addr && tr.type === "HOLD");
-                if (holdTrade) { holdTrade.type = "WIN"; holdTrade.mcap = exitMcap; holdTrade.sold = data.sold; holdTrade.pnl = pnl; }
+                if (holdTrade) { holdTrade.type = "WIN"; holdTrade.mcap = data.exitMcap||exitMcap; holdTrade.sold = sold; holdTrade.pnl = pnl; holdTrade.athMcap = Math.max(td.athMcap||0, data.exitMcap||exitMcap, holdTrade.athMcap||0); holdTrade.sellEvents = sellEvents; }
               } else {
-                ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "WIN", mcap: exitMcap, entryMcap, pnl, time: now3 });
+                ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: sold, type: "WIN", mcap: exitMcap, entryMcap, pnl,
+                  entryTime: data.firstBuyTime || now3, exitTime: data.lastSellTime || now3,
+                  athMcap: td.athMcap || exitMcap, startMcap: td.startMcap || entryMcap, time: now3, sellEvents });
                 if (ws.trades.length > 50) ws.trades = ws.trades.slice(-50);
               }
               ws.wins++;
               ws.winAddrs.add(t.addr);
-              ws.tokens.push(t.name);
+              ws.tokens.push(t.name); // display name — winAddrs Set handles dedup
               ws.totalBought += data.bought;
-              ws.totalSold += (data.sold || 0);
+              ws.totalSold += sold; // use corrected sold not raw data.sold
               ws.totalPnl += pnl;
               if (exitMcap > 100000) ws.bigWins = (ws.bigWins || 0) + 1;
-              if (ws.wins === 3) console.log(`[SMART$] 🧠 Wallet ${w.slice(0,8)} hit 3 wins: ${ws.tokens.join(", ")}`);
-              if (ws.wins === 6) console.log(`[SMART$] 🧠🧠 Wallet ${w.slice(0,8)} hit 6 WINS: ${ws.tokens.join(", ")}`);
+              if (ws.wins === 3) console.log(`[SMART$] 🧠 Wallet ${w.slice(0,8)} hit 3 wins`);
+              if (ws.wins === 6) console.log(`[SMART$] 🧠🧠 Wallet ${w.slice(0,8)} hit 6 WINS`);
+              td.wallets[w] = { bought: 0, sold: 0, firstBuyTime: null, lastSellTime: null, entryMcap: 0, exitMcap: 0, sellEvents: [] };
+              // Keep addr in winAddrs — never delete, prevents same position re-triggering as win
+              if (ws.activeBuys) delete ws.activeBuys[t.addr];
+              if (onMarkDirty) onMarkDirty(w);
             }
 
             // ── LOSS ──
             if (walletLoss && !ws.lossAddrs.has(t.addr) && !ws.winAddrs.has(t.addr)) {
               if (ws.holdAddrs.has(t.addr)) {
-                // Downgrade HOLD → LOSS
                 ws.holds = Math.max(0, ws.holds - 1);
                 ws.holdAddrs.delete(t.addr);
-                ws.holdTokens = ws.holdTokens.filter(n => n !== t.name);
+                ws.holdTokens = (ws.holdTokens||[]).filter(a => a !== t.addr);
                 const holdTrade = ws.trades.find(tr => tr.addr === t.addr && tr.type === "HOLD");
-                if (holdTrade) { holdTrade.type = "LOSS"; holdTrade.mcap = exitMcap; holdTrade.sold = data.sold; holdTrade.pnl = pnl; }
+                if (holdTrade) { holdTrade.type = "LOSS"; holdTrade.mcap = data.exitMcap||exitMcap; holdTrade.sold = sold; holdTrade.pnl = pnl; holdTrade.athMcap = Math.max(td.athMcap||0, data.exitMcap||exitMcap, holdTrade.athMcap||0); holdTrade.sellEvents = sellEvents; }
               } else {
-                ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "LOSS", mcap: exitMcap, entryMcap, pnl, time: now3 });
+                ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: sold, type: "LOSS", mcap: exitMcap, entryMcap, pnl,
+                  entryTime: data.firstBuyTime || now3, exitTime: data.lastSellTime || now3,
+                  athMcap: td.athMcap || exitMcap, startMcap: td.startMcap || entryMcap, time: now3, sellEvents });
                 if (ws.trades.length > 50) ws.trades = ws.trades.slice(-50);
               }
               ws.losses++;
               ws.lossAddrs.add(t.addr);
-              ws.lossTokens.push(t.name);
-              ws.totalSold += (data.sold || 0);
+              ws.lossTokens.push(t.name); // display name
+              ws.totalBought += data.bought;
+              ws.totalSold += sold;
               ws.totalPnl += pnl;
+              td.wallets[w] = { bought: 0, sold: 0, firstBuyTime: null, lastSellTime: null, entryMcap: 0, exitMcap: 0, sellEvents: [] };
+              // Keep addr in lossAddrs — never delete
+              if (ws.activeBuys) delete ws.activeBuys[t.addr];
+              if (onMarkDirty) onMarkDirty(w);
             }
 
             // ── HOLD ──
@@ -1810,14 +1972,17 @@ export function useLiveData() {
               ws.holds = (ws.holds || 0) + 1;
               ws.holdAddrs.add(t.addr);
               ws.holdTokens = ws.holdTokens || [];
-              ws.holdTokens.push(t.name);
-              ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "HOLD", mcap: exitMcap, entryMcap, pnl, time: now3 });
+              ws.holdTokens.push(t.addr); // store addr not name
+              ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: sold, type: "HOLD", mcap: exitMcap, entryMcap, pnl,
+                entryTime: data.firstBuyTime || now3, exitTime: null,
+                athMcap: td.athMcap || exitMcap, startMcap: td.startMcap || entryMcap, time: now3, sellEvents });
               if (ws.trades.length > 50) ws.trades = ws.trades.slice(-50);
+              if (onMarkDirty) onMarkDirty(w);
             }
-            // Refresh live HOLD entries with current mcap/pnl
+            // Refresh live HOLD entries with current mcap/pnl/athMcap/sellEvents
             if (walletHold && ws.holdAddrs.has(t.addr)) {
               const existTrade = ws.trades.find(tr => tr.addr === t.addr && tr.type === "HOLD");
-              if (existTrade) { existTrade.mcap = exitMcap; existTrade.sold = data.sold; existTrade.pnl = pnl; }
+              if (existTrade) { existTrade.mcap = exitMcap; existTrade.sold = sold; existTrade.pnl = pnl; existTrade.athMcap = Math.max(td.athMcap||0, existTrade.athMcap||0); existTrade.sellEvents = sellEvents; }
             }
           });
         });
@@ -1911,8 +2076,13 @@ export function useLiveData() {
           ...s, tokensScanned: prev.length, qualified, dead,
           bestToken: best || s.bestToken, bestPct: bestPct || s.bestPct,
           smartWallets: Object.values(walletScores.current).filter(w => {
-            const total = w.wins + (w.losses || 0);
-            return w.wins >= 3 && total >= 4 && (w.wins / total) >= 0.60 && w.wins > (w.losses || 0);
+            const wins=(w.trades||[]).filter(tr=>tr.type==="WIN").length;
+            const losses=(w.trades||[]).filter(tr=>tr.type==="LOSS").length;
+            const total=wins+losses;
+            const rate=total>0?wins/total:0;
+            const unrealized=(w.trades||[]).filter(tr=>tr.type==="HOLD").reduce((s,tr)=>s+(tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol)),0);
+            const adjustedPnl=(w.totalPnl||0)+unrealized;
+            return wins>=4&&rate>=0.60&&wins>=(losses*2)&&total>=5&&(w.totalPnl||0)>=1.0&&adjustedPnl>0.5;
           }).length,
           solPrice: SOL_USD, mcapCorr: MCAP_CORRECTION,
         }));
