@@ -6,6 +6,52 @@
 import { useState, useEffect, useRef } from "react";
 import { connectPumpFun, fetchTokenByAddress, fetchJupiterPrice, fetchTokenMeta, fetchLargestHolders, fetchLatestProfiles, fetchBoostedTokens, connectHeliusWS, fetchRugCheck, fetchGeckoTrending, fetchGeckoPoolByToken, fetchPumpCurveProgress, fetchDefinedTrending, fetchJupiterSlippage, fetchJupiterVerified, fetchPumpFunDirect, fetchRaydiumPool, fetchUniqueSigners } from "./api";
 
+// ─── DIRECT SUPABASE WRITES (no callback chain needed) ───
+const SB_URL = "https://yrmjphhfgduysoftnuxv.supabase.co";
+const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlybWpwaGhmZ2R1eXNvZnRudXh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3MzI5MzAsImV4cCI6MjA4ODMwODkzMH0.scHhvTGiABJDybgbjgjilw8XuxOfmWPsqo4iytMZmio";
+
+async function sbUpsertToken(token) {
+  if (!token?.addr) return;
+  try {
+    const r = await fetch(`${SB_URL}/rest/v1/token_history?on_conflict=addr`, {
+      method: "POST",
+      headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`, "Content-Type": "application/json", Prefer: "resolution=merge-duplicates" },
+      body: JSON.stringify([{
+        addr: token.addr, name: token.name || "???",
+        peak_mcap: token.peakMcap || token.mcap || 0,
+        entry_mcap: token.entryMcap || token.mcap || 0,
+        death_time: token.alive === false ? Date.now() : null,
+        first_seen: token.timestamp || Date.now(),
+        graduated: token.migrated || false,
+        platform: token.platform || "PumpFun",
+        updated_at: new Date().toISOString(),
+      }]),
+    });
+    console.log(`[SB] 🪙 ${token.name} → ${r.ok ? "✅" : "❌ " + r.status}`);
+  } catch(e) { console.warn("[SB] upsertToken failed:", e.message); }
+}
+
+async function sbUpsertWallet(addr, ws) {
+  if (!addr || !ws) return;
+  try {
+    const r = await fetch(`${SB_URL}/rest/v1/wallet_scores?on_conflict=addr`, {
+      method: "POST",
+      headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`, "Content-Type": "application/json", Prefer: "resolution=merge-duplicates" },
+      body: JSON.stringify([{
+        addr, wins: ws.wins || 0, losses: ws.losses || 0, holds: ws.holds || 0,
+        total_pnl: ws.totalPnl || 0, total_bought: ws.totalBought || 0,
+        total_sold: ws.totalSold || 0, big_wins: ws.bigWins || 0,
+        trades: (ws.trades || []).slice(-50),
+        win_addrs: ws.winAddrs ? [...ws.winAddrs] : [],
+        loss_addrs: ws.lossAddrs ? [...ws.lossAddrs] : [],
+        updated_at: new Date().toISOString(),
+      }]),
+    });
+    if (!r.ok) console.warn(`[SB] wallet ${addr.slice(0,8)} failed:`, r.status);
+  } catch(e) { console.warn("[SB] upsertWallet failed:", e.message); }
+}
+
+
 const COIN_COLORS = [
   { bg: "#ff6b35", fg: "#fff", rim: "#cc5528" },
   { bg: "#00d4aa", fg: "#fff", rim: "#00a885" },
@@ -923,8 +969,8 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
           peakMcap: Math.max(t.peakMcap || 0, mcap > 0 ? mcap : t.mcap),
         };
         // Write to DB when newly qualified or when mcap hits new peak
-        if (onUpsertTokenRef.current && ((qualified && !t.qualified) || (updatedToken.peakMcap > (t.peakMcap || 0)))) {
-          onUpsertTokenRef.current(updatedToken);
+        if ((qualified && !t.qualified) || (updatedToken.peakMcap > (t.peakMcap || 0))) {
+          sbUpsertToken(updatedToken);
         }
         return updatedToken;
       });
@@ -1381,7 +1427,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
           if (isDead) {
             console.log(`[DEADCHECK] 💀 ${t.name} — no activity, mcap $${liveMcap?.toFixed(0)||0} (peak $${peakMcap?.toFixed(0)}) — removing`);
             setTokens(prev => prev.map(tok => tok.addr === t.addr ? { ...tok, alive: false, health: 0, deathTime: now } : tok));
-            if (onUpsertTokenRef.current) onUpsertTokenRef.current({ ...t, alive: false, mcap: liveMcap, peakMcap });
+            if (onUpsertTokenRef.current) sbUpsertToken({ ...t, alive: false, mcap: liveMcap, peakMcap });
           } else if (liveMcap > 0 && Math.abs(liveMcap - t.mcap) / (t.mcap || 1) > 0.05) {
             // Still alive but mcap changed — update position + DB
             const zz=[[5000,0.95],[10000,0.63],[20000,0.47],[50000,0.32],[100000,0.20],[300000,0.10]];
@@ -1392,7 +1438,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
               ...tok, mcap: liveMcap, targetY,
               peakMcap: Math.max(tok.peakMcap || 0, liveMcap),
             } : tok));
-            if (onUpsertTokenRef.current) onUpsertTokenRef.current({ ...t, mcap: liveMcap, peakMcap: Math.max(peakMcap, liveMcap), alive: true });
+            if (onUpsertTokenRef.current) sbUpsertToken({ ...t, mcap: liveMcap, peakMcap: Math.max(peakMcap, liveMcap), alive: true });
           }
         } catch(e) { /* network err, skip */ }
       }
@@ -1946,7 +1992,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
               td.wallets[w] = { bought: 0, sold: 0, firstBuyTime: null, lastSellTime: null, entryMcap: 0, exitMcap: 0, sellEvents: [] };
               // Keep addr in winAddrs — never delete, prevents same position re-triggering as win
               if (ws.activeBuys) delete ws.activeBuys[t.addr];
-              if (onMarkDirtyRef.current) onMarkDirtyRef.current(w);
+              sbUpsertWallet(w, walletScores.current[w]);
             }
 
             // ── LOSS ──
@@ -1972,7 +2018,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
               td.wallets[w] = { bought: 0, sold: 0, firstBuyTime: null, lastSellTime: null, entryMcap: 0, exitMcap: 0, sellEvents: [] };
               // Keep addr in lossAddrs — never delete
               if (ws.activeBuys) delete ws.activeBuys[t.addr];
-              if (onMarkDirtyRef.current) onMarkDirtyRef.current(w);
+              sbUpsertWallet(w, walletScores.current[w]);
             }
 
             // ── HOLD ──
@@ -1985,7 +2031,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
                 entryTime: data.firstBuyTime || now3, exitTime: null,
                 athMcap: td.athMcap || exitMcap, startMcap: td.startMcap || entryMcap, time: now3, sellEvents });
               if (ws.trades.length > 50) ws.trades = ws.trades.slice(-50);
-              if (onMarkDirtyRef.current) onMarkDirtyRef.current(w);
+              sbUpsertWallet(w, walletScores.current[w]);
             }
             // Refresh live HOLD entries with current mcap/pnl/athMcap/sellEvents
             if (walletHold && ws.holdAddrs.has(t.addr)) {
