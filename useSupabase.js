@@ -3,7 +3,7 @@
 // Merges data from all users — no duplicates, no lost wins
 
 const SUPABASE_URL = "https://yrmjphhfgduysoftnuxv.supabase.co";
-const SUPABASE_KEY = "sb_publishable_Nt-JbSEgEFGyx2Sca5oRRw_azgzo8HY";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlybWpwaGhmZ2R1eXNvZnRudXh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3MzI5MzAsImV4cCI6MjA4ODMwODkzMH0.scHhvTGiABJDybgbjgjilw8XuxOfmWPsqo4iytMZmio";
 
 // ── Lightweight fetch wrapper (no SDK needed) ──
 const sb = {
