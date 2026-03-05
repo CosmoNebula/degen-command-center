@@ -44,6 +44,14 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
   const [tokens, setTokens] = useState([]);
   const tokensRef = useRef([]); // synchronous access for intervals
   tokensRef.current = tokens; // sync during render — always up to date
+
+  // Keep callback refs always up to date — avoids stale closure in useEffect intervals
+  const onMarkDirtyRef = useRef(onMarkDirty);
+  const onSmartAlertRef = useRef(onSmartAlert);
+  const onUpsertTokenRef = useRef(onUpsertToken);
+  useEffect(() => { onMarkDirtyRef.current = onMarkDirty; }, [onMarkDirty]);
+  useEffect(() => { onSmartAlertRef.current = onSmartAlert; }, [onSmartAlert]);
+  useEffect(() => { onUpsertTokenRef.current = onUpsertToken; }, [onUpsertToken]);
   const [whaleAlerts, setWhaleAlerts] = useState([]);
   const [intelEvents, setIntelEvents] = useState([]);
   const [migrations, setMigrations] = useState([]);
@@ -317,7 +325,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
                 time: now,
               };
               setSmartMoneyAlerts(p => [alertObj, ...p].slice(0, 30));
-              if (onSmartAlert) onSmartAlert(alertObj);
+              if (onSmartAlertRef.current) onSmartAlertRef.current(alertObj);
               console.log(`[SMART$] 🧠 Winner wallet (${ws.wins}w) bought ${sol.toFixed(2)} SOL into ${mint.slice(0,8)}`);
             }
           }
@@ -562,7 +570,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
             qualified: true, health: 95,
           } : t));
           // Write migration to DB
-          if (onUpsertToken) onUpsertToken({
+          if (onUpsertTokenRef.current) onUpsertTokenRef.current({
             addr: migration.mint, name: tokenName,
             mcap: mcapUsd, peakMcap: mcapUsd,
             timestamp: Date.now(), migrated: true,
@@ -915,8 +923,8 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
           peakMcap: Math.max(t.peakMcap || 0, mcap > 0 ? mcap : t.mcap),
         };
         // Write to DB when newly qualified or when mcap hits new peak
-        if (onUpsertToken && ((qualified && !t.qualified) || (updatedToken.peakMcap > (t.peakMcap || 0)))) {
-          onUpsertToken(updatedToken);
+        if (onUpsertTokenRef.current && ((qualified && !t.qualified) || (updatedToken.peakMcap > (t.peakMcap || 0)))) {
+          onUpsertTokenRef.current(updatedToken);
         }
         return updatedToken;
       });
@@ -1373,7 +1381,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
           if (isDead) {
             console.log(`[DEADCHECK] 💀 ${t.name} — no activity, mcap $${liveMcap?.toFixed(0)||0} (peak $${peakMcap?.toFixed(0)}) — removing`);
             setTokens(prev => prev.map(tok => tok.addr === t.addr ? { ...tok, alive: false, health: 0, deathTime: now } : tok));
-            if (onUpsertToken) onUpsertToken({ ...t, alive: false, mcap: liveMcap, peakMcap });
+            if (onUpsertTokenRef.current) onUpsertTokenRef.current({ ...t, alive: false, mcap: liveMcap, peakMcap });
           } else if (liveMcap > 0 && Math.abs(liveMcap - t.mcap) / (t.mcap || 1) > 0.05) {
             // Still alive but mcap changed — update position + DB
             const zz=[[5000,0.95],[10000,0.63],[20000,0.47],[50000,0.32],[100000,0.20],[300000,0.10]];
@@ -1384,7 +1392,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
               ...tok, mcap: liveMcap, targetY,
               peakMcap: Math.max(tok.peakMcap || 0, liveMcap),
             } : tok));
-            if (onUpsertToken) onUpsertToken({ ...t, mcap: liveMcap, peakMcap: Math.max(peakMcap, liveMcap), alive: true });
+            if (onUpsertTokenRef.current) onUpsertTokenRef.current({ ...t, mcap: liveMcap, peakMcap: Math.max(peakMcap, liveMcap), alive: true });
           }
         } catch(e) { /* network err, skip */ }
       }
@@ -1938,7 +1946,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
               td.wallets[w] = { bought: 0, sold: 0, firstBuyTime: null, lastSellTime: null, entryMcap: 0, exitMcap: 0, sellEvents: [] };
               // Keep addr in winAddrs — never delete, prevents same position re-triggering as win
               if (ws.activeBuys) delete ws.activeBuys[t.addr];
-              if (onMarkDirty) onMarkDirty(w);
+              if (onMarkDirtyRef.current) onMarkDirtyRef.current(w);
             }
 
             // ── LOSS ──
@@ -1964,7 +1972,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
               td.wallets[w] = { bought: 0, sold: 0, firstBuyTime: null, lastSellTime: null, entryMcap: 0, exitMcap: 0, sellEvents: [] };
               // Keep addr in lossAddrs — never delete
               if (ws.activeBuys) delete ws.activeBuys[t.addr];
-              if (onMarkDirty) onMarkDirty(w);
+              if (onMarkDirtyRef.current) onMarkDirtyRef.current(w);
             }
 
             // ── HOLD ──
@@ -1977,7 +1985,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
                 entryTime: data.firstBuyTime || now3, exitTime: null,
                 athMcap: td.athMcap || exitMcap, startMcap: td.startMcap || entryMcap, time: now3, sellEvents });
               if (ws.trades.length > 50) ws.trades = ws.trades.slice(-50);
-              if (onMarkDirty) onMarkDirty(w);
+              if (onMarkDirtyRef.current) onMarkDirtyRef.current(w);
             }
             // Refresh live HOLD entries with current mcap/pnl/athMcap/sellEvents
             if (walletHold && ws.holdAddrs.has(t.addr)) {
