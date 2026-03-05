@@ -1906,7 +1906,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
           const tokenAlive = !tokenDead && t.alive;
 
           Object.entries(td.wallets).forEach(([w, data]) => {
-            if (data.bought <= 0.01) return;
+            if (data.bought <= 0.15) return;
             if (!walletScores.current[w]) walletScores.current[w] = {
               wins: 0, losses: 0, holds: 0,
               tokens: [], lossTokens: [], holdTokens: [],   // display names only
