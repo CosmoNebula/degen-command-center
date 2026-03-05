@@ -4347,6 +4347,7 @@ export default function DegenCommandCenter(){
   const live = useLiveData({
     onMarkDirty: (addr) => supabase.markDirty(addr),
     onSmartAlert: (alert) => supabase.logSmartAlert(alert),
+    onUpsertToken: (token) => supabase.upsertToken(token),
   });
 
   // Once live is ready, expose its walletScoresRef to supabase
@@ -4354,7 +4355,7 @@ export default function DegenCommandCenter(){
     if (live.walletScoresRef) {
       walletScoresContainer.current = live.walletScoresRef;
       supabase.setWalletScoresRef(live.walletScoresRef);
-      // Trigger initial DB load now that we have the ref
+      // Load wallets + tokens from DB
       supabase.loadFromDB();
     }
   }, [!!live.walletScoresRef]);
@@ -4369,6 +4370,70 @@ export default function DegenCommandCenter(){
       setRejected(live.stats.rejected);
     }
   }, [live.tokens, live.stats]);
+
+  // ═══ TOKEN HYDRATION FROM DB ═══
+  const tokenHydrationDone = useRef(false);
+  useEffect(() => {
+    if (tokenHydrationDone.current) return;
+    tokenHydrationDone.current = true;
+    const mcapToY = (mc) => {
+      const zz=[[5000,0.95],[10000,0.63],[20000,0.47],[50000,0.32],[100000,0.20],[300000,0.10]];
+      if(mc>=300000) return 0.08; if(mc<5000) return 0.95;
+      for(let i=0;i<zz.length-1;i++){
+        if(mc>=zz[i][0]&&mc<zz[i+1][0]){const pct=(mc-zz[i][0])/(zz[i+1][0]-zz[i][0]);return zz[i][1]+(zz[i+1][1]-zz[i][1])*pct;}
+      } return 0.5;
+    };
+    const hydrate = async () => {
+      const rows = await supabase.loadTokensFromDB(6);
+      if (!rows.length) return;
+      const CC=[{bg:"#ff6b35",fg:"#fff",rim:"#cc5528"},{bg:"#00d4aa",fg:"#fff",rim:"#00a885"},{bg:"#7c4dff",fg:"#fff",rim:"#6237cc"},{bg:"#ffd740",fg:"#222",rim:"#ccac33"},{bg:"#39ff14",fg:"#111",rim:"#2dcc10"},{bg:"#00e5ff",fg:"#111",rim:"#00b7cc"}];
+      const pick=arr=>arr[Math.floor(Math.random()*arr.length)];
+      const spawnBatch = [];
+      for (let i = 0; i < Math.min(rows.length, 80); i++) {
+        const row = rows[i];
+        if (!row.addr || !row.name) continue;
+        if (row.death_time && Date.now() - row.death_time > 1800000) continue;
+        try {
+          await new Promise(r => setTimeout(r, 100));
+          const res = await fetch(`https://api.dexscreener.com/tokens/v1/solana/${row.addr}`);
+          const data = await res.json();
+          const pair = data?.pairs?.[0] || (Array.isArray(data) ? data[0] : null);
+          const liveMcap = pair?.marketCap || pair?.fdv || 0;
+          const peakMcap = row.peak_mcap || 0;
+          const isDead = !pair || liveMcap < 1000 || (peakMcap > 5000 && liveMcap < peakMcap * 0.15);
+          if (isDead) { if(!row.death_time) supabase.upsertToken({addr:row.addr,name:row.name,mcap:liveMcap,peakMcap,alive:false,timestamp:row.first_seen,migrated:row.graduated}); continue; }
+          const targetY = mcapToY(liveMcap);
+          spawnBatch.push({
+            id: row.addr+"_db_"+Date.now(), addr: row.addr, name: row.name, fullName: row.name,
+            platform: row.graduated?"Raydium":(row.platform||"PumpFun"), mcap: liveMcap,
+            vol: pair?.volume?.h24||0, priceUsd: parseFloat(pair?.priceUsd||0),
+            liquidity: pair?.liquidity?.usd||0, holders:0, devWallet:0,
+            buys: pair?.txns?.h1?.buys||0, sells: pair?.txns?.h1?.sells||0,
+            riskScore:50, qualified:true, qualScore:5, qualChecks:[],
+            threat:"ACTIVE", threatColor:"#39ff14", bundleDetected:false, bundleSize:0,
+            mintAuth:false, topHolderPct:0, dupeCount:0,
+            bx:0.2+Math.random()*0.6, by:targetY, targetY,
+            vx:(Math.random()-0.5)*0.0004, health:60, alive:true, age:0, trail:[],
+            warpIn:true, warpProgress:0, warpStartX:Math.random(), warpStartY:Math.random()*0.2-0.1,
+            bobOffset:Math.random()*Math.PI*2, initials:row.name.slice(0,2).toUpperCase(),
+            coinColor:pick(CC), timestamp:row.first_seen||Date.now(),
+            deployer:"", imageUri:"", migrated:row.graduated||false,
+            fromDB:true, peakMcap:row.peak_mcap||liveMcap,
+          });
+        } catch(e) { /* skip */ }
+      }
+      if (spawnBatch.length > 0) {
+        setTokens(prev => {
+          const existing = new Set(prev.map(t => t.addr));
+          const fresh = spawnBatch.filter(t => !existing.has(t.addr));
+          console.log(`[DB] 🪙 Spawned ${fresh.length} tokens from history`);
+          return [...prev, ...fresh];
+        });
+        setDbStatus({msg:`🪙 Loaded ${spawnBatch.length} active tokens from history`,type:"success",ts:Date.now()});
+      }
+    };
+    setTimeout(hydrate, 3000);
+  }, []);
 
   useEffect(() => {
     if (live.whaleAlerts.length > 0) {

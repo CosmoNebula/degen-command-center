@@ -3,7 +3,7 @@
 // Merges data from all users — no duplicates, no lost wins
 
 const SUPABASE_URL = "https://yrmjphhfgduysoftnuxv.supabase.co";
-const SUPABASE_KEY = "sb_publishable_Nt-JbSEgEFGyx2Sca5oRRw_azgzo8HY";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlybWpwaGhmZ2R1eXNvZnRudXh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3MzI5MzAsImV4cCI6MjA4ODMwODkzMH0.scHhvTGiABJDybgbjgjilw8XuxOfmWPsqo4iytMZmio";
 
 // ── Lightweight fetch wrapper (no SDK needed) ──
 const sb = {
@@ -251,7 +251,7 @@ export function useSupabase({ onStatus } = {}) {
       return ws && (ws.wins > 0 || ws.losses > 0);
     });
 
-    if (!qualifying.length) { syncingRef.current = false; return; }
+    console.log(`[SUPABASE] syncDirty — ${toSync.length} dirty, ${qualifying.length} qualifying`);
 
     try {
       const BATCH = 50;
@@ -278,7 +278,49 @@ export function useSupabase({ onStatus } = {}) {
     };
   }, [syncDirty]);
 
-  return { markDirty, logSmartAlert, syncDirty, loadFromDB, setWalletScoresRef };
+  // ── Upsert token to DB (called on qualify/migrate/death) ──
+  const upsertToken = useCallback(async (token) => {
+    if (!token?.addr) return;
+    try {
+      const row = {
+        addr: token.addr,
+        name: token.name || "???",
+        peak_mcap: token.peakMcap || token.mcap || 0,
+        entry_mcap: token.entryMcap || token.mcap || 0,
+        death_time: token.alive === false ? Date.now() : null,
+        first_seen: token.timestamp || Date.now(),
+        graduated: token.migrated || false,
+        platform: token.platform || "PumpFun",
+        updated_at: new Date().toISOString(),
+      };
+      console.log("[SUPABASE] upsertToken →", token.name, token.addr?.slice(0,8));
+      const r = await sb.upsert("token_history", [row], "addr");
+      console.log("[SUPABASE] upsertToken ✅", token.name, r?.status);
+    } catch (e) {
+      console.warn("[SUPABASE] upsertToken FAILED:", e.message);
+    }
+  }, []);
+
+  // ── Load recent tokens from DB (last N hours) ──
+  const loadTokensFromDB = useCallback(async (hoursBack = 6) => {
+    try {
+      const since = Date.now() - hoursBack * 3600000;
+      // Fetch tokens updated recently, ordered by peak mcap
+      const url = `${SUPABASE_URL}/rest/v1/token_history?updated_at=gte.${new Date(since).toISOString()}&order=peak_mcap.desc&limit=500`;
+      const r = await fetch(url, {
+        headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` },
+      });
+      if (!r.ok) throw new Error(`status ${r.status}`);
+      const rows = await r.json();
+      console.log(`[SUPABASE] 🪙 Loaded ${rows.length} tokens from last ${hoursBack}h`);
+      return rows;
+    } catch (e) {
+      console.warn("[SUPABASE] loadTokensFromDB failed:", e.message);
+      return [];
+    }
+  }, []);
+
+  return { markDirty, logSmartAlert, syncDirty, loadFromDB, setWalletScoresRef, upsertToken, loadTokensFromDB };
 }
 
 export default useSupabase;

@@ -219,21 +219,32 @@ let _jupFailCount = 0;
 
 export async function fetchJupiterPrice(mintAddresses) {
   try {
-    // Backoff: if Jupiter is failing, stop hammering it
     if (Date.now() < _jupBackoff) return {};
     const ids = Array.isArray(mintAddresses) ? mintAddresses.join(",") : mintAddresses;
-    const res = await proxyFetch(`https://api.jup.ag/price/v2?ids=${ids}`);
-    if (res.status === 401 || res.status === 429 || res.status === 403) {
-      _jupFailCount++;
-      // Exponential backoff: 10s, 30s, 60s, 120s, max 5min
-      const wait = Math.min(300000, 10000 * Math.pow(2, Math.min(_jupFailCount - 1, 5)));
-      _jupBackoff = Date.now() + wait;
-      console.warn(`[Jupiter] ${res.status} — backing off ${Math.round(wait/1000)}s (fail #${_jupFailCount})`);
-      return {};
+    // Fetch direct — Jupiter blocks proxy/server requests, must come from browser
+    const endpoints = [
+      `https://lite-api.jup.ag/price/v2?ids=${ids}`,
+      `https://api.jup.ag/price/v2?ids=${ids}`,
+    ];
+    for (const url of endpoints) {
+      try {
+        const res = await fetch(url);
+        if (res.status === 401 || res.status === 403 || res.status === 429) {
+          _jupFailCount++;
+          const wait = Math.min(300000, 10000 * Math.pow(2, Math.min(_jupFailCount - 1, 5)));
+          _jupBackoff = Date.now() + wait;
+          console.warn(`[Jupiter] ${res.status} — backing off ${Math.round(wait/1000)}s (fail #${_jupFailCount})`);
+          continue;
+        }
+        if (!res.ok) continue;
+        const data = await res.json();
+        if (data.data && Object.keys(data.data).length > 0) {
+          _jupFailCount = 0;
+          return data.data;
+        }
+      } catch (_) { continue; }
     }
-    _jupFailCount = 0; // reset on success
-    const data = await res.json();
-    return data.data || {};
+    return {};
   } catch (e) {
     _jupFailCount++;
     _jupBackoff = Date.now() + Math.min(300000, 10000 * Math.pow(2, Math.min(_jupFailCount - 1, 5)));
@@ -602,11 +613,11 @@ let _jupVerifiedCache = null;
 let _jupCacheTime = 0;
 
 export async function fetchJupiterVerified() {
-  // Cache for 5 minutes
   if (_jupVerifiedCache && Date.now() - _jupCacheTime < 300000) return _jupVerifiedCache;
   try {
-    const res = await proxyFetch("https://tokens.jup.ag/tokens?tags=verified");
-    if (!res.ok) return _jupVerifiedCache || new Set();
+    // tokens.jup.ag blocks proxies — fetch direct (works from browser, not server)
+    const res = await fetch("https://tokens.jup.ag/tokens?tags=verified");
+    if (!res.ok) throw new Error(`status ${res.status}`);
     const data = await res.json();
     _jupVerifiedCache = new Set(data.map(t => t.address));
     _jupCacheTime = Date.now();
