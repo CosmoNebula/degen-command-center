@@ -1811,7 +1811,8 @@ export function useLiveData() {
             // 12K gate only applies to WIN/LOSS — open holds always tracked
             const qualifiesForScoring = peakMcap >= 12000;
 
-            const walletWin = qualifiesForScoring && positionClosed && pnl > 0 && exitMcap >= 12000 && (pnl >= 0.15 || positionFullyExited);
+            // WIN: sold ≥50%, profitable, token peaked at ≥$12K (they exited after a real pump)
+            const walletWin = qualifiesForScoring && positionClosed && pnl > 0 && (pnl >= 0.15 || positionFullyExited);
             const walletLoss = qualifiesForScoring && !walletWin && (
               (tokenDead && pnl < 0) ||
               (positionFullyExited && pnl < 0)

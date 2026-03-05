@@ -5246,27 +5246,26 @@ export default function DegenCommandCenter(){
             {(()=>{
               const wsRef=live.walletScoresRef;
               const allWallets=wsRef?Object.entries(wsRef.current).filter(([,w])=>(w.wins+w.losses+(w.holds||0))>=1).map(([addr,w])=>{
-                // Only count trades where the coin's ATH cleared $12K — filters out bot noise on micro coins
                 const qualTrades=(w.trades||[]).filter(tr=>(tr.athMcap||0)>=12000||(tr.mcap||0)>=12000);
-                if(qualTrades.length===0)return null; // wallet has no qualifying trades — skip entirely
+                const allTrades=w.trades||[];
                 const qualWins=qualTrades.filter(t=>t.type==="WIN").length;
                 const qualLosses=qualTrades.filter(t=>t.type==="LOSS").length;
-                const qualHolds=qualTrades.filter(t=>t.type==="HOLD").length;
+                // HOLDs: include all, not just 12K+ (open positions always count)
+                const qualHolds=allTrades.filter(t=>t.type==="HOLD").length;
                 const total=qualWins+qualLosses;
                 const rate=total>0?Math.round(qualWins/total*100):0;
                 const computedPnl=qualTrades.reduce((s,tr)=>s+(tr.pnl||0),0);
-                const totalBought=qualTrades.reduce((s,tr)=>s+(tr.sol||0),0);
-                const totalSold=qualTrades.reduce((s,tr)=>s+(tr.sold||0),0);
-                const unrealizedPnl=qualTrades.filter(t=>t.type==="HOLD").reduce((s,tr)=>s+(tr.pnl||0),0);
+                const totalBought=allTrades.reduce((s,tr)=>s+(tr.sol||0),0);
+                const totalSold=allTrades.reduce((s,tr)=>s+(tr.sold||0),0);
+                const unrealizedPnl=allTrades.filter(t=>t.type==="HOLD").reduce((s,tr)=>s+(tr.pnl||0),0);
                 const adjustedPnl=computedPnl+unrealizedPnl;
-                // Elite: 7+ wins on 12K+ coins, 70%+ rate, wins >= losses*3, 2.0+ SOL realized, adjusted PnL > 1.0
                 const isElite=qualWins>=4&&rate>=60&&qualWins>=(qualLosses*2)&&total>=5&&computedPnl>=1.0&&adjustedPnl>0.5;
                 return{addr,wins:qualWins,losses:qualLosses,holds:qualHolds,total,rate,
                   bigWins:w.bigWins||0,totalBought,totalSold,totalPnl:computedPnl,adjustedPnl,isElite,
                   tokens:qualTrades.filter(t=>t.type==="WIN").map(t=>t.token),
                   lossTokens:qualTrades.filter(t=>t.type==="LOSS").map(t=>t.token),
-                  holdTokens:qualTrades.filter(t=>t.type==="HOLD").map(t=>t.token),
-                  trades:qualTrades};
+                  holdTokens:allTrades.filter(t=>t.type==="HOLD").map(t=>t.token),
+                  trades:allTrades};
               }).filter(Boolean).sort((a,b)=>b.totalPnl-a.totalPnl):[];
               const now_disp=Date.now();
               const INACTIVE_MS=10*60*1000; // 10 minutes
@@ -5500,10 +5499,10 @@ export default function DegenCommandCenter(){
                   <div style={{fontSize:10,fontWeight:900,color:"#ffa500",fontFamily:"Orbitron",letterSpacing:0.5,marginBottom:4}}>TRADES</div>
                   {w.trades.length===0&&<div style={{color:NEON.dimText,fontSize:10,padding:8}}>No trade details recorded yet</div>}
                   {w.trades.slice().reverse().filter(tr=>{
-                    const trPnl=tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol);
-                    if(tr.type==="WIN") return trPnl>=0.15;
-                    if(tr.type==="LOSS") return trPnl<=-0.15;
-                    return true; // HOLD/PARTIAL always show
+                    // Show all resolved trades — the data layer already filtered out noise
+                    // Only hide tiny wins/losses that slipped through on HOLDs
+                    if(tr.type==="WIN"||tr.type==="LOSS") return true;
+                    return true; // always show HOLDs/PARTIALs
                   }).map((tr,ti)=>{
                     const sells=tr.sellEvents||[];
                     const solIn=tr.sol||0;
@@ -5516,8 +5515,11 @@ export default function DegenCommandCenter(){
                     const trPnl=tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol);
                     const typeColor=tr.type==="WIN"?NEON.green:tr.type==="LOSS"?NEON.red:isPartial?"#00e5ff":"#ffa500";
                     const statusLabel=tr.type==="WIN"?"WIN":tr.type==="LOSS"?"LOSS":isPartial?"PARTIAL":"HOLD";
-                    // Build sell breakdown — % of REMAINING bag at time of each sell
-                    const sellRows=sells.length>0?sells:solOut>0?[{sol:solOut,mcap:tr.mcap||0,time:tr.exitTime}]:[];
+                    // Build sell rows — fallback if no sellEvents recorded
+                    const sellRows=sells.length>0?sells:
+                      solOut>0?[{sol:solOut,mcap:tr.mcap||0,time:tr.exitTime}]:
+                      tr.type==="LOSS"?[]:  // token died with no sells — show nothing, note below
+                      [];
                     let bagLeft=solIn;
                     const sellsWithPct=sellRows.map((s,si)=>{
                       const pctOfRemaining=bagLeft>0.01?Math.min(100,Math.round(s.sol/bagLeft*100)):100;
@@ -5595,6 +5597,10 @@ export default function DegenCommandCenter(){
                               {s.bagLeft.toFixed(2)} SOL left</span>}
                         </div>);
                       })}
+                      {/* No sells — token died with bag */}
+                      {sellsWithPct.length===0&&tr.type==="LOSS"&&<div style={{fontSize:8,color:NEON.red,padding:"3px 5px",
+                        background:"rgba(255,7,58,0.06)",borderRadius:3,fontStyle:"italic"}}>
+                        💀 Token died — never exited · lost {solIn.toFixed(2)} SOL</div>}
                       {/* Still holding remainder note */}
                       {isHold&&!isPartial&&<div style={{fontSize:8,color:"#ffa500",marginTop:2,fontStyle:"italic"}}>
                         Still holding — no sells yet</div>}
