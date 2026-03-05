@@ -1828,13 +1828,24 @@ export function useLiveData() {
             });
 
             // ─── WALLET-LEVEL OUTCOME ───
-            const pnl = (data.sold || 0) - data.bought;
-            const soldRatio = data.bought > 0 ? (data.sold || 0) / data.bought : 0;
-            const positionClosed = soldRatio >= 0.5;
-            const positionFullyExited = soldRatio >= 0.95;
+            // PumpPortal reports solAmount on sells as original cost basis, NOT SOL received.
+            // Detect this: if sold ≈ bought but mcap moved significantly, estimate real SOL out.
+            const rawSold = data.sold || 0;
+            const entryMcap = data.entryMcap || 0;
+            const exitMcapRaw = data.exitMcap || t.mcap || 0;
+            const mcapRatio = entryMcap > 0 && exitMcapRaw > 0 ? exitMcapRaw / entryMcap : 1;
+            const soldRatioRaw = data.bought > 0 ? rawSold / data.bought : 0;
+            // If sold ≈ bought (within 2%) but mcap moved >10% — cost-basis reporting detected
+            const costBasisReporting = soldRatioRaw >= 0.9 && soldRatioRaw <= 1.1 && Math.abs(mcapRatio - 1) > 0.1;
+            // Estimated actual SOL received = bought * mcapRatio (bonding curve approximation)
+            const estimatedSold = costBasisReporting ? data.bought * mcapRatio : rawSold;
+            const sold = estimatedSold;
+            const pnl = sold - data.bought;
+            const soldRatio = data.bought > 0 ? sold / data.bought : 0;
+            const positionClosed = soldRatioRaw >= 0.5; // use raw ratio to detect exit
+            const positionFullyExited = soldRatioRaw >= 0.95;
 
             const exitMcap = positionClosed ? (data.exitMcap || t.mcap || 0) : (t.mcap || 0);
-            const entryMcap = data.entryMcap || 0;
 
             const walletWin = positionClosed && pnl > 0 && (pnl >= 0.15 || positionFullyExited);
             const walletLoss = !walletWin && (
@@ -1853,9 +1864,9 @@ export function useLiveData() {
                 ws.holdAddrs.delete(t.addr);
                 ws.holdTokens = (ws.holdTokens||[]).filter(a => a !== t.addr);
                 const holdTrade = ws.trades.find(tr => tr.addr === t.addr && tr.type === "HOLD");
-                if (holdTrade) { holdTrade.type = "WIN"; holdTrade.mcap = data.exitMcap||exitMcap; holdTrade.sold = data.sold; holdTrade.pnl = pnl; holdTrade.athMcap = Math.max(td.athMcap||0, data.exitMcap||exitMcap, holdTrade.athMcap||0); holdTrade.sellEvents = sellEvents; }
+                if (holdTrade) { holdTrade.type = "WIN"; holdTrade.mcap = data.exitMcap||exitMcap; holdTrade.sold = sold; holdTrade.pnl = pnl; holdTrade.athMcap = Math.max(td.athMcap||0, data.exitMcap||exitMcap, holdTrade.athMcap||0); holdTrade.sellEvents = sellEvents; }
               } else {
-                ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "WIN", mcap: exitMcap, entryMcap, pnl,
+                ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: sold, type: "WIN", mcap: exitMcap, entryMcap, pnl,
                   entryTime: data.firstBuyTime || now3, exitTime: data.lastSellTime || now3,
                   athMcap: td.athMcap || exitMcap, startMcap: td.startMcap || entryMcap, time: now3, sellEvents });
                 if (ws.trades.length > 50) ws.trades = ws.trades.slice(-50);
@@ -1881,9 +1892,9 @@ export function useLiveData() {
                 ws.holdAddrs.delete(t.addr);
                 ws.holdTokens = (ws.holdTokens||[]).filter(a => a !== t.addr);
                 const holdTrade = ws.trades.find(tr => tr.addr === t.addr && tr.type === "HOLD");
-                if (holdTrade) { holdTrade.type = "LOSS"; holdTrade.mcap = data.exitMcap||exitMcap; holdTrade.sold = data.sold; holdTrade.pnl = pnl; holdTrade.athMcap = Math.max(td.athMcap||0, data.exitMcap||exitMcap, holdTrade.athMcap||0); holdTrade.sellEvents = sellEvents; }
+                if (holdTrade) { holdTrade.type = "LOSS"; holdTrade.mcap = data.exitMcap||exitMcap; holdTrade.sold = sold; holdTrade.pnl = pnl; holdTrade.athMcap = Math.max(td.athMcap||0, data.exitMcap||exitMcap, holdTrade.athMcap||0); holdTrade.sellEvents = sellEvents; }
               } else {
-                ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "LOSS", mcap: exitMcap, entryMcap, pnl,
+                ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: sold, type: "LOSS", mcap: exitMcap, entryMcap, pnl,
                   entryTime: data.firstBuyTime || now3, exitTime: data.lastSellTime || now3,
                   athMcap: td.athMcap || exitMcap, startMcap: td.startMcap || entryMcap, time: now3, sellEvents });
                 if (ws.trades.length > 50) ws.trades = ws.trades.slice(-50);
@@ -1905,7 +1916,7 @@ export function useLiveData() {
               ws.holdAddrs.add(t.addr);
               ws.holdTokens = ws.holdTokens || [];
               ws.holdTokens.push(t.addr); // store addr not name
-              ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "HOLD", mcap: exitMcap, entryMcap, pnl,
+              ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: sold, type: "HOLD", mcap: exitMcap, entryMcap, pnl,
                 entryTime: data.firstBuyTime || now3, exitTime: null,
                 athMcap: td.athMcap || exitMcap, startMcap: td.startMcap || entryMcap, time: now3, sellEvents });
               if (ws.trades.length > 50) ws.trades = ws.trades.slice(-50);
@@ -1913,7 +1924,7 @@ export function useLiveData() {
             // Refresh live HOLD entries with current mcap/pnl/athMcap/sellEvents
             if (walletHold && ws.holdAddrs.has(t.addr)) {
               const existTrade = ws.trades.find(tr => tr.addr === t.addr && tr.type === "HOLD");
-              if (existTrade) { existTrade.mcap = exitMcap; existTrade.sold = data.sold; existTrade.pnl = pnl; existTrade.athMcap = Math.max(td.athMcap||0, existTrade.athMcap||0); existTrade.sellEvents = sellEvents; }
+              if (existTrade) { existTrade.mcap = exitMcap; existTrade.sold = sold; existTrade.pnl = pnl; existTrade.athMcap = Math.max(td.athMcap||0, existTrade.athMcap||0); existTrade.sellEvents = sellEvents; }
             }
           });
         });

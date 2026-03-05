@@ -5553,10 +5553,22 @@ export default function DegenCommandCenter(){
                 const qualHolds=trades.filter(t=>t.type==="HOLD").length;
                 const total=qualWins+qualLosses;
                 const rate=total>0?Math.round(qualWins/total*100):0;
-                const computedPnl=trades.reduce((s,tr)=>s+(tr.pnl||0),0);
-                const totalBought=trades.reduce((s,tr)=>s+(tr.sol||0),0);
-                const totalSold=trades.reduce((s,tr)=>s+(tr.sold||0),0);
-                const unrealizedPnl=trades.filter(t=>t.type==="HOLD").reduce((s,tr)=>s+(tr.pnl||0),0);
+                const computedPnl=trades.filter(t=>t.type==="WIN"||t.type==="LOSS").reduce((s,tr)=>s+(tr.pnl||0),0);
+                const rawWs2=wsRef?.current?.[addr];
+                const activeBuyVals=rawWs2?.activeBuys?Object.values(rawWs2.activeBuys):[];
+                const tradeAddrs=new Set(trades.map(t=>t.addr));
+                const subBuys=activeBuyVals.filter(ab=>!tradeAddrs.has(ab.addr));
+                const totalBought=trades.reduce((s,tr)=>s+(tr.sol||0),0)+subBuys.reduce((s,ab)=>s+(ab.sol||0),0);
+                const totalSold=trades.filter(t=>t.type==="WIN"||t.type==="LOSS").reduce((s,tr)=>s+(tr.sold||0),0);
+                const unrealizedPnl=trades.filter(t=>t.type==="HOLD").reduce((s,tr)=>{
+                  // Estimate current unrealized using live mcap if available
+                  const entryMc=tr.entryMcap||0;
+                  const liveTok2=rawWs2?null:null; // resolved below in display
+                  const currentMc=tr.mcap||0;
+                  const bagSize=Math.max(0,(tr.sol||0)-(tr.sold||0));
+                  const bagValue=entryMc>0?bagSize*(currentMc/entryMc):bagSize;
+                  return s+(bagValue-bagSize);
+                },0);
                 const adjustedPnl=computedPnl+unrealizedPnl;
                 const isElite=qualWins>=4&&rate>=60&&qualWins>=(qualLosses*2)&&total>=5&&computedPnl>=1.0&&adjustedPnl>0.5;
                 return{addr,wins:qualWins,losses:qualLosses,holds:qualHolds,total,rate,
