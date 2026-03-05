@@ -1072,9 +1072,9 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
           // Let trip visuals run for 120 frames (~2s), then activate swirl
           if(fm.tripFrame===30){
             fm.vortexActive=true;fm.vortexFrame=0;
-            // Warp Claude so his body center (hy+52*S) lands exactly on vortex glow (H*0.5)
-            // hy + 104 = H*0.5  →  hy = H*0.5 - 104  →  ai.y = 0.5 - 104/H ≈ 0.41 at 700px
-            ai.x=0.5;ai.y=0.41;ai.targetX=0.5;ai.targetY=0.41;
+            // Exact pixel math: monkey center = hy - 27 (top row gy=-11, feet gy=2, jp=6)
+            // For vortex at H/2: hy = H/2 + 27 → ai.y = 0.5 + 27/H
+            ai.x=0.5;ai.y=0.5+(27/H);ai.targetX=0.5;ai.targetY=0.5+(27/H);
             // Assign 6 positions around outer edge of swirl (fixed circle)
             const swirlR=0.22; // radius in normalized coords
             fm.memberPos=[0,1,2,3,4,5].map(i=>({
@@ -5729,26 +5729,42 @@ export default function DegenCommandCenter(){
                     </div>);
                   })()}
                   {/* ── UNREALIZED SECTION ── */}
-                  {sigHolds>0&&(()=>{
+                  {(()=>{
+                      const rawWs=wsRef?.current?.[w.addr];
                       const holdTrades=w.trades.filter(tr=>tr.type==="HOLD");
-                      const totalUnrealized=holdTrades.reduce((s,tr)=>{
+                      // Also include sub-threshold active buys not yet in holdTrades
+                      const activeBuys=rawWs?.activeBuys?Object.values(rawWs.activeBuys):[];
+                      const holdAddrs=new Set(holdTrades.map(tr=>tr.addr));
+                      const subThresholdBuys=activeBuys.filter(ab=>!holdAddrs.has(ab.addr));
+                      const allUnrealized=[
+                        ...holdTrades.map(tr=>{
+                          // Use live mcap from tokens list for accuracy — fall back to tr.mcap
+                          const liveTok=tokens.find(t=>t.addr===tr.addr);
+                          const currentMc=liveTok?.mcap||tr.mcap||0;
+                          return{...tr,currentMc,isSubThreshold:false};
+                        }),
+                        ...subThresholdBuys.map(ab=>{
+                          const liveTok=tokens.find(t=>t.addr===ab.addr);
+                          const currentMc=liveTok?.mcap||ab.entryMcap||0;
+                          return{token:ab.token,addr:ab.addr,sol:ab.sol,sold:0,
+                            entryMcap:ab.entryMcap,currentMc,athMcap:ab.entryMcap,
+                            pnl:null,type:"HOLD",isSubThreshold:true};
+                        }),
+                      ];
+                      if(allUnrealized.length===0)return null;
+                      const totalUnrealized=allUnrealized.reduce((s,tr)=>{
                         const entryMc=tr.entryMcap||0;
-                        const currentMc=tr.mcap||0;
+                        const currentMc=tr.currentMc||tr.mcap||0;
                         const solIn=tr.sol||0;
-                        const solOut=Math.min(tr.sold||0, solIn); // cap at buy size to prevent bleed
+                        const solOut=Math.min(tr.sold||0, solIn);
                         const bagRemaining=Math.max(0,solIn-solOut);
-                        // Current value of remaining bag (mcap-adjusted)
                         const bagValue=entryMc>0?bagRemaining*(currentMc/entryMc):bagRemaining;
-                        // Realized portion: what they received - their cost for that portion
-                        const costOfSold=solIn>0?(solOut/solIn)*solIn:0; // = solOut (proportional)
-                        const realizedPnl=solOut-costOfSold; // simplified: 0 if sold at same mcap
-                        // Total current value vs original cost
                         const totalCurrentValue=solOut+bagValue;
                         return s+(totalCurrentValue-solIn);
                       },0);
-                      const deeplyUnder=holdTrades.filter(tr=>{
+                      const deeplyUnder=allUnrealized.filter(tr=>{
                         const entryMc=tr.entryMcap||0;
-                        const currentMc=tr.mcap||0;
+                        const currentMc=tr.currentMc||tr.mcap||0;
                         return entryMc>0&&currentMc<entryMc*0.7;
                       });
                       return(<div style={{marginBottom:6,padding:"6px 8px",borderRadius:5,
@@ -5759,22 +5775,20 @@ export default function DegenCommandCenter(){
                           <span style={{fontSize:13,fontWeight:900,color:totalUnrealized>=0?NEON.green:NEON.red,fontFamily:"Orbitron"}}>
                             {totalUnrealized>=0?"+":""}{totalUnrealized.toFixed(2)} SOL</span>
                         </div>
-                        {holdTrades.map((tr,hi)=>{
+                        {allUnrealized.map((tr,hi)=>{
                           const entryMc=tr.entryMcap||0;
-                          const currentMc=tr.mcap||0;
+                          const currentMc=tr.currentMc||tr.mcap||0; // always use live mcap
                           const mcPct=entryMc>0?((currentMc-entryMc)/entryMc*100):0;
                           const solIn=tr.sol||0;
                           const solOut=Math.min(tr.sold||0, solIn);
-                          const bagSize=Math.max(0,solIn-solOut); // remaining SOL exposure
-                          const bagNow=entryMc>0?bagSize*(currentMc/entryMc):bagSize; // current worth
-                          const bagPnl=bagNow-bagSize; // gain/loss on remaining bag
+                          const bagSize=Math.max(0,solIn-solOut);
+                          const bagNow=entryMc>0?bagSize*(currentMc/entryMc):bagSize;
+                          const bagPnl=bagNow-bagSize;
                           const hasPartialExit=solOut>0;
-                          const totalHoldPnl=(solOut+bagNow)-solIn; // total P&L vs cost basis
                           const up=mcPct>=0;
                           return(<div key={hi} style={{padding:"5px 7px",marginBottom:3,borderRadius:4,fontSize:9,
                             background:up?"rgba(57,255,20,0.03)":"rgba(255,7,58,0.06)",
                             border:`1px solid ${up?"rgba(57,255,20,0.1)":"rgba(255,7,58,0.15)"}`}}>
-                            {/* Top: name + CA + % arrow */}
                             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
                               <div style={{display:"flex",alignItems:"center",gap:4}}>
                                 <span onClick={()=>selectByName(tr.token,{name:tr.token,addr:tr.addr,mcap:currentMc,athMcap:tr.athMcap||0,vol:0,holders:0,platform:"PumpFun",qualScore:0,riskScore:0,liquidity:0,topHolderPct:0})}
@@ -5783,11 +5797,11 @@ export default function DegenCommandCenter(){
                                 <span onClick={()=>clickAddr(tr.addr,{name:tr.token,addr:tr.addr,mcap:currentMc,athMcap:tr.athMcap||0,vol:0,holders:0,platform:"PumpFun",qualScore:0,riskScore:0,liquidity:0,topHolderPct:0})}
                                   style={{fontSize:7,color:NEON.cyan,cursor:"pointer",
                                     background:"rgba(0,255,255,0.06)",padding:"0 3px",borderRadius:2,fontFamily:"monospace"}}>CA</span>
+                                {tr.isSubThreshold&&<span style={{fontSize:6,color:"#ffa50088",fontFamily:"Orbitron"}}>small</span>}
                               </div>
                               <span style={{fontSize:12,fontWeight:900,color:up?NEON.green:NEON.red}}>
                                 {up?"▲":"▼"}{Math.abs(mcPct).toFixed(0)}%</span>
                             </div>
-                            {/* Bottom: entry SOL | bag now | ATH mcap | banked if partial */}
                             <div style={{display:"flex",gap:10,fontSize:8,color:NEON.dimText,flexWrap:"wrap"}}>
                               <span>In <span style={{color:NEON.cyan}}>{solIn.toFixed(2)} SOL</span></span>
                               <span>Bag <span style={{color:up?NEON.green:NEON.red,fontWeight:700}}>{bagNow.toFixed(2)} SOL</span>
