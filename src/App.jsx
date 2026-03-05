@@ -5844,7 +5844,7 @@ export default function DegenCommandCenter(){
                     },[]);
                     return(
                     <div key={ti} style={{padding:"6px 8px",marginBottom:6,borderRadius:5,fontSize:10,
-                      background:tr.type==="WIN"?"rgba(57,255,20,0.04)":tr.type==="LOSS"?"rgba(255,7,58,0.04)":isPartial?"rgba(0,229,255,0.04)":"rgba(255,165,0,0.04)",
+                      background:tr.type==="WIN"?"rgba(57,255,20,0.04)":tr.type==="LOSS"?"rgba(255,7,58,0.04)":hasPartialSells?"rgba(0,229,255,0.04)":"rgba(255,165,0,0.04)",
                       border:`1px solid ${typeColor}20`,borderLeft:`3px solid ${typeColor}`}}>
                       {/* Header row: status + name + CA + PnL */}
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
@@ -5861,7 +5861,7 @@ export default function DegenCommandCenter(){
                         <div style={{textAlign:"right"}}>
                           {isClosed&&<div style={{fontSize:13,fontWeight:900,color:typeColor}}>
                             {trPnl>=0?"+":""}{trPnl.toFixed(2)} SOL</div>}
-                          {isPartial&&<div style={{fontSize:11,fontWeight:900,color:NEON.cyan}}>
+                          {hasPartialSells&&<div style={{fontSize:11,fontWeight:900,color:NEON.cyan}}>
                             {Math.round(soldRatio*100)}% out</div>}
                         </div>
                       </div>
