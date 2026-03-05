@@ -5349,11 +5349,10 @@ export default function DegenCommandCenter(){
                 if(!w)return <div style={{color:NEON.dimText,fontSize:11,textAlign:"center",padding:20}}>Wallet not found</div>;
                 const tierColor=w.isElite?"#00ff88":w.rate>=80?"#ffd740":w.rate>=60?"#00e5ff":w.rate>=40?"#ffa500":w.rate>=20?"#ba68c8":"#ff5252";
                 const tierLabel=w.isElite?"🧠 SMART":w.rate>=80?"GENIUS":w.rate>=60?"SHARP":w.rate>=40?"DECENT":w.rate>=20?"LUCKY":w.total>0?"DEGEN":"PENDING";
-                // Only count significant trades for display
-                const sigTrades=w.trades.filter(tr=>{const p=tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol);return(tr.type==="WIN"&&p>=0.15)||(tr.type==="LOSS"&&p<=-0.15)||tr.type==="HOLD";});
-                const sigWins=sigTrades.filter(t=>t.type==="WIN").length;
-                const sigLosses=sigTrades.filter(t=>t.type==="LOSS").length;
-                const sigHolds=sigTrades.filter(t=>t.type==="HOLD").length;
+                // Use the wallet object's already-computed qual counts — re-filtering causes mismatch with rate
+                const sigWins=w.wins;
+                const sigLosses=w.losses;
+                const sigHolds=w.holds;
                 return(<div>
                   {subNav}
                   <div style={{background:"rgba(255,215,64,0.04)",border:"1px solid rgba(255,215,64,0.12)",borderRadius:6,padding:8,marginBottom:8}}>

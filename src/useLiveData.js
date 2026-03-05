@@ -1788,42 +1788,36 @@ export function useLiveData() {
             if (!ws.holdAddrs) ws.holdAddrs = new Set();
 
             // ─── BOT FILTER — ignore sub-30s flips entirely ───
-            // Token stays tracked on battlefield, but wallet gets no credit/blame
             const holdDuration = (data.lastSellTime || now3) - (data.firstBuyTime || now3);
             const hasExited = (data.sold || 0) >= data.bought * 0.5;
             if (hasExited && holdDuration < 30000) return;
 
-            // ─── 12K QUALITY GATE — ignore entirely if token never reached $12K ───
-            // Filters bot noise: quick sub-$12K flips don't count as wins, losses, or holds
             const sellEvts = (data.sellEvents || []).filter(s =>
               s.time >= (data.firstBuyTime || 0) && s.time <= (data.lastSellTime || Infinity)
             );
             const peakMcap = Math.max(td.athMcap || 0, t.mcap || 0, data.exitMcap || 0, ...sellEvts.map(s => s.mcap));
-            if (peakMcap < 12000) return;
 
-            // ─── WALLET-LEVEL OUTCOME (actual SOL P&L, not token price) ───
+            // ─── WALLET-LEVEL OUTCOME ───
             const pnl = (data.sold || 0) - data.bought;
             const soldRatio = data.bought > 0 ? (data.sold || 0) / data.bought : 0;
-            // WIN: sold ≥50% of position back (took profit = done)
             const positionClosed = soldRatio >= 0.5;
-            // LOSS: requires either token dead OR sold ≥80% (substantially exited at loss)
-            const positionSubstantiallyClosed = soldRatio >= 0.8;
+            const positionFullyExited = soldRatio >= 0.95;
 
-            // exitMcap must be declared BEFORE walletWin check (uses it for 12K gate)
             const exitMcap = positionClosed
               ? (data.exitMcap || t.mcap || 0)
               : (t.mcap || 0);
             const entryMcap = data.entryMcap || 0;
 
-            // WIN: sold ≥50%, profit > 0, exit at ≥$12K
-            const walletWin = positionClosed && pnl > 0 && exitMcap >= 12000 && (pnl >= 0.15 || soldRatio >= 0.95);
-            // LOSS: only resolves when token is dead OR wallet is 95%+ out at a loss
-            // Anything under 95% stays as HOLD — they still have bag, position not over
-            const positionFullyExited = soldRatio >= 0.95;
-            const walletLoss = !walletWin && (
+            // 12K gate only applies to WIN/LOSS — open holds always tracked
+            const qualifiesForScoring = peakMcap >= 12000;
+
+            const walletWin = qualifiesForScoring && positionClosed && pnl > 0 && exitMcap >= 12000 && (pnl >= 0.15 || positionFullyExited);
+            const walletLoss = qualifiesForScoring && !walletWin && (
               (tokenDead && pnl < 0) ||
               (positionFullyExited && pnl < 0)
             );
+            // HOLD: always tracked if still alive, regardless of mcap
+            const walletHold = !walletWin && !walletLoss && tokenAlive;
             // HOLD: alive token, position still open, outcome not yet determined
             const walletHold = !walletWin && !walletLoss && tokenAlive;
 
