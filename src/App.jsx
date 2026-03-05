@@ -3702,17 +3702,18 @@ function KillFeed({events,onSelectByName}){
   const glowMap={rug:"#ff073a",moon:"#ffe600",deploy:"#00ffff",migration:"#39ff14",lock:"#ffd740",system:"#bf00ff",whale:"#ffd740",dolphin:"#00d4ff"};
   const quality=events.filter(e=>["whale","dolphin","system","moon","migration"].includes(e.type));
   if(quality.length===0)return null;
-  // Show only most recent 8, each scrolls once
   const recent=quality.slice(0,8);
-  return(<div style={{position:"absolute",top:0,left:0,right:0,zIndex:15,pointerEvents:"auto",overflow:"hidden",height:36,
-    background:"linear-gradient(180deg,rgba(5,3,14,0.9),rgba(5,3,14,0.5),transparent)",borderRadius:"6px 6px 0 0"}}>
-    <div style={{position:"absolute",left:0,top:0,bottom:0,width:50,background:"linear-gradient(90deg,rgba(5,3,14,0.95),transparent)",zIndex:2}}/>
-    <div style={{position:"absolute",right:0,top:0,bottom:0,width:50,background:"linear-gradient(270deg,rgba(5,3,14,0.95),transparent)",zIndex:2}}/>
+  return(<div style={{position:"absolute",top:0,left:0,right:0,zIndex:15,pointerEvents:"auto",overflow:"hidden",
+    height:"10%",minHeight:36,
+    background:"linear-gradient(180deg,rgba(2,1,8,0.97) 0%,rgba(4,2,14,0.92) 60%,rgba(5,3,14,0.6) 85%,transparent 100%)",
+    borderRadius:"6px 6px 0 0"}}>
+    <div style={{position:"absolute",left:0,top:0,bottom:0,width:60,background:"linear-gradient(90deg,rgba(2,1,8,0.98),transparent)",zIndex:2}}/>
+    <div style={{position:"absolute",right:0,top:0,bottom:0,width:60,background:"linear-gradient(270deg,rgba(2,1,8,0.98),transparent)",zIndex:2}}/>
     {recent.map((e,i)=>{
       const c=colorMap[e.type]||NEON.cyan;const g=glowMap[e.type]||"#00ffff";
-      const delay=i*3.5;
-      return(<div key={(e._ts||0)+"-"+i} style={{position:"absolute",top:8,left:0,right:0,whiteSpace:"nowrap",
-        animation:`kfSlide 8s linear ${delay}s both`,pointerEvents:"auto"}}>
+      const delay=i*7;
+      return(<div key={(e._ts||0)+"-"+i} style={{position:"absolute",top:"30%",left:0,right:0,whiteSpace:"nowrap",
+        animation:`kfSlide 28s linear ${delay}s both`,pointerEvents:"auto"}}>
         <span style={{fontSize:13,fontWeight:900,letterSpacing:1.5,fontFamily:"'Orbitron',sans-serif",
           color:c,textShadow:`0 0 6px ${g}, 0 0 16px ${g}40`,opacity:0.92,cursor:e.name?"pointer":"default",paddingLeft:8}}
           onClick={()=>{if(e.name&&onSelectByName)onSelectByName(e.name);}}
@@ -4452,103 +4453,153 @@ export default function DegenCommandCenter(){
   },2000);return()=>clearInterval(iv)},[]);
 
 
-  // ═══ AI ANALYSIS ENGINE — local pattern detection (API placeholder) ═══
+  // ═══ CLAUDE ANALYSIS ENGINE — pattern detection, pipes to marquee + log ═══
   useEffect(()=>{const iv=setInterval(()=>{
     const ad=aiDataRef.current;
     const now=Date.now();
-    if(now-ad.lastAnalysis<30000)return; // every 30s
+    if(now-ad.lastAnalysis<30000)return;
     ad.lastAnalysis=now;
     const obs=[];
+    const cr=correspondentRef.current;
+    const pushObs=(type,text,mood)=>{
+      obs.push({type,text,time:now});
+      cr.queue.push({msg:"◈ "+text,mood:mood||"intel"});
+      if(cr.queue.length>6)cr.queue.shift();
+    };
 
-    // Track lock outcomes from history
     const locks=lockHistory.filter(h=>h.events.find(e=>e.type==="LOCK"));
     const unlocks=lockHistory.filter(h=>h.events.find(e=>e.type==="UNLOCK"));
     ad.lockCount=locks.length;ad.ejectCount=unlocks.length;
-
-    // Analyze eject reasons
     const reasons={};
     lockHistory.forEach(h=>{h.events.filter(e=>e.type==="UNLOCK").forEach(e=>{
-      const key=e.reason.split(" ")[0]||"UNKNOWN";
+      const key=e.reason?.split(" ")[0]||"UNKNOWN";
       reasons[key]=(reasons[key]||0)+1;
     });});
     ad.ejectReasons=reasons;
-
-    // Smart money volume
     const smCount=live.sessionStats?.smartWallets||0;
+    const totalToks=tokens.length;
+    const ruggedToks=graveyard.length;
+    const migratedToks=(live.migrations||[]).length;
+    const aboveTrench=tokens.filter(t=>t.mcap>=10000).length;
+    const aboveOrbit=tokens.filter(t=>t.mcap>=100000).length;
 
-    // Generate observations
+    // ── Market tempo (fires from token 1) ──
+    if(totalToks>0&&!ad._tempoTime){
+      ad._tempoTime=now;
+      const rugRate=totalToks>0?Math.round(ruggedToks/(totalToks+ruggedToks)*100):0;
+      if(rugRate>70){
+        pushObs("warning",`Market is brutal right now — ${rugRate}% rug rate. Only the toughest tokens surviving.`,"alarm");
+      } else if(rugRate>50){
+        pushObs("analysis",`Choppy market — ${rugRate}% rug rate. Be selective, vol is real.`,"sus");
+      } else if(rugRate<20&&totalToks>=5){
+        pushObs("positive",`Clean market session — only ${rugRate}% rug rate. Good conditions.`,"hype");
+      }
+    }
+
+    // ── Scan volume ──
+    if(totalToks>=10&&!ad._scanNote){
+      ad._scanNote=true;
+      pushObs("analysis",`${totalToks} tokens scanned this session. ${aboveTrench} made it above the trenches ($10K+).`,"intel");
+    }
+    if(totalToks>=50&&!ad._scan50){
+      ad._scan50=true;
+      const surRate=Math.round(aboveTrench/totalToks*100);
+      pushObs("analysis",`50+ tokens scanned. Survival rate above trenches: ${surRate}%. ${aboveOrbit>0?aboveOrbit+" token(s) hit orbit ($100K+).":"None hit orbit yet."}`,"intel");
+    }
+
+    // ── Mooners ──
+    if(aboveOrbit>=1&&!ad._orbitNote){
+      ad._orbitNote=true;
+      const names=tokens.filter(t=>t.mcap>=100000).map(t=>t.name).slice(0,2).join(", ");
+      pushObs("positive",`${names} ${aboveOrbit>1?"are":"is"} in orbit at $100K+. Smart money watching these closely.`,"hype");
+    }
+
+    // ── Lock performance ──
+    if(locks.length>=1&&!ad._firstLockNote){
+      ad._firstLockNote=true;
+      pushObs("analysis",`First lock acquired. Tracking outcome — watching for quick eject or sustained climb.`,"intel");
+    }
     if(locks.length>=3){
-      const withUnlocks=lockHistory.filter(h=>h.events.length>=2);
       const quickEjects=lockHistory.filter(h=>{
-        const lockEvt=h.events.find(e=>e.type==="LOCK");
-        const unlockEvt=h.events.find(e=>e.type==="UNLOCK");
-        if(!lockEvt||!unlockEvt)return false;
-        return(unlockEvt.time-lockEvt.time)<20000;
+        const lk=h.events.find(e=>e.type==="LOCK");
+        const ul=h.events.find(e=>e.type==="UNLOCK");
+        return lk&&ul&&(ul.time-lk.time)<20000;
       });
-      if(quickEjects.length>locks.length*0.5&&locks.length>=4){
-        obs.push({type:"warning",text:"Over half our locks are ejecting within 20 seconds. Entry gate might be too loose — consider raising score threshold or tightening qual requirements.",time:now});
+      const qRate=Math.round(quickEjects.length/locks.length*100);
+      if(qRate>50&&!ad._quickEjectWarned){
+        ad._quickEjectWarned=true;
+        pushObs("warning",`${qRate}% of locks are ejecting within 20 seconds. Entry gate might be too loose.`,"alarm");
       }
     }
 
-    // Check if specific eject reason dominates
+    // ── Top eject reason ──
     const topReason=Object.entries(reasons).sort((a,b)=>b[1]-a[1])[0];
-    if(topReason&&topReason[1]>=3){
+    if(topReason&&topReason[1]>=2&&ad._lastTopReason!==topReason[0]){
+      ad._lastTopReason=topReason[0];
       const reasonMap={
-        "CRASHED":"Tokens are crashing hard after lock. Might be entering too late — tokens already peaking when we catch them.",
-        "STALE":"Tokens going stale after lock. Volume is drying up fast — we might be locking tokens that had a brief spike but no sustained interest.",
-        "SELL":"Sell pressure is killing our locks. Might need stricter buy pressure threshold or dev wallet checks.",
-        "DEAD":"Locked tokens are dying — trades completely stopping. These might be low-liquidity tokens with brief activity bursts.",
-        "HEALTH":"Health draining fast on locks. Tokens are deteriorating quickly — fundamentals might not be as strong as scores suggest.",
-        "OUTRANKED":"Getting outranked often means we're finding lots of candidates. Quality of the top picks matters more than quantity.",
-        "WEAK":"Mcap failing to hold after lock. Might need higher mcap entry threshold.",
-        "MCAP":"Tokens dropping below $5K after lock. Consider raising minimum lock mcap.",
+        "CRASHED":"Tokens crashing after lock — entering too late, already peaking when we catch them.",
+        "STALE":"Volume drying up fast after lock — brief spikes with no sustained interest.",
+        "SELL":"Sell pressure killing locks — stricter buy/sell ratio or dev wallet checks needed.",
+        "DEAD":"Locked tokens going completely dead — low-liquidity brief activity bursts.",
+        "HEALTH":"Health draining fast on locks — fundamentals weaker than scores suggest.",
+        "WEAK":"Mcap failing to hold after lock — consider higher entry threshold.",
+        "MCAP":"Tokens dropping below $5K after lock — raise minimum lock mcap.",
       };
-      const insight=reasonMap[topReason[0]]||"Most ejects are for "+topReason[0]+" ("+topReason[1]+"x). Worth investigating this pattern.";
-      obs.push({type:"analysis",text:insight,time:now});
+      const insight=reasonMap[topReason[0]]||`Top eject reason: ${topReason[0]} (${topReason[1]}x). Pattern emerging.`;
+      pushObs("analysis",insight,"sus");
     }
 
-    // Smart money observation
-    if(smCount>20){
-      obs.push({type:"warning",text:"Smart wallet pool at "+smCount+" — getting inflated. If you're seeing low-quality smart money alerts, the threshold might need tightening further.",time:now});
-    }else if(smCount>=3&&smCount<=8){
-      obs.push({type:"positive",text:"Smart wallet pool looks healthy at "+smCount+" wallets. These should be genuinely skilled traders.",time:now});
-    }
-
-    // Migration tracking
-    const migCount=live.migrations?.length||0;
-    if(migCount>0){
-      const lockedMigs=lockHistory.filter(h=>{
-        const tok=tokens.find(t=>t.addr===h.addr);
-        return tok&&tok.migrated;
-      });
-      if(lockedMigs.length>0){
-        obs.push({type:"positive",text:"Caught "+lockedMigs.length+" token"+(lockedMigs.length>1?"s":"")+" before migration. These are the high-value calls.",time:now});
+    // ── Smart money health ──
+    if(smCount>0&&ad._lastSmCount!==smCount){
+      ad._lastSmCount=smCount;
+      if(smCount>20){
+        pushObs("warning",`Smart wallet pool at ${smCount} — getting inflated. Threshold may need tightening.`,"alarm");
+      } else if(smCount>=3&&smCount<=8){
+        pushObs("positive",`Smart wallet pool healthy at ${smCount} — these are genuinely skilled traders.`,"hype");
+      } else if(smCount===1){
+        pushObs("analysis",`First smart wallet detected this session. Watching their next move.`,"intel");
       }
     }
 
-    // Session health check
-    if(locks.length===0&&now>15*60*1000){
-      obs.push({type:"info",text:"No locks yet this session. Market might be slow, or entry criteria are too strict for current conditions.",time:now});
+    // ── Migration intel ──
+    if(migratedToks>0&&ad._lastMigCount!==migratedToks){
+      ad._lastMigCount=migratedToks;
+      const lockedMigs=lockHistory.filter(h=>tokens.find(t=>t.addr===h.addr&&t.migrated));
+      if(lockedMigs.length>0&&!ad._migLockNote){
+        ad._migLockNote=true;
+        pushObs("positive",`Caught ${lockedMigs.length} token${lockedMigs.length>1?"s":""} before migration — highest value calls of the session.`,"hype");
+      } else {
+        pushObs("analysis",`${migratedToks} token${migratedToks>1?"s":""} migrated to Raydium this session.`,"intel");
+      }
     }
 
-    // Score distribution analysis
+    // ── Score distribution ──
     if(locks.length>=5){
-      const scores=lockHistory.map(h=>{
-        const lockEvt=h.events.find(e=>e.type==="LOCK");
-        return lockEvt?.score||0;
-      }).filter(s=>s>0);
+      const scores=lockHistory.map(h=>h.events.find(e=>e.type==="LOCK")?.score||0).filter(s=>s>0);
       const avg=scores.reduce((a,b)=>a+b,0)/scores.length;
-      if(avg>9){
-        obs.push({type:"positive",text:"Average lock score is "+avg.toFixed(1)+" — system is being very selective. Quality over quantity.",time:now});
-      }else if(avg<7.5){
-        obs.push({type:"info",text:"Average lock score is "+avg.toFixed(1)+" — borderline entries. Consider raising threshold to 8+ for higher conviction.",time:now});
+      const lastAvg=ad._lastAvgScore||0;
+      if(Math.abs(avg-lastAvg)>0.5){
+        ad._lastAvgScore=avg;
+        if(avg>9){
+          pushObs("positive",`Lock quality strong — avg score ${avg.toFixed(1)}. System being very selective.`,"hype");
+        } else if(avg<7.5){
+          pushObs("analysis",`Avg lock score ${avg.toFixed(1)} — borderline entries. Consider raising threshold to 8+.`,"sus");
+        }
       }
+    }
+
+    // ── Session health ──
+    const sessionAge=now-(ad._sessionStart||now);
+    if(!ad._sessionStart)ad._sessionStart=now;
+    if(sessionAge>15*60*1000&&locks.length===0&&!ad._slowNote){
+      ad._slowNote=true;
+      pushObs("analysis","No locks after 15 minutes. Market may be slow or entry criteria too strict for current conditions.","sus");
     }
 
     if(obs.length>0){
       setAiObservations(p=>[...obs,...p].slice(0,50));
     }
-  },10000);return()=>clearInterval(iv)},[lockHistory,tokens,live.migrations,live.sessionStats]);
+  },10000);return()=>clearInterval(iv)},[lockHistory,tokens,graveyard,live.migrations,live.sessionStats]);
 
   // ═══ SESSION REPORT GENERATOR — every 30 minutes ═══
   useEffect(()=>{const iv=setInterval(()=>{
@@ -4839,46 +4890,43 @@ export default function DegenCommandCenter(){
         </div>
         {/* ═══ CORRESPONDENT MARQUEE — expands when active ═══ */}
         <div style={{flex:1,margin:"0 14px",height:corrDisplay.visible?52:32,overflow:"hidden",position:"relative",
-          background:corrDisplay.visible?"rgba(0,6,14,0.97)":"rgba(0,12,24,0.8)",
-          border:`1px solid ${corrDisplay.visible?(corrDisplay.mood==="alarm"?"rgba(255,50,50,0.5)":corrDisplay.mood==="hype"?"rgba(57,255,20,0.4)":"rgba(0,255,204,0.35)"):"rgba(0,255,204,0.2)"}`,
+          background:corrDisplay.visible?"rgba(14,6,0,0.97)":"rgba(20,8,0,0.7)",
+          border:`1px solid ${corrDisplay.visible?(corrDisplay.mood==="alarm"?"rgba(255,50,50,0.5)":corrDisplay.mood==="hype"?"rgba(57,255,20,0.4)":corrDisplay.mood==="sus"?"rgba(255,215,0,0.35)":"rgba(255,106,0,0.4)"):"rgba(255,106,0,0.15)"}`,
           borderRadius:4,transition:"height 0.3s ease, background 0.3s ease, border-color 0.3s ease",
-          boxShadow:corrDisplay.visible?`0 0 20px ${corrDisplay.mood==="alarm"?"rgba(255,50,50,0.15)":corrDisplay.mood==="hype"?"rgba(57,255,20,0.1)":"rgba(0,255,204,0.1)"}`:undefined}}>
+          boxShadow:corrDisplay.visible?`0 0 20px ${corrDisplay.mood==="alarm"?"rgba(255,50,50,0.15)":corrDisplay.mood==="hype"?"rgba(57,255,20,0.1)":"rgba(255,106,0,0.12)"}`:undefined}}>
           {/* Scan lines */}
           <div style={{position:"absolute",inset:0,
-            background:"repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,255,204,0.02) 2px,rgba(0,255,204,0.02) 4px)",
+            background:"repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(255,106,0,0.015) 2px,rgba(255,106,0,0.015) 4px)",
             pointerEvents:"none",zIndex:2}}/>
-          {/* Robot icon left */}
-          <div style={{position:"absolute",left:0,top:0,bottom:0,width:corrDisplay.visible?40:30,
-            background:"linear-gradient(180deg,rgba(0,255,204,0.06),rgba(0,40,60,0.2))",
-            borderRight:"1px solid rgba(0,255,204,0.12)",
+          {/* Claude ◈ icon left */}
+          <div style={{position:"absolute",left:0,top:0,bottom:0,width:corrDisplay.visible?44:32,
+            background:"linear-gradient(180deg,rgba(255,100,0,0.08),rgba(40,10,0,0.2))",
+            borderRight:"1px solid rgba(255,100,0,0.15)",
             display:"flex",alignItems:"center",justifyContent:"center",zIndex:3,transition:"width 0.3s"}}>
-            <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
-              <div style={{display:"flex",gap:2}}>
-                {[0,1].map(i=><div key={i} style={{width:corrDisplay.visible?9:7,height:corrDisplay.visible?7:5,borderRadius:"2px 2px 0 0",
-                  background:"#0d1e2e",border:"1px solid rgba(0,255,204,0.3)",
-                  display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.3s"}}>
-                  <div style={{width:corrDisplay.visible?5:3,height:corrDisplay.visible?5:3,borderRadius:"50%",transition:"all 0.3s",
-                    background:corrDisplay.visible?(corrDisplay.mood==="hype"?"#39ff14":corrDisplay.mood==="alarm"?"#ff3333":corrDisplay.mood==="sus"?"#ffd740":"#00ccff"):"#00ccff",
-                    boxShadow:`0 0 ${corrDisplay.visible?6:3}px ${corrDisplay.visible&&corrDisplay.mood==="alarm"?"#ff3333":"#00ccff"}`}}/>
-                </div>)}
-              </div>
-              <div style={{width:corrDisplay.visible?18:14,height:corrDisplay.visible?8:6,borderRadius:1,background:"#1a2a3a",border:"1px solid rgba(0,255,204,0.12)",transition:"all 0.3s"}}/>
+            <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1}}>
+              <div style={{fontSize:corrDisplay.visible?20:15,lineHeight:1,transition:"font-size 0.3s",
+                color:corrDisplay.visible?(corrDisplay.mood==="hype"?"#39ff14":corrDisplay.mood==="alarm"?"#ff4040":corrDisplay.mood==="sus"?"#ffd740":"#ff6a00"):"rgba(255,106,0,0.5)",
+                textShadow:corrDisplay.visible?`0 0 12px currentColor`:undefined,
+                fontWeight:900}}>◈</div>
+              <div style={{fontSize:6,letterSpacing:1,fontFamily:"'Orbitron',sans-serif",
+                color:corrDisplay.visible?"rgba(255,106,0,0.7)":"rgba(255,106,0,0.25)",
+                transition:"all 0.3s"}}>CLAUDE</div>
             </div>
           </div>
           {/* Message area */}
-          <div style={{position:"absolute",left:corrDisplay.visible?42:32,right:4,top:0,bottom:0,display:"flex",flexDirection:"column",justifyContent:"center",
+          <div style={{position:"absolute",left:corrDisplay.visible?46:34,right:4,top:0,bottom:0,display:"flex",flexDirection:"column",justifyContent:"center",
             padding:"3px 6px",overflow:"hidden"}}>
             {corrDisplay.visible?<>
-              <div style={{fontSize:corrDisplay.visible?9:7,color:"#00ffcc",fontWeight:700,letterSpacing:2,fontFamily:"'Orbitron',sans-serif",lineHeight:1,marginBottom:3}}>
-                {corrDisplay.mood==="alarm"?"⚠ ALERT":corrDisplay.mood==="sus"?"◉ INTEL":corrDisplay.mood==="rip"?"☠ REPORT":"◈ COMMS"}</div>
+              <div style={{fontSize:9,color:"#ff6a00",fontWeight:700,letterSpacing:2,fontFamily:"'Orbitron',sans-serif",lineHeight:1,marginBottom:3}}>
+                {corrDisplay.mood==="alarm"?"⚠ ALERT":corrDisplay.mood==="sus"?"◉ INTEL":corrDisplay.mood==="rip"?"☠ REPORT":corrDisplay.mood==="hype"?"◈ SIGNAL":"◈ CLAUDE"}</div>
               <div style={{fontSize:13,color:"#e0e0ff",lineHeight:1.3,fontFamily:"'Share Tech Mono',monospace",
                 overflow:"hidden",whiteSpace:"nowrap",fontWeight:600,letterSpacing:0.5,
                 animation:"marqueeScroll 40s linear"}}>{corrDisplay.msg}</div>
             </>:<>
-              <div style={{fontSize:7,color:"rgba(0,255,204,0.3)",fontWeight:700,letterSpacing:2,fontFamily:"'Orbitron',sans-serif",lineHeight:1}}>◈ STANDBY</div>
-              <div style={{fontSize:10,color:"rgba(0,255,204,0.15)",fontFamily:"'Share Tech Mono',monospace",lineHeight:1.2,
+              <div style={{fontSize:7,color:"rgba(255,106,0,0.3)",fontWeight:700,letterSpacing:2,fontFamily:"'Orbitron',sans-serif",lineHeight:1}}>◈ STANDBY</div>
+              <div style={{fontSize:10,color:"rgba(255,106,0,0.12)",fontFamily:"'Share Tech Mono',monospace",lineHeight:1.2,
                 letterSpacing:1,overflow:"hidden",whiteSpace:"nowrap"}}>
-                {"░▒▓█▓▒░".repeat(8).split("").map((c,i)=><span key={i} style={{opacity:0.3+Math.random()*0.5}}>{c}</span>)}</div>
+                {"░▒▓█▓▒░".repeat(8).split("").map((c,i)=><span key={i} style={{opacity:0.2+Math.random()*0.3}}>{c}</span>)}</div>
             </>}
           </div>
         </div>
@@ -5137,28 +5185,19 @@ export default function DegenCommandCenter(){
 
           {/* AI CLAUDE */}
           {leftTab==="AI"&&<div style={{padding:"4px 6px"}}>
-            {/* AI Face Header */}
-            <div style={{textAlign:"center",padding:"8px 0",borderBottom:"1px solid rgba(0,200,255,0.15)",marginBottom:8}}>
+            {/* Claude Header */}
+            <div style={{textAlign:"center",padding:"8px 0",borderBottom:"1px solid rgba(255,106,0,0.15)",marginBottom:8}}>
               <div style={{position:"relative",width:64,height:64,margin:"0 auto 6px",borderRadius:"50%",
-                border:"2px solid rgba(0,200,255,0.3)",background:"radial-gradient(circle at 40% 40%, rgba(0,200,255,0.08), rgba(0,0,20,0.9))",overflow:"hidden"}}>
-                <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column"}}>
-                  {/* Eyes */}
-                  <div style={{display:"flex",gap:8,marginTop:4}}>
-                    <div style={{width:10,height:6,borderRadius:"50%",background:"rgba(0,220,255,0.9)",boxShadow:"0 0 8px rgba(0,220,255,0.6)",animation:"pulse 3s ease-in-out infinite"}}/>
-                    <div style={{width:10,height:6,borderRadius:"50%",background:"rgba(0,220,255,0.9)",boxShadow:"0 0 8px rgba(0,220,255,0.6)",animation:"pulse 3s ease-in-out infinite 0.2s"}}/>
-                  </div>
-                  {/* Neural lines */}
-                  <div style={{width:20,height:1,background:"linear-gradient(90deg, transparent, rgba(0,200,255,0.3), transparent)",marginTop:6}}/>
-                  <div style={{width:12,height:1,background:"linear-gradient(90deg, transparent, rgba(0,200,255,0.2), transparent)",marginTop:3}}/>
-                </div>
-                <div style={{position:"absolute",left:0,right:0,height:2,background:"linear-gradient(90deg, transparent, rgba(0,200,255,0.4), transparent)",
+                border:"2px solid rgba(255,106,0,0.4)",background:"radial-gradient(circle at 40% 40%, rgba(255,106,0,0.1), rgba(20,5,0,0.9))",overflow:"hidden",
+                display:"flex",alignItems:"center",justifyContent:"center"}}>
+                <div style={{fontSize:30,color:"#ff6a00",textShadow:"0 0 20px rgba(255,106,0,0.6)",animation:"pulse 3s ease-in-out infinite",lineHeight:1}}>◈</div>
+                <div style={{position:"absolute",left:0,right:0,height:2,background:"linear-gradient(90deg, transparent, rgba(255,106,0,0.4), transparent)",
                   top:"50%",animation:"scanDown 3s linear infinite"}}/>
-                <div style={{position:"absolute",inset:0,border:"1px solid rgba(0,200,255,0.1)",borderRadius:"50%",animation:"pulse 4s ease-in-out infinite"}}/>
               </div>
-              <div style={{fontSize:12,fontWeight:900,color:"#00c8ff",fontFamily:"Orbitron",letterSpacing:2}}>CLAUDE AI</div>
+              <div style={{fontSize:12,fontWeight:900,color:"#ff6a00",fontFamily:"Orbitron",letterSpacing:2}}>CLAUDE</div>
               <div style={{fontSize:9,color:NEON.dimText,marginTop:2}}>BATTLEFIELD ANALYST</div>
-              <div style={{fontSize:8,color:"rgba(0,200,255,0.4)",marginTop:2}}>
-                {aiObservations.length>0?"ANALYZING...":"OBSERVING BATTLEFIELD..."}</div>
+              <div style={{fontSize:8,color:"rgba(255,106,0,0.5)",marginTop:2}}>
+                {aiObservations.length>0?`${aiObservations.length} OBSERVATIONS LOGGED`:"INITIALIZING..."}</div>
             </div>
 
             {/* Quick Stats */}
@@ -5166,10 +5205,10 @@ export default function DegenCommandCenter(){
               {[
                 {label:"LOCKS",val:lockHistory.filter(h=>h.events.find(e=>e.type==="LOCK")).length,color:NEON.yellow},
                 {label:"EJECTS",val:lockHistory.filter(h=>h.events.find(e=>e.type==="UNLOCK")).length,color:NEON.red},
-                {label:"SMART $",val:live.sessionStats?.smartWallets||0,color:NEON.cyan},
+                {label:"SMART $",val:live.sessionStats?.smartWallets||0,color:"#ff6a00"},
                 {label:"MIGRATED",val:(live.migrations||[]).length,color:NEON.green},
               ].map((s,i)=>(
-                <div key={i} style={{background:"rgba(0,200,255,0.04)",border:"1px solid rgba(0,200,255,0.1)",
+                <div key={i} style={{background:"rgba(255,106,0,0.04)",border:"1px solid rgba(255,106,0,0.12)",
                   borderRadius:4,padding:"4px 6px",textAlign:"center"}}>
                   <div style={{fontSize:14,fontWeight:900,color:s.color,fontFamily:"Orbitron"}}>{s.val}</div>
                   <div style={{fontSize:7,color:NEON.dimText,letterSpacing:1}}>{s.label}</div>
@@ -5177,38 +5216,29 @@ export default function DegenCommandCenter(){
               ))}
             </div>
 
-            {/* Observations */}
-            <div style={{fontSize:9,color:"#00c8ff",fontWeight:700,fontFamily:"Orbitron",letterSpacing:1,marginBottom:4}}>
-              OBSERVATIONS</div>
+            {/* Observation Log */}
+            <div style={{fontSize:9,color:"#ff6a00",fontWeight:700,fontFamily:"Orbitron",letterSpacing:1,marginBottom:4}}>
+              ◈ ANALYSIS LOG</div>
             {aiObservations.length===0&&<div style={{color:NEON.dimText,fontSize:11,textAlign:"center",padding:12,
-              fontStyle:"italic",lineHeight:1.4}}>
-              Gathering data... I need to watch a few lock cycles before I can give you insights.
-              Check back in a minute or two.</div>}
-            {aiObservations.slice(0,15).map((obs,i)=>{
-              const icon=obs.type==="warning"?"⚠️":obs.type==="positive"?"✅":obs.type==="analysis"?"🔍":"💡";
-              const borderColor=obs.type==="warning"?"rgba(255,215,64,0.3)":obs.type==="positive"?"rgba(57,255,20,0.3)":"rgba(0,200,255,0.3)";
+              fontStyle:"italic",lineHeight:1.5,background:"rgba(255,106,0,0.03)",borderRadius:4,border:"1px solid rgba(255,106,0,0.08)"}}>
+              Gathering data...<br/>
+              <span style={{fontSize:9,opacity:0.6}}>First observations appear within ~30s of activity.</span></div>}
+            {aiObservations.slice(0,20).map((obs,i)=>{
+              const icon=obs.type==="warning"?"⚠️":obs.type==="positive"?"✅":obs.type==="analysis"?"🔍":"◈";
+              const borderColor=obs.type==="warning"?"rgba(255,215,64,0.35)":obs.type==="positive"?"rgba(57,255,20,0.35)":"rgba(255,106,0,0.25)";
+              const bg=obs.type==="warning"?"rgba(255,215,64,0.04)":obs.type==="positive"?"rgba(57,255,20,0.04)":"rgba(255,106,0,0.03)";
               const ageS=Math.round((Date.now()-obs.time)/1000);
               return(
                 <div key={i} style={{padding:"5px 6px",marginBottom:3,borderRadius:4,
-                  borderLeft:"2px solid "+borderColor,
-                  background:obs.type==="warning"?"rgba(255,215,64,0.04)":obs.type==="positive"?"rgba(57,255,20,0.04)":"rgba(0,200,255,0.04)"}}>
+                  borderLeft:"2px solid "+borderColor,background:bg}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
                     <div style={{fontSize:11,color:NEON.text,lineHeight:1.4,flex:1}}>
                       <span style={{marginRight:4}}>{icon}</span>{obs.text}</div>
-                    <span style={{fontSize:8,color:NEON.dimText,marginLeft:4,whiteSpace:"nowrap"}}>
+                    <span style={{fontSize:8,color:NEON.dimText,marginLeft:4,whiteSpace:"nowrap",flexShrink:0}}>
                       {ageS<60?ageS+"s":Math.floor(ageS/60)+"m"}</span>
                   </div>
                 </div>);
             })}
-
-            {/* API Key placeholder */}
-            <div style={{marginTop:12,padding:"8px",borderRadius:6,border:"1px dashed rgba(0,200,255,0.2)",
-              background:"rgba(0,200,255,0.02)",textAlign:"center"}}>
-              <div style={{fontSize:9,color:"rgba(0,200,255,0.5)",fontFamily:"Orbitron",letterSpacing:1}}>API MODE</div>
-              <div style={{fontSize:10,color:NEON.dimText,marginTop:3,lineHeight:1.3}}>
-                Add your Anthropic API key to unlock real-time Claude analysis with deeper insights and adaptive suggestions.</div>
-              <div style={{fontSize:8,color:"rgba(0,200,255,0.3)",marginTop:4}}>COMING SOON</div>
-            </div>
           </div>}
 
           {/* SMART WALLET TRACKER */}
@@ -5371,22 +5401,31 @@ export default function DegenCommandCenter(){
                       {activeBuys.map((ab,i)=>{
                         const ageS=Math.floor((Date.now()-ab.time)/1000);
                         const fmtAge=ageS<60?ageS+"s":Math.floor(ageS/60)+"m";
+                        // Try to get current mcap from live tokens
+                        const liveTok=tokens.find(t=>t.addr===ab.addr);
+                        const currentMc=liveTok?.mcap||ab.entryMcap||0;
+                        const mcPct=ab.entryMcap>0?((currentMc-ab.entryMcap)/ab.entryMcap*100):0;
+                        const estPnl=ab.entryMcap>0?(ab.sol*(currentMc/ab.entryMcap)-ab.sol):0;
                         return(<div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
-                          padding:"3px 4px",borderRadius:3,background:"rgba(0,255,204,0.04)",marginBottom:2}}>
+                          padding:"4px 6px",borderRadius:3,background:"rgba(0,255,204,0.04)",marginBottom:3,
+                          border:`1px solid ${mcPct>=0?"rgba(0,255,204,0.1)":"rgba(255,7,58,0.1)"}`}}>
                           <div style={{display:"flex",alignItems:"center",gap:5}}>
                             <div style={{width:5,height:5,borderRadius:"50%",background:"#00ffcc",
-                              boxShadow:"0 0 4px #00ffcc",animation:"blink 1s infinite"}}/>
-                            <span onClick={()=>clickAddr(ab.addr,{name:ab.token,addr:ab.addr,mcap:ab.entryMcap||0,athMcap:ab.entryMcap||0,vol:0,holders:0,platform:"PumpFun",qualScore:0,riskScore:0,liquidity:0,topHolderPct:0})}
-                              style={{color:NEON.text,fontWeight:700,cursor:"pointer",fontSize:10,
-                                textDecoration:"underline",textDecorationStyle:"dotted",textUnderlineOffset:2}}>{ab.token}</span>
-                            <span onClick={()=>clickAddr(ab.addr,{name:ab.token,addr:ab.addr,mcap:ab.entryMcap||0,athMcap:ab.entryMcap||0,vol:0,holders:0,platform:"PumpFun",qualScore:0,riskScore:0,liquidity:0,topHolderPct:0})}
-                              style={{fontSize:7,color:NEON.cyan,cursor:"pointer",background:"rgba(0,255,255,0.06)",
-                                padding:"0 3px",borderRadius:2,fontFamily:"monospace"}}>CA</span>
+                              boxShadow:"0 0 4px #00ffcc",animation:"blink 1s infinite",flexShrink:0}}/>
+                            <div>
+                              <span onClick={()=>clickAddr(ab.addr,{name:ab.token,addr:ab.addr,mcap:currentMc,athMcap:ab.entryMcap||0,vol:0,holders:0,platform:"PumpFun",qualScore:0,riskScore:0,liquidity:0,topHolderPct:0})}
+                                style={{color:NEON.text,fontWeight:700,cursor:"pointer",fontSize:11,
+                                  textDecoration:"underline",textDecorationStyle:"dotted",textUnderlineOffset:2,display:"block"}}>{ab.token}</span>
+                              <span style={{fontSize:7,color:NEON.dimText}}>{fmtAge} ago · in ${formatNum(ab.entryMcap||0)}</span>
+                            </div>
                           </div>
-                          <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                            <span style={{fontSize:8,color:NEON.dimText}}>in <span style={{color:NEON.cyan}}>${formatNum(ab.entryMcap||0)}</span></span>
-                            <span style={{fontSize:9,color:"#00ffcc",fontWeight:700}}>{ab.sol.toFixed(2)} SOL</span>
-                            <span style={{fontSize:7,color:NEON.dimText}}>{fmtAge} ago</span>
+                          <div style={{textAlign:"right",flexShrink:0}}>
+                            <div style={{fontSize:10,fontWeight:900,color:mcPct>=0?NEON.green:NEON.red}}>
+                              {mcPct>=0?"▲":"▼"}{Math.abs(mcPct).toFixed(0)}%
+                              <span style={{fontSize:8,marginLeft:4,color:estPnl>=0?NEON.green:NEON.red}}>
+                                {estPnl>=0?"+":""}{estPnl.toFixed(2)} SOL</span>
+                            </div>
+                            <div style={{fontSize:8,color:NEON.dimText}}>{ab.sol.toFixed(2)} SOL in</div>
                           </div>
                         </div>);
                       })}
@@ -5642,7 +5681,10 @@ export default function DegenCommandCenter(){
               borderTop:`1px solid ${token.threatColor||NEON.cyan}40`,
               maxHeight:"45%",overflow:"auto",padding:"6px 10px"}}>
               <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4,flexWrap:"wrap"}}>
-                <span style={{color:token.threatColor,fontSize:14,fontWeight:900,fontFamily:"'Orbitron',sans-serif",letterSpacing:2}}>◉ {token.name}</span>
+                <div style={{display:"flex",flexDirection:"column",gap:1}}>
+                  <span style={{color:token.threatColor,fontSize:14,fontWeight:900,fontFamily:"'Orbitron',sans-serif",letterSpacing:2}}>◉ {token.name}</span>
+                  {token.fullName&&token.fullName!==token.name&&<span style={{fontSize:9,color:NEON.dimText,letterSpacing:0.5,fontStyle:"italic"}}>{token.fullName}</span>}
+                </div>
                 <span style={{fontSize:11,color:PLATFORM_COLORS[token.platform]||NEON.dimText,background:"rgba(255,255,255,0.04)",
                   padding:"1px 6px",borderRadius:8,border:`1px solid ${(PLATFORM_COLORS[token.platform]||NEON.dimText)}30`}}>{token.platform}</span>
                 <span onClick={()=>navigator.clipboard.writeText(token.addr)} style={{fontSize:11,color:NEON.cyan,cursor:"pointer",

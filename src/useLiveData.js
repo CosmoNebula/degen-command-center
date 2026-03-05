@@ -266,7 +266,9 @@ export function useLiveData() {
             if (!ws.activeBuys) ws.activeBuys = {};
             const entryMcNow = tdMcapUsd(td);
             if (!ws.activeBuys[mint]) {
-              ws.activeBuys[mint] = { token: mintToId.current[mint]||mint.slice(0,8), addr: mint, sol: 0, entryMcap: entryMcNow||0, time: now };
+              const _tid = mintToId.current[mint];
+              const _tname = _tid ? (tokensRef.current.find(t2=>t2.id===_tid)?.name || mint.slice(0,8)) : mint.slice(0,8);
+              ws.activeBuys[mint] = { token: _tname, addr: mint, sol: 0, entryMcap: entryMcNow||0, time: now };
             }
             ws.activeBuys[mint].sol += sol;
           }
