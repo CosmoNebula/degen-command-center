@@ -5521,7 +5521,7 @@ export default function DegenCommandCenter(){
                     const sellRows=sells.length>0?sells:solOut>0?[{sol:solOut,mcap:tr.mcap||0,time:tr.exitTime}]:[];
                     let bagLeft=solIn;
                     const sellsWithPct=sellRows.map((s,si)=>{
-                      const pctOfRemaining=bagLeft>0?Math.round(s.sol/bagLeft*100):0;
+                      const pctOfRemaining=bagLeft>0.01?Math.min(100,Math.round(s.sol/bagLeft*100)):100;
                       bagLeft=Math.max(0,bagLeft-s.sol);
                       const isLast=si===sellRows.length-1&&bagLeft<0.05;
                       return{...s,pctOfRemaining,bagLeft,isLast};
