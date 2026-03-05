@@ -200,14 +200,28 @@ export function useLiveData() {
           if (wData && wData.bought > 0) {
             const prevSoldRatio = wData.bought > 0 ? (wData.sold || 0) / wData.bought : 0;
             if (prevSoldRatio >= 0.90) {
-              // New buy cycle — wipe old data so sells don't bleed across
+              // New buy cycle — wipe old position data
               td.wallets[wallet] = { bought: 0, sold: 0, entryMcap: 0, firstBuyTime: now, lastSellTime: null, exitMcap: 0, sellEvents: [] };
+              // Also clear from wallet scores so new HOLD can be tracked cleanly
+              const wsNow = walletScores.current[wallet];
+              if (wsNow) {
+                // Remove from holdAddrs so scoring loop treats this as a new position
+                if (wsNow.holdAddrs?.has(mint)) {
+                  wsNow.holdAddrs.delete(mint);
+                  wsNow.holds = Math.max(0, (wsNow.holds||0) - 1);
+                  wsNow.holdTokens = (wsNow.holdTokens||[]).filter(a => a !== mint);
+                  // Keep the old resolved HOLD trade in history but allow new one
+                  const oldHold = wsNow.trades?.find(tr => tr.addr === mint && tr.type === "HOLD");
+                  if (oldHold) oldHold.type = "CLOSED_HOLD"; // archive it, stop refreshing
+                }
+                // Reset activeBuys for fresh entry
+                if (wsNow.activeBuys) delete wsNow.activeBuys[mint];
+              }
             }
           }
           td.buys++;
           td.totalBoughtSol += sol;
           td.wallets[wallet].bought += sol;
-          // Update firstBuyTime only if not already set for this cycle
           if (!td.wallets[wallet].firstBuyTime) td.wallets[wallet].firstBuyTime = now;
           // Store entry mcap on first buy for this wallet on this token
           if (!td.wallets[wallet].entryMcap) {
@@ -1837,7 +1851,7 @@ export function useLiveData() {
               if (ws.holdAddrs.has(t.addr)) {
                 ws.holds = Math.max(0, ws.holds - 1);
                 ws.holdAddrs.delete(t.addr);
-                ws.holdTokens = ws.holdTokens.filter(n => n !== t.name);
+                ws.holdTokens = (ws.holdTokens||[]).filter(a => a !== t.addr);
                 const holdTrade = ws.trades.find(tr => tr.addr === t.addr && tr.type === "HOLD");
                 if (holdTrade) { holdTrade.type = "WIN"; holdTrade.mcap = data.exitMcap||exitMcap; holdTrade.sold = data.sold; holdTrade.pnl = pnl; holdTrade.athMcap = Math.max(td.athMcap||0, data.exitMcap||exitMcap, holdTrade.athMcap||0); holdTrade.sellEvents = sellEvents; }
               } else {
@@ -1848,13 +1862,13 @@ export function useLiveData() {
               }
               ws.wins++;
               ws.winAddrs.add(t.addr);
-              ws.tokens.push(t.name);
+              ws.tokens.push(t.addr); // store addr not name — dedup by addr
               ws.totalBought += data.bought;
               ws.totalSold += (data.sold || 0);
               ws.totalPnl += pnl;
               if (exitMcap > 100000) ws.bigWins = (ws.bigWins || 0) + 1;
-              if (ws.wins === 3) console.log(`[SMART$] 🧠 Wallet ${w.slice(0,8)} hit 3 wins: ${ws.tokens.join(", ")}`);
-              if (ws.wins === 6) console.log(`[SMART$] 🧠🧠 Wallet ${w.slice(0,8)} hit 6 WINS: ${ws.tokens.join(", ")}`);
+              if (ws.wins === 3) console.log(`[SMART$] 🧠 Wallet ${w.slice(0,8)} hit 3 wins`);
+              if (ws.wins === 6) console.log(`[SMART$] 🧠🧠 Wallet ${w.slice(0,8)} hit 6 WINS`);
               td.wallets[w] = { bought: 0, sold: 0, firstBuyTime: null, lastSellTime: null, entryMcap: 0, exitMcap: 0, sellEvents: [] };
               ws.winAddrs.delete(t.addr);
               if (ws.activeBuys) delete ws.activeBuys[t.addr];
@@ -1865,7 +1879,7 @@ export function useLiveData() {
               if (ws.holdAddrs.has(t.addr)) {
                 ws.holds = Math.max(0, ws.holds - 1);
                 ws.holdAddrs.delete(t.addr);
-                ws.holdTokens = ws.holdTokens.filter(n => n !== t.name);
+                ws.holdTokens = (ws.holdTokens||[]).filter(a => a !== t.addr);
                 const holdTrade = ws.trades.find(tr => tr.addr === t.addr && tr.type === "HOLD");
                 if (holdTrade) { holdTrade.type = "LOSS"; holdTrade.mcap = data.exitMcap||exitMcap; holdTrade.sold = data.sold; holdTrade.pnl = pnl; holdTrade.athMcap = Math.max(td.athMcap||0, data.exitMcap||exitMcap, holdTrade.athMcap||0); holdTrade.sellEvents = sellEvents; }
               } else {
@@ -1876,7 +1890,7 @@ export function useLiveData() {
               }
               ws.losses++;
               ws.lossAddrs.add(t.addr);
-              ws.lossTokens.push(t.name);
+              ws.lossTokens.push(t.addr); // store addr not name
               ws.totalBought += data.bought;
               ws.totalSold += (data.sold || 0);
               ws.totalPnl += pnl;
@@ -1890,7 +1904,7 @@ export function useLiveData() {
               ws.holds = (ws.holds || 0) + 1;
               ws.holdAddrs.add(t.addr);
               ws.holdTokens = ws.holdTokens || [];
-              ws.holdTokens.push(t.name);
+              ws.holdTokens.push(t.addr); // store addr not name
               ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "HOLD", mcap: exitMcap, entryMcap, pnl,
                 entryTime: data.firstBuyTime || now3, exitTime: null,
                 athMcap: td.athMcap || exitMcap, startMcap: td.startMcap || entryMcap, time: now3, sellEvents });

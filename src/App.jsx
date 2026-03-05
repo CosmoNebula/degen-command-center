@@ -1072,8 +1072,9 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
           // Let trip visuals run for 120 frames (~2s), then activate swirl
           if(fm.tripFrame===30){
             fm.vortexActive=true;fm.vortexFrame=0;
-            // Warp Claude to visual center of vortex — offset up since he draws below his anchor point
-            ai.x=0.5;ai.y=0.38;ai.targetX=0.5;ai.targetY=0.38;
+            // Warp Claude so his body center (hy+52*S) lands exactly on vortex glow (H*0.5)
+            // hy + 104 = H*0.5  →  hy = H*0.5 - 104  →  ai.y = 0.5 - 104/H ≈ 0.41 at 700px
+            ai.x=0.5;ai.y=0.41;ai.targetX=0.5;ai.targetY=0.41;
             // Assign 6 positions around outer edge of swirl (fixed circle)
             const swirlR=0.22; // radius in normalized coords
             fm.memberPos=[0,1,2,3,4,5].map(i=>({
@@ -1111,6 +1112,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
 
         // ── PHASE: SWIRL EVENT ──
         else if(fm.phase==="swirlEvent"){
+          fm.tripFrame++; // keep trip visuals animating
           fm.vortexFrame++;fm.speakerFrame++;
 
           // Each speaker: 120f talking, then 80f suck-in
@@ -5803,35 +5805,40 @@ export default function DegenCommandCenter(){
                   <div style={{fontSize:10,fontWeight:900,color:"#ffa500",fontFamily:"Orbitron",letterSpacing:0.5,marginBottom:4}}>TRADES</div>
                   {w.trades.length===0&&<div style={{color:NEON.dimText,fontSize:10,padding:8}}>No trade details recorded yet</div>}
                   {w.trades.slice().reverse().filter(tr=>{
-                    // Show all resolved trades — the data layer already filtered out noise
-                    // Only hide tiny wins/losses that slipped through on HOLDs
+                    if(tr.type==="CLOSED_HOLD") return false; // archived old cycles, don't show
                     if(tr.type==="WIN"||tr.type==="LOSS") return true;
-                    return true; // always show HOLDs/PARTIALs
+                    return true; // always show active HOLDs
                   }).map((tr,ti)=>{
                     const sells=tr.sellEvents||[];
                     const solIn=tr.sol||0;
-                    const solOut=tr.sold||0;
+                    // Don't cap WIN trades — sold > bought is correct (profit). Only cap HOLD/LOSS fallback to prevent bleed.
+                    const solOut=tr.type==="WIN"?(tr.sold||0):Math.min(tr.sold||0,solIn*2); // allow up to 2x for partials, hard cap bleed
                     const soldRatio=solIn>0?Math.min(1,solOut/solIn):0;
-                    const bagPct=Math.max(0,Math.round((1-soldRatio)*100));
+                    const bagPct=tr.type==="WIN"?0:Math.max(0,Math.round((1-soldRatio)*100));
                     const isHold=tr.type==="HOLD";
-                    const isPartial=isHold&&solOut>0;
+                    const hasPartialSells=isHold&&solOut>0&&sells.length>0;
                     const isClosed=!isHold||soldRatio>=0.95;
                     const trPnl=tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol);
-                    const typeColor=tr.type==="WIN"?NEON.green:tr.type==="LOSS"?NEON.red:isPartial?"#00e5ff":"#ffa500";
-                    const statusLabel=tr.type==="WIN"?"WIN":tr.type==="LOSS"?"LOSS":isPartial?"PARTIAL":"HOLD";
-                    // Build sell rows — fallback if no sellEvents recorded
+                    const typeColor=tr.type==="WIN"?NEON.green:tr.type==="LOSS"?NEON.red:hasPartialSells?"#00e5ff":"#ffa500";
+                    const statusLabel=tr.type==="WIN"?"WIN":tr.type==="LOSS"?"LOSS":hasPartialSells?"PARTIAL":"HOLD";
+                    // Build sell rows — use actual sell events if available, fallback to tr.sold
                     const sellRows=sells.length>0?sells:
                       solOut>0?[{sol:solOut,mcap:tr.mcap||0,time:tr.exitTime}]:
                       tr.type==="LOSS"?[]:
                       [];
-                    // Cap cumulative sell amount at buy size — prevents bleed inflating rows
-                    let bagLeft=solIn;
+                    // For WIN: bag% = each sell's share of total SOL out (token proxy since price moved)
+                    // For HOLD/LOSS: bag% = SOL sold vs remaining SOL in bag
+                    const totalSoldSol=sellRows.reduce((s,r)=>s+r.sol,0)||1;
+                    let bagLeft=tr.type==="WIN"?Infinity:solIn;
                     const sellsWithPct=sellRows.reduce((acc,s,si)=>{
-                      if(bagLeft<=0.001)return acc; // stop if bag exhausted
-                      const cappedSol=Math.min(s.sol,bagLeft);
-                      const pctOfRemaining=bagLeft>0.01?Math.min(100,Math.round(cappedSol/bagLeft*100)):100;
-                      bagLeft=Math.max(0,bagLeft-cappedSol);
-                      const isLast=(si===sellRows.length-1||bagLeft<0.01)&&bagLeft<0.05;
+                      if(tr.type!=="WIN"&&bagLeft<=0.001)return acc;
+                      const cappedSol=tr.type==="WIN"?s.sol:Math.min(s.sol,bagLeft);
+                      // % of remaining bag (tracks 100→0)
+                      const pctOfRemaining=tr.type==="WIN"
+                        ?Math.min(100,Math.round(cappedSol/totalSoldSol*100))
+                        :(bagLeft>0.01?Math.min(100,Math.round(cappedSol/bagLeft*100)):100);
+                      if(tr.type!=="WIN")bagLeft=Math.max(0,bagLeft-cappedSol);
+                      const isLast=si===sellRows.length-1;
                       acc.push({...s,sol:cappedSol,pctOfRemaining,bagLeft,isLast});
                       return acc;
                     },[]);
@@ -5890,15 +5897,15 @@ export default function DegenCommandCenter(){
                       </div>
                       {/* Sell events */}
                       {sellsWithPct.map((s,si)=>{
-                        const sellPnlEst=(s.sol/solIn)*trPnl; // proportional pnl for this sell
                         return(
                         <div key={si} style={{display:"flex",gap:6,alignItems:"center",fontSize:9,marginBottom:2,
                           padding:"3px 5px",borderRadius:3,
                           background:s.isLast?"rgba(255,255,255,0.04)":"rgba(255,255,255,0.02)"}}>
                           <span style={{color:typeColor,fontFamily:"Orbitron",fontSize:7,letterSpacing:1,flexShrink:0}}>
                             SELL {si+1}{s.isLast?" 🔒":""}</span>
-                          <span style={{color:NEON.dimText,flexShrink:0}}>{s.sol.toFixed(2)} SOL</span>
-                        <span style={{color:NEON.dimText,fontSize:8,flexShrink:0}}>({s.pctOfRemaining}% of bag)</span>
+                          <span style={{color:tr.type==="WIN"?NEON.green:NEON.dimText,fontWeight:tr.type==="WIN"?700:400,flexShrink:0}}>{s.sol.toFixed(2)} SOL</span>
+                          <span style={{color:NEON.dimText,fontSize:8,flexShrink:0}}>
+                            ({s.pctOfRemaining}% of bag)</span>
                           <span style={{color:NEON.dimText}}>@ <span style={{color:s.mcap>=12000?NEON.green:"#ffa500",fontWeight:700}}>${formatNum(s.mcap)}</span></span>
                           {!isClosed&&si===sellsWithPct.length-1&&s.bagLeft>0.01&&
                             <span style={{marginLeft:"auto",fontSize:8,color:NEON.dimText}}>
