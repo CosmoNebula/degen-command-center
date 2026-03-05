@@ -3774,20 +3774,20 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
 function KillFeed({events,onSelectByName}){
   const colorMap={rug:NEON.red,moon:NEON.yellow,deploy:NEON.cyan,migration:"#39ff14",lock:NEON.yellow,system:NEON.purple,whale:"#ffd740",dolphin:"#00d4ff"};
   const glowMap={rug:"#ff073a",moon:"#ffe600",deploy:"#00ffff",migration:"#39ff14",lock:"#ffd740",system:"#bf00ff",whale:"#ffd740",dolphin:"#00d4ff"};
-  const [current,setCurrent]=React.useState(null);
-  const queueRef=React.useRef([]);
-  const timerRef=React.useRef(null);
-  const processedRef=React.useRef(new Set());
+  const [current,setCurrent]=useState(null);
+  const queueRef=useRef([]);
+  const timerRef=useRef(null);
+  const processedRef=useRef(new Set());
   const DISPLAY_MS=7000;
 
-  const showNext=React.useCallback(()=>{
+  const showNext=useCallback(()=>{
     if(queueRef.current.length===0){setCurrent(null);timerRef.current=null;return;}
     const next=queueRef.current.shift();
     setCurrent(next);
     timerRef.current=setTimeout(showNext,DISPLAY_MS);
   },[]);
 
-  React.useEffect(()=>{
+  useEffect(()=>{
     const quality=events.filter(e=>["whale","dolphin","system","moon","migration"].includes(e.type));
     const fresh=quality.filter(e=>{
       const key=(e._ts||0)+e.text;
@@ -3800,7 +3800,7 @@ function KillFeed({events,onSelectByName}){
     if(!timerRef.current)showNext();
   },[events,showNext]);
 
-  React.useEffect(()=>()=>{if(timerRef.current)clearTimeout(timerRef.current);},[]);
+  useEffect(()=>()=>{if(timerRef.current)clearTimeout(timerRef.current);},[]);
 
   if(!current)return null;
   const c=colorMap[current.type]||NEON.cyan;
