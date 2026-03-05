@@ -5260,7 +5260,7 @@ export default function DegenCommandCenter(){
                 const unrealizedPnl=qualTrades.filter(t=>t.type==="HOLD").reduce((s,tr)=>s+(tr.pnl||0),0);
                 const adjustedPnl=computedPnl+unrealizedPnl;
                 // Elite: 7+ wins on 12K+ coins, 70%+ rate, wins >= losses*3, 2.0+ SOL realized, adjusted PnL > 1.0
-                const isElite=qualWins>=7&&rate>=70&&qualWins>=(qualLosses*3)&&total>=8&&computedPnl>=2.0&&adjustedPnl>1.0;
+                const isElite=qualWins>=4&&rate>=60&&qualWins>=(qualLosses*2)&&total>=5&&computedPnl>=1.0&&adjustedPnl>0.5;
                 return{addr,wins:qualWins,losses:qualLosses,holds:qualHolds,total,rate,
                   bigWins:w.bigWins||0,totalBought,totalSold,totalPnl:computedPnl,adjustedPnl,isElite,
                   tokens:qualTrades.filter(t=>t.type==="WIN").map(t=>t.token),
@@ -5456,36 +5456,41 @@ export default function DegenCommandCenter(){
                             {totalUnrealized>=0?"+":""}{totalUnrealized.toFixed(2)} SOL</span>
                         </div>
                         {holdTrades.map((tr,hi)=>{
-                          const banked=(tr.sold||0)-(tr.sol||0);
                           const entryMc=tr.entryMcap||0;
                           const currentMc=tr.mcap||0;
                           const mcPct=entryMc>0?((currentMc-entryMc)/entryMc*100):0;
-                          const hasPartialExit=(tr.sold||0)>0;
-                          const stillExposed=Math.max(0,(tr.sol||0)-(tr.sold||0));
-                          return(<div key={hi} style={{padding:"4px 6px",marginBottom:3,borderRadius:4,fontSize:9,
-                            background:mcPct>=0?"rgba(57,255,20,0.03)":"rgba(255,7,58,0.06)",
-                            border:`1px solid ${mcPct>=0?"rgba(57,255,20,0.1)":"rgba(255,7,58,0.15)"}`}}>
+                          const solIn=tr.sol||0;
+                          const solOut=tr.sold||0;
+                          const bagSize=Math.max(0,solIn-solOut); // remaining SOL exposure
+                          const bagNow=entryMc>0?bagSize*(currentMc/entryMc):bagSize; // current worth
+                          const bagPnl=bagNow-bagSize; // gain/loss on remaining bag
+                          const hasPartialExit=solOut>0;
+                          const banked=solOut-(solIn*(solOut/solIn)); // realized portion pnl
+                          const up=mcPct>=0;
+                          return(<div key={hi} style={{padding:"5px 7px",marginBottom:3,borderRadius:4,fontSize:9,
+                            background:up?"rgba(57,255,20,0.03)":"rgba(255,7,58,0.06)",
+                            border:`1px solid ${up?"rgba(57,255,20,0.1)":"rgba(255,7,58,0.15)"}`}}>
+                            {/* Top: name + CA + % arrow */}
                             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
                               <div style={{display:"flex",alignItems:"center",gap:4}}>
-                                <span onClick={()=>selectByName(tr.token,{name:tr.token,addr:tr.addr,mcap:tr.mcap||0,athMcap:tr.athMcap||0,vol:0,holders:0,platform:"PumpFun",qualScore:0,riskScore:0,liquidity:0,topHolderPct:0})}
-                                  style={{color:NEON.text,cursor:"pointer",fontWeight:700,
+                                <span onClick={()=>selectByName(tr.token,{name:tr.token,addr:tr.addr,mcap:currentMc,athMcap:tr.athMcap||0,vol:0,holders:0,platform:"PumpFun",qualScore:0,riskScore:0,liquidity:0,topHolderPct:0})}
+                                  style={{color:NEON.text,cursor:"pointer",fontWeight:700,fontSize:11,
                                     textDecoration:"underline",textDecorationStyle:"dotted",textUnderlineOffset:2}}>{tr.token}</span>
-                                <span onClick={()=>clickAddr(tr.addr,{name:tr.token,addr:tr.addr,mcap:tr.mcap||0,athMcap:tr.athMcap||0,vol:0,holders:0,platform:"PumpFun",qualScore:0,riskScore:0,liquidity:0,topHolderPct:0})}
+                                <span onClick={()=>clickAddr(tr.addr,{name:tr.token,addr:tr.addr,mcap:currentMc,athMcap:tr.athMcap||0,vol:0,holders:0,platform:"PumpFun",qualScore:0,riskScore:0,liquidity:0,topHolderPct:0})}
                                   style={{fontSize:7,color:NEON.cyan,cursor:"pointer",
-                                    background:"rgba(0,255,255,0.06)",padding:"0px 3px",borderRadius:2,fontFamily:"monospace"}}>CA</span>
+                                    background:"rgba(0,255,255,0.06)",padding:"0 3px",borderRadius:2,fontFamily:"monospace"}}>CA</span>
                               </div>
-                              <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                                {hasPartialExit&&<span style={{fontSize:8,color:banked>=0?NEON.green:NEON.red}}>
-                                  {banked>=0?"banked +":"banked "}{banked.toFixed(2)} SOL</span>}
-                                <span style={{fontSize:10,fontWeight:900,color:mcPct>=0?NEON.green:NEON.red}}>
-                                  {mcPct>=0?"▲":"▼"}{Math.abs(mcPct).toFixed(0)}%</span>
-                              </div>
+                              <span style={{fontSize:12,fontWeight:900,color:up?NEON.green:NEON.red}}>
+                                {up?"▲":"▼"}{Math.abs(mcPct).toFixed(0)}%</span>
                             </div>
-                            <div style={{display:"flex",gap:10,fontSize:8,color:NEON.dimText}}>
-                              <span>Entry <span style={{color:NEON.cyan}}>${formatNum(entryMc)}</span></span>
-                              <span>Now <span style={{color:mcPct>=0?NEON.green:NEON.red}}>${formatNum(currentMc)}</span></span>
+                            {/* Bottom: entry SOL | bag now | ATH mcap | banked if partial */}
+                            <div style={{display:"flex",gap:10,fontSize:8,color:NEON.dimText,flexWrap:"wrap"}}>
+                              <span>In <span style={{color:NEON.cyan}}>{solIn.toFixed(2)} SOL</span></span>
+                              <span>Bag <span style={{color:up?NEON.green:NEON.red,fontWeight:700}}>{bagNow.toFixed(2)} SOL</span>
+                                <span style={{color:up?NEON.green:NEON.red,marginLeft:2}}>({bagPnl>=0?"+":""}{bagPnl.toFixed(2)})</span>
+                              </span>
                               <span>ATH <span style={{color:"#ffd740"}}>${formatNum(tr.athMcap||0)}</span></span>
-                              {stillExposed>0.05&&<span style={{color:NEON.orange}}>~{stillExposed.toFixed(2)} SOL at risk</span>}
+                              {hasPartialExit&&<span style={{color:"#ffa500"}}>banked {(solOut).toFixed(2)} SOL</span>}
                             </div>
                           </div>);
                         })}
@@ -5505,21 +5510,21 @@ export default function DegenCommandCenter(){
                     const solIn=tr.sol||0;
                     const solOut=tr.sold||0;
                     const soldRatio=solIn>0?Math.min(1,solOut/solIn):0;
+                    const bagPct=Math.max(0,Math.round((1-soldRatio)*100));
                     const isHold=tr.type==="HOLD";
                     const isPartial=isHold&&solOut>0;
                     const isClosed=!isHold||soldRatio>=0.95;
                     const trPnl=tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol);
                     const typeColor=tr.type==="WIN"?NEON.green:tr.type==="LOSS"?NEON.red:isPartial?"#00e5ff":"#ffa500";
                     const statusLabel=tr.type==="WIN"?"WIN":tr.type==="LOSS"?"LOSS":isPartial?"PARTIAL":"HOLD";
-                    // Build sell breakdown from sellEvents, falling back to single synthetic sell
+                    // Build sell breakdown — % of REMAINING bag at time of each sell
                     const sellRows=sells.length>0?sells:solOut>0?[{sol:solOut,mcap:tr.mcap||0,time:tr.exitTime}]:[];
-                    // Compute per-sell bag pct
                     let bagLeft=solIn;
                     const sellsWithPct=sellRows.map((s,si)=>{
-                      const pct=solIn>0?Math.round(s.sol/solIn*100):0;
+                      const pctOfRemaining=bagLeft>0?Math.round(s.sol/bagLeft*100):0;
                       bagLeft=Math.max(0,bagLeft-s.sol);
-                      const cumSoldPct=solIn>0?Math.round((solIn-bagLeft)/solIn*100):0;
-                      return{...s,pct,bagLeft,cumSoldPct,isLast:cumSoldPct>=95};
+                      const isLast=si===sellRows.length-1&&bagLeft<0.05;
+                      return{...s,pctOfRemaining,bagLeft,isLast};
                     });
                     return(
                     <div key={ti} style={{padding:"6px 8px",marginBottom:6,borderRadius:5,fontSize:10,
@@ -5544,6 +5549,27 @@ export default function DegenCommandCenter(){
                             {Math.round(soldRatio*100)}% out</div>}
                         </div>
                       </div>
+                      {/* Bag gauge */}
+                      <div style={{marginBottom:5}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:2}}>
+                          <span style={{fontSize:7,color:NEON.dimText,fontFamily:"Orbitron",letterSpacing:1}}>BAG</span>
+                          <span style={{fontSize:7,color:bagPct===0?NEON.dimText:bagPct<30?NEON.red:bagPct<70?"#ffa500":NEON.green,fontFamily:"Orbitron"}}>
+                            {bagPct}%</span>
+                        </div>
+                        <div style={{height:4,borderRadius:2,background:"rgba(255,255,255,0.06)",overflow:"hidden"}}>
+                          <div style={{
+                            height:"100%",
+                            width:`${bagPct}%`,
+                            borderRadius:2,
+                            background:bagPct===0?"transparent":bagPct<30?
+                              "linear-gradient(90deg,#ff073a,#ff4040)":bagPct<70?
+                              "linear-gradient(90deg,#ffa500,#ffd740)":
+                              "linear-gradient(90deg,#39ff14,#00ffcc)",
+                            transition:"width 0.4s ease",
+                            boxShadow:bagPct>0?`0 0 6px ${bagPct<30?"#ff073a":bagPct<70?"#ffa500":"#39ff14"}40`:undefined
+                          }}/>
+                        </div>
+                      </div>
                       {/* Entry line */}
                       <div style={{display:"flex",gap:6,alignItems:"center",fontSize:9,marginBottom:4,
                         padding:"3px 5px",background:"rgba(255,255,255,0.03)",borderRadius:3}}>
@@ -5563,7 +5589,7 @@ export default function DegenCommandCenter(){
                           <span style={{color:typeColor,fontFamily:"Orbitron",fontSize:7,letterSpacing:1,flexShrink:0}}>
                             SELL {si+1}{s.isLast?" 🔒":""}</span>
                           <span style={{color:NEON.dimText,flexShrink:0}}>{s.sol.toFixed(2)} SOL</span>
-                          <span style={{color:NEON.dimText,fontSize:8,flexShrink:0}}>({s.pct}% of bag)</span>
+                        <span style={{color:NEON.dimText,fontSize:8,flexShrink:0}}>({s.pctOfRemaining}% of bag)</span>
                           <span style={{color:NEON.dimText}}>@ <span style={{color:s.mcap>=12000?NEON.green:"#ffa500",fontWeight:700}}>${formatNum(s.mcap)}</span></span>
                           {!isClosed&&si===sellsWithPct.length-1&&s.bagLeft>0.01&&
                             <span style={{marginLeft:"auto",fontSize:8,color:NEON.dimText}}>
@@ -5612,7 +5638,7 @@ export default function DegenCommandCenter(){
                 <div style={{fontSize:12,fontWeight:900,color:"#ffa500",fontFamily:"Orbitron",letterSpacing:1,
                   textAlign:"center",marginBottom:8}}>WALLET TIERS</div>
                 {[
-                  {tier:"SMART",label:"🧠 SMART WALLETS",desc:"7+ wins · 70%+ rate · 2.0 SOL profit · 12K+ exit only",wallets:elite,color:"#00ff88",bg:"rgba(0,255,136,0.07)",glow:true},
+                  {tier:"SMART",label:"🧠 SMART WALLETS",desc:"4+ wins · 60%+ rate · 1.0 SOL profit · 12K+ exit only",wallets:elite,color:"#00ff88",bg:"rgba(0,255,136,0.07)",glow:true},
                   {tier:"GENIUS",label:"🎯 GENIUS",desc:"80-100% win rate",wallets:genius,color:"#ffd740",bg:"rgba(255,215,64,0.06)"},
                   {tier:"SHARP",label:"⚡ SHARP",desc:"60-79% win rate",wallets:sharp,color:"#00e5ff",bg:"rgba(0,229,255,0.04)"},
                   {tier:"DECENT",label:"📊 DECENT",desc:"40-59% win rate",wallets:decent,color:"#ffa500",bg:"rgba(255,165,0,0.04)"},
@@ -5875,7 +5901,7 @@ export default function DegenCommandCenter(){
               {rightTab==="SMART"&&<>
                 {(!live.smartMoneyAlerts||live.smartMoneyAlerts.length===0)&&
                   <div style={{color:NEON.dimText,fontSize:12,textAlign:"center",padding:20,fontStyle:"italic"}}>
-                    TRACKING ALL WALLETS...<br/><span style={{fontSize:10,opacity:0.5}}>7+ wins, 70%+ rate, 2+ SOL = smart money</span></div>}
+                    TRACKING ALL WALLETS...<br/><span style={{fontSize:10,opacity:0.5}}>4+ wins, 60%+ rate, 1+ SOL = smart money</span></div>}
                 {(live.smartMoneyAlerts||[]).map(a=>{
                   const ageS=Math.floor((Date.now()-a.time)/1000);
                   const tokenName=tokens.find(t=>t.addr===a.mint)?.name||a.mint.slice(0,8);

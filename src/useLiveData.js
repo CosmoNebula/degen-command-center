@@ -1795,7 +1795,9 @@ export function useLiveData() {
 
             // ─── 12K QUALITY GATE — ignore entirely if token never reached $12K ───
             // Filters bot noise: quick sub-$12K flips don't count as wins, losses, or holds
-            const sellEvts = data.sellEvents || [];
+            const sellEvts = (data.sellEvents || []).filter(s =>
+              s.time >= (data.firstBuyTime || 0) && s.time <= (data.lastSellTime || Infinity)
+            );
             const peakMcap = Math.max(td.athMcap || 0, t.mcap || 0, data.exitMcap || 0, ...sellEvts.map(s => s.mcap));
             if (peakMcap < 12000) return;
 
