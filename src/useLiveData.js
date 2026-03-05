@@ -1815,15 +1815,14 @@ export function useLiveData() {
               : (t.mcap || 0);
             const entryMcap = data.entryMcap || 0;
 
-            // WIN: profitable exit
-            // - Standard: sold ≥50%, profit ≥0.15 SOL, exit at ≥$12K
-            // - Full exit: sold ≥95% and any profit — they're out, call it
+            // WIN: sold ≥50%, profit > 0, exit at ≥$12K
             const walletWin = positionClosed && pnl > 0 && exitMcap >= 12000 && (pnl >= 0.15 || soldRatio >= 0.95);
-            // LOSS: token dead OR substantially exited at a loss
-            // - Full exit: sold ≥95% and any loss — they're out, call it
+            // LOSS: only resolves when token is dead OR wallet is 95%+ out at a loss
+            // Anything under 95% stays as HOLD — they still have bag, position not over
+            const positionFullyExited = soldRatio >= 0.95;
             const walletLoss = !walletWin && (
               (tokenDead && pnl < 0) ||
-              (positionSubstantiallyClosed && (pnl <= -0.15 || soldRatio >= 0.95) && pnl < 0)
+              (positionFullyExited && pnl < 0)
             );
             // HOLD: alive token, position still open, outcome not yet determined
             const walletHold = !walletWin && !walletLoss && tokenAlive;

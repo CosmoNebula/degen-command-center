@@ -5666,12 +5666,8 @@ export default function DegenCommandCenter(){
                     </div>}
                   </div>
                 ))}
-                <div style={{marginTop:12,padding:"6px 8px",background:"rgba(255,255,255,0.02)",borderRadius:4,
-                  fontSize:10,color:NEON.dimText,lineHeight:1.5,textAlign:"center"}}>
-                  Wallets need <b style={{color:NEON.cyan}}>7+ wins, 70%+ rate, 2+ SOL profit, 12K+ coins only</b> for smart money.<br/>
-                  All wallets tracked — wins, losses &amp; holds.<br/>
-                  Spray-and-pray wallets (10:1 L:W) auto-purged.<br/>
-                  <span style={{color:NEON.dimText,fontSize:9}}>{allWallets.length} wallets tracked this session</span>
+                <div style={{marginTop:8,fontSize:9,color:"rgba(255,255,255,0.15)",textAlign:"center"}}>
+                  {allWallets.length} wallets tracked this session
                 </div>
               </div>);
             })()}
