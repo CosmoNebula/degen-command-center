@@ -40,7 +40,7 @@ function tdMcapUsd(td) {
     : td.lastMcapSol * SOL_USD * MCAP_CORRECTION;
 }
 
-export function useLiveData() {
+export function useLiveData({ onMarkDirty, onSmartAlert } = {}) {
   const [tokens, setTokens] = useState([]);
   const tokensRef = useRef([]); // synchronous access for intervals
   tokensRef.current = tokens; // sync during render — always up to date
@@ -311,11 +311,13 @@ export function useLiveData() {
             const alertKey = `${wallet.slice(0,8)}-${mint}`;
             if (!copyTradeAlerts.current.has(alertKey)) {
               copyTradeAlerts.current.add(alertKey);
-              setSmartMoneyAlerts(p => [{
+              const alertObj = {
                 id: Date.now() + Math.random(), wallet, mint, sol,
                 wins: ws.wins, winTokens: ws.tokens.slice(-3),
                 time: now,
-              }, ...p].slice(0, 30));
+              };
+              setSmartMoneyAlerts(p => [alertObj, ...p].slice(0, 30));
+              if (onSmartAlert) onSmartAlert(alertObj);
               console.log(`[SMART$] 🧠 Winner wallet (${ws.wins}w) bought ${sol.toFixed(2)} SOL into ${mint.slice(0,8)}`);
             }
           }
@@ -1883,6 +1885,7 @@ export function useLiveData() {
               td.wallets[w] = { bought: 0, sold: 0, firstBuyTime: null, lastSellTime: null, entryMcap: 0, exitMcap: 0, sellEvents: [] };
               // Keep addr in winAddrs — never delete, prevents same position re-triggering as win
               if (ws.activeBuys) delete ws.activeBuys[t.addr];
+              if (onMarkDirty) onMarkDirty(w);
             }
 
             // ── LOSS ──
@@ -1908,6 +1911,7 @@ export function useLiveData() {
               td.wallets[w] = { bought: 0, sold: 0, firstBuyTime: null, lastSellTime: null, entryMcap: 0, exitMcap: 0, sellEvents: [] };
               // Keep addr in lossAddrs — never delete
               if (ws.activeBuys) delete ws.activeBuys[t.addr];
+              if (onMarkDirty) onMarkDirty(w);
             }
 
             // ── HOLD ──
@@ -1920,6 +1924,7 @@ export function useLiveData() {
                 entryTime: data.firstBuyTime || now3, exitTime: null,
                 athMcap: td.athMcap || exitMcap, startMcap: td.startMcap || entryMcap, time: now3, sellEvents });
               if (ws.trades.length > 50) ws.trades = ws.trades.slice(-50);
+              if (onMarkDirty) onMarkDirty(w);
             }
             // Refresh live HOLD entries with current mcap/pnl/athMcap/sellEvents
             if (walletHold && ws.holdAddrs.has(t.addr)) {

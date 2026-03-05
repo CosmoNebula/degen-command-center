@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useLiveData } from "./useLiveData";
+import { useSupabase } from "./useSupabase";
 import { fetchTokenByAddress, proxyUrl } from "./api";
 
 const NEON = {
@@ -4241,6 +4242,7 @@ function AlienHUD({aliens}){
 // ═══════════════ MAIN ═══════════════
 export default function DegenCommandCenter(){
   const [tokens,setTokens]=useState([]);const [radarPings,setRadarPings]=useState([]);
+  const [dbStatus,setDbStatus]=useState({msg:"",type:"info",ts:0});
   const [lockedTokens,setLockedTokens]=useState([]);const [scanLine,setScanLine]=useState(0);
   const [totalScanned,setTotalScanned]=useState(0);const [deployed,setDeployed]=useState(0);
   const [rejected,setRejected]=useState(0);
@@ -4332,7 +4334,30 @@ export default function DegenCommandCenter(){
   },[]);
 
   // ═══ LIVE DATA ═══
-  const live = useLiveData();
+  // walletScoresRef is shared between live and supabase via a stable ref container
+  const walletScoresContainer = useRef(null);
+
+  const supabase = useSupabase({
+    onStatus: (msg, type) => {
+      console.log(`[DB ${type}] ${msg}`);
+      setDbStatus({ msg, type, ts: Date.now() });
+    },
+  });
+
+  const live = useLiveData({
+    onMarkDirty: (addr) => supabase.markDirty(addr),
+    onSmartAlert: (alert) => supabase.logSmartAlert(alert),
+  });
+
+  // Once live is ready, expose its walletScoresRef to supabase
+  useEffect(() => {
+    if (live.walletScoresRef) {
+      walletScoresContainer.current = live.walletScoresRef;
+      supabase.setWalletScoresRef(live.walletScoresRef);
+      // Trigger initial DB load now that we have the ref
+      supabase.loadFromDB();
+    }
+  }, [!!live.walletScoresRef]);
 
   // Pipe live tokens into state
   useEffect(() => {
@@ -6354,5 +6379,17 @@ export default function DegenCommandCenter(){
           </GlassPanel>
         </div>
       </div>
+      {/* ── DB SYNC STATUS PILL ── */}
+      {dbStatus.msg&&(Date.now()-dbStatus.ts)<8000&&<div style={{
+        position:"fixed",bottom:12,left:"50%",transform:"translateX(-50%)",
+        zIndex:9999,pointerEvents:"none",
+        background:"rgba(5,3,20,0.92)",border:`1px solid ${dbStatus.type==="success"?"#39ff14":dbStatus.type==="error"?"#ff073a":"#00e5ff"}40`,
+        borderRadius:20,padding:"4px 14px",
+        boxShadow:`0 0 10px ${dbStatus.type==="success"?"#39ff14":dbStatus.type==="error"?"#ff073a":"#00e5ff"}20`}}>
+        <span style={{fontSize:9,fontFamily:"Orbitron",letterSpacing:1,
+          color:dbStatus.type==="success"?"#39ff14":dbStatus.type==="error"?"#ff073a":"#00e5ff"}}>
+          {dbStatus.type==="success"?"✅":dbStatus.type==="error"?"⚠":"⬆"} {dbStatus.msg}
+        </span>
+      </div>}
     </div>);
 }
