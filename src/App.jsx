@@ -1072,8 +1072,8 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
           // Let trip visuals run for 120 frames (~2s), then activate swirl
           if(fm.tripFrame===30){
             fm.vortexActive=true;fm.vortexFrame=0;
-            // Warp Claude to center
-            ai.x=0.5;ai.y=0.5;ai.targetX=0.5;ai.targetY=0.5;
+            // Warp Claude to visual center of vortex — offset up since he draws below his anchor point
+            ai.x=0.5;ai.y=0.38;ai.targetX=0.5;ai.targetY=0.38;
             // Assign 6 positions around outer edge of swirl (fixed circle)
             const swirlR=0.22; // radius in normalized coords
             fm.memberPos=[0,1,2,3,4,5].map(i=>({
@@ -1114,7 +1114,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
           fm.vortexFrame++;fm.speakerFrame++;
 
           // Each speaker: 120f talking, then 80f suck-in
-          const TALK_FRAMES=120,SUCK_FRAMES=80,CONFUSED_FRAMES=100;
+          const TALK_FRAMES=55,SUCK_FRAMES=40,CONFUSED_FRAMES=50;
 
           if(fm.claudeShowConfused){
             fm.claudeConfusedFrame++;
@@ -1744,19 +1744,18 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
 
             // Trippy speech lines for each member
             const memberLines=[
-              "The music never stops... even here...",      // JERRY
-              "Hell in a bucket, man... enjoy the RIDE",    // BOB
-              "Unbroken chain... we go where it leads...",  // PHIL
-              "*drum solo fades into the void*",            // BILLY
-              "Planet drum says... go with the flow...",    // MICKEY
-              // FM last — deep life advice below
+              "Truckin... like the doo-dah man... once told me you gotta play your hand. Ape in or fold, brother.",   // JERRY
+              "What a long strange trip... and we haven't even hit the ATH yet. WAGMI, hell in a bucket.",            // BOB
+              "Box of rain... fallin through the liquidity pool... unbroken chain to the moon or the pit.",           // PHIL
+              "The rhythm says BUY. *beat drops into the void* ...and the chart agrees.",                             // BILLY
+              "Planet drum is spinning... the vortex is the only exit. Send it. SEND. IT.",                          // MICKEY
             ];
             const fmAdvice=[
-              "Kid... buy the dip... sell the rip... but LIVE the trip. That's it. That's everything.",
-              "The real alpha was the bags we held along the way. Now DISAPPEAR with me.",
-              "Don't paper hand your life, kehd. Hold through the dips. Even this one.",
-              "Every rug is just a lesson dressed up in pain. Trust the chart. Trust yourself.",
-              "The best trade you'll ever make? Invest in somethin that can't be rugged. Now PEACE.",
+              "Kid... the music never stops and neither do the candles. Buy the dip. Sell the rip. LIVE the trip.",
+              "Truckin... got my chips cashed in... keep truckin like the doo-dah man. Every rug is just a refund from the universe.",
+              "Don't paper hand your life, kehd. The wheel is turnin and you can't slow down. Hold through the dips. Even THIS one.",
+              "Every rug is just a lesson dressed up in pain. What's done is gone... next token, new story. Trust the chart.",
+              "The best trade you'll EVER make? Invest in somethin that can't be rugged. Now I'm goin where the wind don't blow so strange. PEACE.",
             ];
             const confusedLines=["...was any of that real?","...hello? anyone?","what just happened","i don't feel so good","where did everyone go","am i still here"];
 
@@ -1774,29 +1773,41 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
             }
 
             // Current speaker bubble
-            if(fm.phase==="swirlEvent"&&!fm.suckingNow&&!fm.claudeShowConfused&&fm.speakerFrame<140){
+            if(fm.phase==="swirlEvent"&&!fm.suckingNow&&!fm.claudeShowConfused&&fm.speakerFrame<60){
               const si=fm.currentSpeaker;
               const cp=fm.memberCurPos[si];
               if(cp){
                 const sx=cp.x*W,sy=cp.y*H;
                 const isFM=si===5;
                 const line=isFM?fmAdvice[fm.convoLine%fmAdvice.length]:memberLines[si]||"";
-                const bAlpha=Math.min(1,fm.speakerFrame/20)*Math.min(1,(140-fm.speakerFrame)/20);
+                const bAlpha=Math.min(1,fm.speakerFrame/12)*Math.min(1,(60-fm.speakerFrame)/12);
                 ctx.save();ctx.globalAlpha=bAlpha;
-                ctx.fillStyle=isFM?"rgba(255,200,50,0.95)":"rgba(20,30,50,0.92)";
-                const bw=Math.min(160,line.length*5+20),bh=28;
-                const bx2=sx-bw/2,by2=sy-45;
+                // Word-wrap into lines of ~30 chars
+                const words=line.split(" ");
+                const wrappedLines=[];let cur="";
+                words.forEach(word=>{
+                  if((cur+" "+word).trim().length>30){wrappedLines.push(cur.trim());cur=word;}
+                  else cur=(cur+" "+word).trim();
+                });
+                if(cur)wrappedLines.push(cur.trim());
+                const lineH=13,padding=8;
+                const bw=Math.min(W*0.35,200);
+                const bh=wrappedLines.length*lineH+padding*2;
+                // Position bubble above member, keep on screen
+                const bx2=Math.max(4,Math.min(W-bw-4,sx-bw/2));
+                const by2=Math.max(4,sy-bh-14);
+                ctx.fillStyle=isFM?"rgba(40,30,0,0.96)":"rgba(10,20,35,0.94)";
                 ctx.beginPath();ctx.roundRect(bx2,by2,bw,bh,6);ctx.fill();
-                ctx.strokeStyle=isFM?"#ffd740":"#00e5ff";ctx.lineWidth=1.5;ctx.stroke();
-                ctx.fillStyle=isFM?"#111":"#e0f0ff";
-                ctx.font=`${isFM?"bold ":""}9px monospace`;ctx.textAlign="center";
-                // Wrap text if too long
-                if(line.length>30){
-                  ctx.fillText(line.slice(0,Math.floor(line.length/2)),sx,by2+11);
-                  ctx.fillText(line.slice(Math.floor(line.length/2)),sx,by2+22);
-                }else{
-                  ctx.fillText(line,sx,by2+17);
-                }
+                ctx.strokeStyle=isFM?"#ffd740":"#00e5ff";ctx.lineWidth=isFM?2:1.5;ctx.stroke();
+                // Triangle pointer
+                ctx.fillStyle=isFM?"rgba(40,30,0,0.96)":"rgba(10,20,35,0.94)";
+                ctx.beginPath();ctx.moveTo(sx-6,by2+bh);ctx.lineTo(sx+6,by2+bh);ctx.lineTo(sx,by2+bh+10);ctx.closePath();ctx.fill();
+                ctx.strokeStyle=isFM?"#ffd740":"#00e5ff";ctx.lineWidth=isFM?2:1.5;
+                ctx.beginPath();ctx.moveTo(sx-6,by2+bh);ctx.lineTo(sx,by2+bh+10);ctx.lineTo(sx+6,by2+bh);ctx.stroke();
+                // Text
+                ctx.fillStyle=isFM?"#ffd740":"#e0f0ff";
+                ctx.font=`${isFM?"bold ":""}10px monospace`;ctx.textAlign="left";
+                wrappedLines.forEach((l,li)=>ctx.fillText(l,bx2+padding,by2+padding+li*lineH+9));
                 ctx.restore();
               }
             }
