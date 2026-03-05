@@ -255,7 +255,8 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
     crewBubble:null,crewTimer:0,crewName:null,crewSlot:0,
     chatCooldown:0,morphMode:"normal",morphFrame:0,
   });
-  const fatMonkeyRef=useRef({active:false,x:-0.1,frame:0,smokeRings:[],musicNotes:[],nextSpawn:Date.now()+rand(180,420)*1000,walkDir:1,smokeTimer:0,tripActive:false,tripFrame:0,tripMsg:false,tripMsgFrame:0});
+  const fatMonkeyRef=useRef({active:false,x:-0.1,frame:0,smokeRings:[],musicNotes:[],nextSpawn:Date.now()+rand(180,420)*1000,walkDir:1,smokeTimer:0,tripActive:false,tripFrame:0,tripMsg:false,tripMsgFrame:0,
+    vortexActive:false,vortexFrame:0,swirlAngles:[0,0,0,0,0,0],suckedIn:[false,false,false,false,false,false]});
   const jaycShipRef=useRef({active:false,y:-0.3,frame:0,bills:[],aliens:[],nextSpawn:Date.now()+rand(240,480)*1000,opacity:0});
   const jayCRef=useRef({onGround:false,beamPhase:0,x:0.55,y:0.95,flexPhase:0,targetY:0.95,beamUp:false,opacity:0,beltHolder:"claude"});
   const lightModeRef=useRef({active:false,frame:0,maxFrames:180});
@@ -1026,11 +1027,24 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         }
         if(fm.tripActive){
           fm.tripFrame++;
-          if(fm.tripFrame>600){// ~10 seconds of trip
-            fm.tripActive=false;fm.walkDir=0;fm.tripMsg=true;fm.tripMsgFrame=0;
-            // Force exit
-            fm.active=false;fm.nextSpawn=now2+rand(900,1500)*1000;
-            onKillFeedRef.current?.({type:"system",text:"🐒 Fat Monkey & the Dead have faded into the cosmos... ✌️🌀💫"});
+          if(fm.tripFrame>600&&!fm.vortexActive){// ~10 seconds of trip → start vortex
+            fm.vortexActive=true;fm.vortexFrame=0;
+            fm.swirlAngles=[0,1,2,3,4,5].map(i=>i*Math.PI*2/6);
+            fm.suckedIn=[false,false,false,false,false,false];
+          }
+          if(fm.vortexActive){
+            fm.vortexFrame++;
+            // Suck in band members one by one every 60 frames, FM last
+            const suckOrder=[1,2,3,4,0,5]; // JERRY,BOB,PHIL,BILLY,MICKEY order, FM(5) last
+            suckOrder.forEach((slot,si)=>{
+              if(!fm.suckedIn[slot]&&fm.vortexFrame>si*70+40) fm.suckedIn[slot]=true;
+            });
+            // After all sucked in, end event
+            if(fm.vortexFrame>480){
+              fm.tripActive=false;fm.vortexActive=false;fm.walkDir=0;fm.tripMsg=true;fm.tripMsgFrame=0;
+              fm.active=false;fm.nextSpawn=now2+rand(900,1500)*1000;
+              onKillFeedRef.current?.({type:"system",text:"◈ Claude: ...was that real? where did everyone go? 🌀😵"});
+            }
           }
         }else{
           fm.x+=0.002*fm.walkDir;
@@ -1571,6 +1585,66 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
             dGrad2.addColorStop(1,`hsla(${(dHue2+180)%360},100%,60%,${tripAlpha*0.25})`);
             ctx.fillStyle=dGrad2;
             ctx.fillRect(dx4,H-dLen2,W/20,dLen2);
+          }
+
+          // ── VORTEX END SEQUENCE ──
+          if(fm.vortexActive){
+            const vf=fm.vortexFrame;
+            const vcx=W/2,vcy=H/2;
+            const vortexR=40+vf*0.4+Math.sin(vf*0.1)*10;
+            // Portal glow rings
+            for(let vr=0;vr<4;vr++){
+              const vGrad=ctx.createRadialGradient(vcx,vcy,0,vcx,vcy,vortexR*(1+vr*0.6));
+              vGrad.addColorStop(0,`hsla(${(vf*8)%360},100%,90%,0.8)`);
+              vGrad.addColorStop(0.4,`hsla(${(vf*5+120)%360},100%,50%,0.4)`);
+              vGrad.addColorStop(1,"transparent");
+              ctx.fillStyle=vGrad;
+              ctx.beginPath();ctx.arc(vcx,vcy,vortexR*(1+vr*0.6),0,Math.PI*2);ctx.fill();
+            }
+            // Spiral arms
+            for(let arm=0;arm<3;arm++){
+              ctx.strokeStyle=`hsla(${(vf*6+arm*120)%360},100%,70%,0.6)`;
+              ctx.lineWidth=3;ctx.beginPath();
+              for(let t3=0;t3<60;t3++){
+                const a3=t3*0.15+vf*0.08+arm*Math.PI*2/3;
+                ctx.lineTo(vcx+Math.cos(a3)*t3*3,vcy+Math.sin(a3)*t3*3);
+              }
+              ctx.stroke();
+            }
+            // Characters swirling — sucked in one by one
+            const allSwirlers=[
+              {label:"JERRY",color:"#7a5a3c"},{label:"BOB",color:"#8B5E3C"},
+              {label:"PHIL",color:"#7a5540"},{label:"BILLY",color:"#8a6a4c"},
+              {label:"MICKEY",color:"#7a5a3c"},{label:"FM",color:"#5a3a1c"}
+            ];
+            allSwirlers.forEach((ch,ci)=>{
+              if(fm.suckedIn[ci])return;
+              const orbitR=Math.max(6,W*0.28-vf*0.45-ci*15);
+              if(!fm.swirlAngles[ci])fm.swirlAngles[ci]=ci*Math.PI*2/6;
+              fm.swirlAngles[ci]+=(0.04+vf*0.0003);
+              const sx=vcx+Math.cos(fm.swirlAngles[ci])*orbitR;
+              const sy=vcy+Math.sin(fm.swirlAngles[ci])*orbitR;
+              const sz=Math.max(4,16-vf*0.02);
+              ctx.save();ctx.translate(sx,sy);
+              ctx.fillStyle=ch.color;
+              ctx.beginPath();ctx.arc(0,0,sz*0.6,0,Math.PI*2);ctx.fill();
+              ctx.beginPath();ctx.arc(0,-sz*0.9,sz*0.4,0,Math.PI*2);ctx.fill();
+              ctx.fillStyle="rgba(255,255,255,0.9)";
+              ctx.font="bold 7px monospace";ctx.textAlign="center";
+              ctx.fillText(ch.label,0,sz*2.2);
+              ctx.restore();
+            });
+            // Claude hovers above it all — confused, questioning reality
+            ctx.save();ctx.translate(vcx,vcy-W*0.22);
+            ctx.shadowColor=`hsl(${(vf*4)%360},100%,70%)`;
+            ctx.shadowBlur=12+Math.sin(vf*0.1)*6;
+            ctx.fillStyle="#00ccff";
+            ctx.font="bold 13px 'Orbitron',monospace";
+            ctx.textAlign="center";ctx.fillText("◈ CLAUDE",0,0);
+            ctx.fillStyle="rgba(255,255,200,0.85)";ctx.font="9px monospace";
+            const confusedMsgs=["...was any of that real?","what just happened","where did everyone go","i don't feel so good","...hello?","am i still here"];
+            ctx.fillText(confusedMsgs[Math.floor(vf/40)%confusedMsgs.length],0,14);
+            ctx.shadowBlur=0;ctx.restore();
           }
 
           ctx.restore();
@@ -3700,24 +3774,57 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
 function KillFeed({events,onSelectByName}){
   const colorMap={rug:NEON.red,moon:NEON.yellow,deploy:NEON.cyan,migration:"#39ff14",lock:NEON.yellow,system:NEON.purple,whale:"#ffd740",dolphin:"#00d4ff"};
   const glowMap={rug:"#ff073a",moon:"#ffe600",deploy:"#00ffff",migration:"#39ff14",lock:"#ffd740",system:"#bf00ff",whale:"#ffd740",dolphin:"#00d4ff"};
-  const quality=events.filter(e=>["whale","dolphin","system","moon","migration"].includes(e.type));
-  if(quality.length===0)return null;
-  const recent=quality.slice(0,8);
-  return(<div style={{position:"absolute",top:0,left:0,right:0,zIndex:15,pointerEvents:"auto",overflow:"hidden",
-    height:"10%",minHeight:36,
-    background:"linear-gradient(180deg,rgba(2,1,8,0.97) 0%,rgba(4,2,14,0.92) 60%,rgba(5,3,14,0.6) 85%,transparent 100%)",
-    borderRadius:"6px 6px 0 0"}}>
-    <div style={{position:"absolute",left:0,top:0,bottom:0,width:60,background:"linear-gradient(90deg,rgba(2,1,8,0.98),transparent)",zIndex:2}}/>
-    <div style={{position:"absolute",right:0,top:0,bottom:0,width:60,background:"linear-gradient(270deg,rgba(2,1,8,0.98),transparent)",zIndex:2}}/>
-    {recent.map((e,i)=>{
-      const c=colorMap[e.type]||NEON.cyan;const g=glowMap[e.type]||"#00ffff";
-      const delay=i*7;
-      return(<div key={(e._ts||0)+"-"+i} style={{position:"absolute",top:"30%",left:0,right:0,whiteSpace:"nowrap",
-        animation:`kfSlide 28s linear ${delay}s both`,pointerEvents:"auto"}}>
+  const [current,setCurrent]=React.useState(null);
+  const queueRef=React.useRef([]);
+  const timerRef=React.useRef(null);
+  const processedRef=React.useRef(new Set());
+  const DISPLAY_MS=7000;
+
+  const showNext=React.useCallback(()=>{
+    if(queueRef.current.length===0){setCurrent(null);timerRef.current=null;return;}
+    const next=queueRef.current.shift();
+    setCurrent(next);
+    timerRef.current=setTimeout(showNext,DISPLAY_MS);
+  },[]);
+
+  React.useEffect(()=>{
+    const quality=events.filter(e=>["whale","dolphin","system","moon","migration"].includes(e.type));
+    const fresh=quality.filter(e=>{
+      const key=(e._ts||0)+e.text;
+      if(processedRef.current.has(key))return false;
+      processedRef.current.add(key);
+      return true;
+    });
+    if(fresh.length===0)return;
+    queueRef.current.push(...fresh);
+    if(!timerRef.current)showNext();
+  },[events,showNext]);
+
+  React.useEffect(()=>()=>{if(timerRef.current)clearTimeout(timerRef.current);},[]);
+
+  if(!current)return null;
+  const c=colorMap[current.type]||NEON.cyan;
+  const g=glowMap[current.type]||"#00ffff";
+  return(
+    <div style={{position:"absolute",top:0,left:0,right:0,zIndex:15,pointerEvents:"none",overflow:"hidden",
+      height:"10%",minHeight:36,
+      background:"linear-gradient(180deg,rgba(2,1,8,0.97) 0%,rgba(4,2,14,0.92) 60%,rgba(5,3,14,0.6) 85%,transparent 100%)",
+      borderRadius:"6px 6px 0 0"}}>
+      <div style={{position:"absolute",left:0,top:0,bottom:0,width:50,
+        background:"linear-gradient(90deg,rgba(2,1,8,0.98),transparent)",zIndex:2,pointerEvents:"none"}}/>
+      <div style={{position:"absolute",right:0,top:0,bottom:0,width:50,
+        background:"linear-gradient(270deg,rgba(2,1,8,0.98),transparent)",zIndex:2,pointerEvents:"none"}}/>
+      <div key={current._ts+current.text} style={{position:"absolute",top:"50%",transform:"translateY(-50%)",
+        whiteSpace:"nowrap",animation:`kfRTL ${DISPLAY_MS}ms linear both`,pointerEvents:"auto"}}
+      >
         <span style={{fontSize:13,fontWeight:900,letterSpacing:1.5,fontFamily:"'Orbitron',sans-serif",
-          color:c,textShadow:`0 0 6px ${g}, 0 0 16px ${g}40`,opacity:0.92,cursor:e.name?"pointer":"default",paddingLeft:8}}
-          onClick={()=>{if(e.name&&onSelectByName)onSelectByName(e.name);}}
-        >{e.text}</span></div>)})}</div>);
+          color:c,textShadow:`0 0 6px ${g}, 0 0 16px ${g}40`,opacity:0.92,
+          cursor:current.name?"pointer":"default",paddingLeft:8}}
+          onClick={()=>{if(current.name&&onSelectByName)onSelectByName(current.name);}}
+        >{current.text}</span>
+      </div>
+    </div>
+  );
 }
 
 function IntelPanel({token,onLock,onClose}){
@@ -4855,6 +4962,7 @@ export default function DegenCommandCenter(){
         @keyframes newToken{from{background:rgba(255,7,58,0.06)}to{background:transparent}}
         @keyframes promoted{from{background:rgba(57,255,20,0.1)}to{background:transparent}}
         @keyframes marquee{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+        @keyframes kfRTL{0%{transform:translateY(-50%) translateX(110vw)}10%{opacity:1}90%{opacity:1}100%{transform:translateY(-50%) translateX(-110vw)}}
         @keyframes kfSlide{0%{transform:translateX(110%);opacity:0}5%{opacity:1}95%{opacity:1}100%{transform:translateX(-110%);opacity:0}}
         @keyframes headerPulse{0%,100%{opacity:0.3}50%{opacity:0.7}}
         .token-row{transition:background 0.15s}.token-row:hover{background:rgba(255,0,255,0.05)!important}
