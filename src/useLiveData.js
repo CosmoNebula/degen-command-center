@@ -305,7 +305,12 @@ export function useLiveData() {
           if (walletScores.current[wallet]) walletScores.current[wallet].lastActivity = now;
           td.wallets[wallet].lastSellTime = now;
           // Capture mcap at time of sell for accurate exit display
-          td.wallets[wallet].exitMcap = tdMcapUsd(td);
+          const sellMcapNow = tdMcapUsd(td);
+          td.wallets[wallet].exitMcap = sellMcapNow;
+
+          // Track individual sell events for trade card breakdown
+          if (!td.wallets[wallet].sellEvents) td.wallets[wallet].sellEvents = [];
+          td.wallets[wallet].sellEvents.push({ sol, mcap: sellMcapNow, time: now });
 
           // ─── SELL VELOCITY ───
           td.sellTimes.push(now);
@@ -1797,8 +1802,10 @@ export function useLiveData() {
               : (t.mcap || 0);                    // for holds, use current mcap
             const entryMcap = data.entryMcap || 0;
 
-            // WIN: sold enough, came out profitable by ≥0.15 SOL, AND exit mcap was ≥$12K
-            const walletWin = positionClosed && pnl >= 0.15 && exitMcap >= 12000;
+            // WIN: profitable exit
+            // - Standard: sold ≥50%, profit ≥0.15 SOL, exited at ≥$12K mcap (filters lucky holds)
+            // - Full exit: sold ≥95% and profit ≥0.15 SOL regardless of mcap (they scalped it, that's a win)
+            const walletWin = positionClosed && pnl >= 0.15 && (exitMcap >= 12000 || soldRatio >= 0.95);
             // LOSS: token dead OR substantially exited (80%+) at ≥0.15 SOL loss
             // Partial exits at slight negative stay as HOLD until token dies or they fully exit
             const walletLoss = !walletWin && (
@@ -1808,19 +1815,21 @@ export function useLiveData() {
             // HOLD: alive token, position still open, outcome not yet determined
             const walletHold = !walletWin && !walletLoss && tokenAlive;
 
+            const sellEvents = data.sellEvents || [];
+            const anyQualSell = sellEvents.some(s => s.mcap >= 12000);
+
             // ── WIN ──
             if (walletWin && !ws.winAddrs.has(t.addr)) {
               if (ws.holdAddrs.has(t.addr)) {
-                // Upgrade HOLD → WIN
                 ws.holds = Math.max(0, ws.holds - 1);
                 ws.holdAddrs.delete(t.addr);
                 ws.holdTokens = ws.holdTokens.filter(n => n !== t.name);
                 const holdTrade = ws.trades.find(tr => tr.addr === t.addr && tr.type === "HOLD");
-                if (holdTrade) { holdTrade.type = "WIN"; holdTrade.mcap = data.exitMcap||exitMcap; holdTrade.sold = data.sold; holdTrade.pnl = pnl; holdTrade.athMcap = Math.max(td.athMcap||0, data.exitMcap||exitMcap, holdTrade.athMcap||0); }
+                if (holdTrade) { holdTrade.type = "WIN"; holdTrade.mcap = data.exitMcap||exitMcap; holdTrade.sold = data.sold; holdTrade.pnl = pnl; holdTrade.athMcap = Math.max(td.athMcap||0, data.exitMcap||exitMcap, holdTrade.athMcap||0); holdTrade.sellEvents = sellEvents; }
               } else {
                 ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "WIN", mcap: exitMcap, entryMcap, pnl,
                   entryTime: data.firstBuyTime || now3, exitTime: data.lastSellTime || now3,
-                  athMcap: td.athMcap || exitMcap, startMcap: td.startMcap || entryMcap, time: now3 });
+                  athMcap: td.athMcap || exitMcap, startMcap: td.startMcap || entryMcap, time: now3, sellEvents });
                 if (ws.trades.length > 50) ws.trades = ws.trades.slice(-50);
               }
               ws.wins++;
@@ -1832,26 +1841,23 @@ export function useLiveData() {
               if (exitMcap > 100000) ws.bigWins = (ws.bigWins || 0) + 1;
               if (ws.wins === 3) console.log(`[SMART$] 🧠 Wallet ${w.slice(0,8)} hit 3 wins: ${ws.tokens.join(", ")}`);
               if (ws.wins === 6) console.log(`[SMART$] 🧠🧠 Wallet ${w.slice(0,8)} hit 6 WINS: ${ws.tokens.join(", ")}`);
-              // ─── RESET position so next buy cycle on same coin is tracked independently ───
-              td.wallets[w] = { bought: 0, sold: 0, firstBuyTime: null, lastSellTime: null, entryMcap: 0, exitMcap: 0 };
-              ws.winAddrs.delete(t.addr); // allow fresh cycle on same coin
-              // Clear active buy — now in resolved trades
+              td.wallets[w] = { bought: 0, sold: 0, firstBuyTime: null, lastSellTime: null, entryMcap: 0, exitMcap: 0, sellEvents: [] };
+              ws.winAddrs.delete(t.addr);
               if (ws.activeBuys) delete ws.activeBuys[t.addr];
             }
 
             // ── LOSS ──
             if (walletLoss && !ws.lossAddrs.has(t.addr) && !ws.winAddrs.has(t.addr)) {
               if (ws.holdAddrs.has(t.addr)) {
-                // Downgrade HOLD → LOSS
                 ws.holds = Math.max(0, ws.holds - 1);
                 ws.holdAddrs.delete(t.addr);
                 ws.holdTokens = ws.holdTokens.filter(n => n !== t.name);
                 const holdTrade = ws.trades.find(tr => tr.addr === t.addr && tr.type === "HOLD");
-                if (holdTrade) { holdTrade.type = "LOSS"; holdTrade.mcap = data.exitMcap||exitMcap; holdTrade.sold = data.sold; holdTrade.pnl = pnl; holdTrade.athMcap = Math.max(td.athMcap||0, data.exitMcap||exitMcap, holdTrade.athMcap||0); }
+                if (holdTrade) { holdTrade.type = "LOSS"; holdTrade.mcap = data.exitMcap||exitMcap; holdTrade.sold = data.sold; holdTrade.pnl = pnl; holdTrade.athMcap = Math.max(td.athMcap||0, data.exitMcap||exitMcap, holdTrade.athMcap||0); holdTrade.sellEvents = sellEvents; }
               } else {
                 ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "LOSS", mcap: exitMcap, entryMcap, pnl,
                   entryTime: data.firstBuyTime || now3, exitTime: data.lastSellTime || now3,
-                  athMcap: td.athMcap || exitMcap, startMcap: td.startMcap || entryMcap, time: now3 });
+                  athMcap: td.athMcap || exitMcap, startMcap: td.startMcap || entryMcap, time: now3, sellEvents });
                 if (ws.trades.length > 50) ws.trades = ws.trades.slice(-50);
               }
               ws.losses++;
@@ -1860,10 +1866,8 @@ export function useLiveData() {
               ws.totalBought += data.bought;
               ws.totalSold += (data.sold || 0);
               ws.totalPnl += pnl;
-              // ─── RESET position so next buy cycle on same coin is tracked independently ───
-              td.wallets[w] = { bought: 0, sold: 0, firstBuyTime: null, lastSellTime: null, entryMcap: 0, exitMcap: 0 };
-              ws.lossAddrs.delete(t.addr); // allow fresh cycle on same coin
-              // Clear active buy — now in resolved trades
+              td.wallets[w] = { bought: 0, sold: 0, firstBuyTime: null, lastSellTime: null, entryMcap: 0, exitMcap: 0, sellEvents: [] };
+              ws.lossAddrs.delete(t.addr);
               if (ws.activeBuys) delete ws.activeBuys[t.addr];
             }
 
@@ -1875,13 +1879,13 @@ export function useLiveData() {
               ws.holdTokens.push(t.name);
               ws.trades.push({ token: t.name, addr: t.addr, sol: data.bought, sold: data.sold, type: "HOLD", mcap: exitMcap, entryMcap, pnl,
                 entryTime: data.firstBuyTime || now3, exitTime: null,
-                athMcap: td.athMcap || exitMcap, startMcap: td.startMcap || entryMcap, time: now3 });
+                athMcap: td.athMcap || exitMcap, startMcap: td.startMcap || entryMcap, time: now3, sellEvents });
               if (ws.trades.length > 50) ws.trades = ws.trades.slice(-50);
             }
-            // Refresh live HOLD entries with current mcap/pnl/athMcap
+            // Refresh live HOLD entries with current mcap/pnl/athMcap/sellEvents
             if (walletHold && ws.holdAddrs.has(t.addr)) {
               const existTrade = ws.trades.find(tr => tr.addr === t.addr && tr.type === "HOLD");
-              if (existTrade) { existTrade.mcap = exitMcap; existTrade.sold = data.sold; existTrade.pnl = pnl; existTrade.athMcap = Math.max(td.athMcap||0, existTrade.athMcap||0); }
+              if (existTrade) { existTrade.mcap = exitMcap; existTrade.sold = data.sold; existTrade.pnl = pnl; existTrade.athMcap = Math.max(td.athMcap||0, existTrade.athMcap||0); existTrade.sellEvents = sellEvents; }
             }
           });
         });

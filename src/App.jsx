@@ -5496,82 +5496,87 @@ export default function DegenCommandCenter(){
                   <div style={{fontSize:10,fontWeight:900,color:"#ffa500",fontFamily:"Orbitron",letterSpacing:0.5,marginBottom:4}}>TRADES</div>
                   {w.trades.length===0&&<div style={{color:NEON.dimText,fontSize:10,padding:8}}>No trade details recorded yet</div>}
                   {w.trades.slice().reverse().filter(tr=>{
+                    // Only show trades where at least one sell crossed $12K (filters bot noise)
+                    const sells=tr.sellEvents||[];
+                    const anyQual=sells.some(s=>s.mcap>=12000)||(tr.mcap||0)>=12000||(tr.entryMcap||0)>=12000;
+                    if(!anyQual)return false;
                     const trPnl=tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol);
                     if(tr.type==="WIN"&&trPnl<0.15)return false;
                     if(tr.type==="LOSS"&&trPnl>-0.15)return false;
                     return true;
-                  }).map((tr,ti,arr)=>{
+                  }).map((tr,ti)=>{
+                    const sells=tr.sellEvents||[];
                     const solIn=tr.sol||0;
                     const solOut=tr.sold||0;
                     const soldRatio=solIn>0?Math.min(1,solOut/solIn):0;
-                    const pctClosed=Math.round(soldRatio*100);
-                    const solRemaining=Math.max(0,solIn-solOut);
                     const isHold=tr.type==="HOLD";
                     const isPartial=isHold&&solOut>0;
-                    // Realized P&L = what came out minus cost basis for that portion
-                    const costBasisSold=solIn*soldRatio;
-                    const realizedPnl=solOut-costBasisSold;
-                    // Unrealized estimate on remaining bag via mcap ratio
-                    const mcapRatio=(tr.entryMcap||0)>0?(tr.mcap||0)/(tr.entryMcap||1):1;
-                    const unrealizedEst=solRemaining*mcapRatio-solRemaining;
+                    const isClosed=!isHold||soldRatio>=0.95;
                     const trPnl=tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol);
                     const typeColor=tr.type==="WIN"?NEON.green:tr.type==="LOSS"?NEON.red:isPartial?"#00e5ff":"#ffa500";
-                    const sameCoins=arr.filter(x=>x.token===tr.token);
-                    const tradeNum=sameCoins.length>1?sameCoins.indexOf(tr)+1:null;
                     const statusLabel=tr.type==="WIN"?"WIN":tr.type==="LOSS"?"LOSS":isPartial?"PARTIAL":"HOLD";
+                    // Build sell breakdown from sellEvents, falling back to single synthetic sell
+                    const sellRows=sells.length>0?sells:solOut>0?[{sol:solOut,mcap:tr.mcap||0,time:tr.exitTime}]:[];
+                    // Compute per-sell bag pct
+                    let bagLeft=solIn;
+                    const sellsWithPct=sellRows.map((s,si)=>{
+                      const pct=solIn>0?Math.round(s.sol/solIn*100):0;
+                      bagLeft=Math.max(0,bagLeft-s.sol);
+                      const cumSoldPct=solIn>0?Math.round((solIn-bagLeft)/solIn*100):0;
+                      return{...s,pct,bagLeft,cumSoldPct,isLast:cumSoldPct>=95};
+                    });
                     return(
-                    <div key={ti} style={{padding:"6px 8px",marginBottom:4,borderRadius:5,fontSize:10,
+                    <div key={ti} style={{padding:"6px 8px",marginBottom:6,borderRadius:5,fontSize:10,
                       background:tr.type==="WIN"?"rgba(57,255,20,0.04)":tr.type==="LOSS"?"rgba(255,7,58,0.04)":isPartial?"rgba(0,229,255,0.04)":"rgba(255,165,0,0.04)",
-                      borderLeft:`2px solid ${typeColor}`}}>
-                      {/* Row 1: badge + name + CA + SOL amounts */}
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-                        <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap"}}>
+                      border:`1px solid ${typeColor}20`,borderLeft:`3px solid ${typeColor}`}}>
+                      {/* Header row: status + name + CA + PnL */}
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
+                        <div style={{display:"flex",alignItems:"center",gap:5}}>
                           <span style={{color:typeColor,fontWeight:900,fontSize:8,background:`${typeColor}18`,
-                            padding:"1px 5px",borderRadius:3,fontFamily:"Orbitron"}}>{statusLabel}</span>
+                            padding:"2px 6px",borderRadius:3,fontFamily:"Orbitron",letterSpacing:0.5}}>{statusLabel}</span>
                           <span onClick={()=>selectByName(tr.token,{name:tr.token,addr:tr.addr,mcap:tr.mcap||0,athMcap:tr.athMcap||0,vol:0,holders:0,platform:"PumpFun",qualScore:0,riskScore:0,liquidity:0,topHolderPct:0})}
-                            style={{color:NEON.text,fontWeight:700,cursor:"pointer",
+                            style={{color:NEON.text,fontWeight:700,cursor:"pointer",fontSize:11,
                               textDecoration:"underline",textDecorationStyle:"dotted",textUnderlineOffset:2}}>{tr.token}</span>
-                          {tradeNum&&<span style={{fontSize:7,color:NEON.dimText,background:"rgba(255,255,255,0.06)",
-                            padding:"1px 4px",borderRadius:2,fontFamily:"monospace"}}>#{tradeNum}</span>}
                           <span onClick={()=>clickAddr(tr.addr,{name:tr.token,addr:tr.addr,mcap:tr.mcap||0,athMcap:tr.athMcap||0,vol:0,holders:0,platform:"PumpFun",qualScore:0,riskScore:0,liquidity:0,topHolderPct:0})}
-                            style={{fontSize:8,color:NEON.cyan,cursor:"pointer",opacity:0.6,
+                            style={{fontSize:7,color:NEON.cyan,cursor:"pointer",
                               background:"rgba(0,255,255,0.06)",padding:"1px 4px",borderRadius:3,fontFamily:"monospace"}}>CA</span>
                         </div>
-                        {/* SOL summary — right side */}
-                        <div style={{textAlign:"right",flexShrink:0}}>
-                          <div style={{color:NEON.dimText,fontSize:9}}>
-                            {solIn.toFixed(2)} in{solOut>0?` / ${solOut.toFixed(2)} out`:""}</div>
-                          {/* Closed positions: total PnL */}
-                          {!isHold&&<div style={{fontSize:12,fontWeight:900,color:typeColor}}>
+                        <div style={{textAlign:"right"}}>
+                          {isClosed&&<div style={{fontSize:13,fontWeight:900,color:typeColor}}>
                             {trPnl>=0?"+":""}{trPnl.toFixed(2)} SOL</div>}
-                          {/* Partial: show realized + remaining */}
-                          {isPartial&&<div>
-                            <div style={{fontSize:10,fontWeight:900,color:realizedPnl>=0?NEON.green:NEON.red}}>
-                              {realizedPnl>=0?"↑":"↓"} {realizedPnl>=0?"+":""}{realizedPnl.toFixed(2)} realized</div>
-                            {solRemaining>0.01&&<div style={{fontSize:9,color:NEON.dimText}}>
-                              {solRemaining.toFixed(2)} SOL bag left</div>}
-                          </div>}
-                          {/* Pure hold (no sells yet): show estimated move */}
-                          {isHold&&!isPartial&&<div style={{fontSize:10,fontWeight:700,color:unrealizedEst>=0?NEON.green:NEON.red}}>
-                            {unrealizedEst>=0?"+":""}{unrealizedEst.toFixed(2)} est.</div>}
+                          {isPartial&&<div style={{fontSize:11,fontWeight:900,color:NEON.cyan}}>
+                            {Math.round(soldRatio*100)}% out</div>}
                         </div>
                       </div>
-                      {/* Row 2: Entry → Exit/Current + % closed if partial */}
-                      <div style={{display:"flex",gap:8,fontSize:9,marginBottom:2,flexWrap:"wrap",alignItems:"center"}}>
-                        <span style={{color:NEON.dimText}}>Entry <span style={{color:NEON.cyan}}>${formatNum(tr.entryMcap||0)}</span></span>
-                        <span style={{color:NEON.dimText}}>→</span>
-                        <span style={{color:NEON.dimText}}>{isHold?"Now":"Exit"} <span style={{color:isHold?(unrealizedEst>=0?NEON.green:NEON.red):typeColor}}>${formatNum(tr.mcap||0)}</span></span>
-                        {isPartial&&<span style={{color:NEON.dimText,marginLeft:"auto",fontSize:8,
-                          background:"rgba(0,229,255,0.08)",padding:"1px 5px",borderRadius:3}}>
-                          {pctClosed}% closed</span>}
+                      {/* Entry line */}
+                      <div style={{display:"flex",gap:6,alignItems:"center",fontSize:9,marginBottom:4,
+                        padding:"3px 5px",background:"rgba(255,255,255,0.03)",borderRadius:3}}>
+                        <span style={{color:NEON.dimText,fontFamily:"Orbitron",fontSize:7,letterSpacing:1}}>BUY</span>
+                        <span style={{color:NEON.dimText}}>{solIn.toFixed(2)} SOL</span>
+                        <span style={{color:NEON.dimText}}>@</span>
+                        <span style={{color:NEON.cyan,fontWeight:700}}>${formatNum(tr.entryMcap||0)}</span>
+                        <span style={{color:NEON.dimText,marginLeft:"auto"}}>ATH <span style={{color:"#ffd740"}}>${formatNum(tr.athMcap||0)}</span></span>
                       </div>
-                      {/* Row 3: ATH + remaining bag value if partial */}
-                      <div style={{display:"flex",gap:8,fontSize:9,flexWrap:"wrap"}}>
-                        <span style={{color:NEON.dimText}}>ATH <span style={{color:"#ffd740"}}>${formatNum(tr.athMcap||tr.mcap||0)}</span></span>
-                        {isPartial&&solRemaining>0.01&&<span style={{color:NEON.dimText}}>
-                          Bag ≈ <span style={{color:NEON.orange}}>{(solRemaining*mcapRatio).toFixed(2)} SOL</span></span>}
-                        {!isPartial&&<span style={{color:NEON.dimText}}>Current <span style={{color:NEON.text}}>${formatNum(tr.mcap||0)}</span></span>}
-                      </div>
+                      {/* Sell events */}
+                      {sellsWithPct.map((s,si)=>{
+                        const sellPnlEst=(s.sol/solIn)*trPnl; // proportional pnl for this sell
+                        return(
+                        <div key={si} style={{display:"flex",gap:6,alignItems:"center",fontSize:9,marginBottom:2,
+                          padding:"3px 5px",borderRadius:3,
+                          background:s.isLast?"rgba(255,255,255,0.04)":"rgba(255,255,255,0.02)"}}>
+                          <span style={{color:typeColor,fontFamily:"Orbitron",fontSize:7,letterSpacing:1,flexShrink:0}}>
+                            SELL {si+1}{s.isLast?" 🔒":""}</span>
+                          <span style={{color:NEON.dimText,flexShrink:0}}>{s.sol.toFixed(2)} SOL</span>
+                          <span style={{color:NEON.dimText,fontSize:8,flexShrink:0}}>({s.pct}% of bag)</span>
+                          <span style={{color:NEON.dimText}}>@ <span style={{color:s.mcap>=12000?NEON.green:"#ffa500",fontWeight:700}}>${formatNum(s.mcap)}</span></span>
+                          {!isClosed&&si===sellsWithPct.length-1&&s.bagLeft>0.01&&
+                            <span style={{marginLeft:"auto",fontSize:8,color:NEON.dimText}}>
+                              {s.bagLeft.toFixed(2)} SOL left</span>}
+                        </div>);
+                      })}
+                      {/* Still holding remainder note */}
+                      {isHold&&!isPartial&&<div style={{fontSize:8,color:"#ffa500",marginTop:2,fontStyle:"italic"}}>
+                        Still holding — no sells yet</div>}
                     </div>)})}
                 </div>);
               }
