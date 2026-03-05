@@ -5496,14 +5496,10 @@ export default function DegenCommandCenter(){
                   <div style={{fontSize:10,fontWeight:900,color:"#ffa500",fontFamily:"Orbitron",letterSpacing:0.5,marginBottom:4}}>TRADES</div>
                   {w.trades.length===0&&<div style={{color:NEON.dimText,fontSize:10,padding:8}}>No trade details recorded yet</div>}
                   {w.trades.slice().reverse().filter(tr=>{
-                    // Only show trades where at least one sell crossed $12K (filters bot noise)
-                    const sells=tr.sellEvents||[];
-                    const anyQual=sells.some(s=>s.mcap>=12000)||(tr.mcap||0)>=12000||(tr.entryMcap||0)>=12000;
-                    if(!anyQual)return false;
                     const trPnl=tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol);
-                    if(tr.type==="WIN"&&trPnl<0.15)return false;
-                    if(tr.type==="LOSS"&&trPnl>-0.15)return false;
-                    return true;
+                    if(tr.type==="WIN") return trPnl>=0.15;
+                    if(tr.type==="LOSS") return trPnl<=-0.15;
+                    return true; // HOLD/PARTIAL always show
                   }).map((tr,ti)=>{
                     const sells=tr.sellEvents||[];
                     const solIn=tr.sol||0;

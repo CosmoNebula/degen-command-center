@@ -1787,25 +1787,34 @@ export function useLiveData() {
             if (!ws.lossAddrs) ws.lossAddrs = new Set();
             if (!ws.holdAddrs) ws.holdAddrs = new Set();
 
+            // ─── BOT FILTER — ignore sub-30s flips entirely ───
+            // Token stays tracked on battlefield, but wallet gets no credit/blame
+            const holdDuration = (data.lastSellTime || now3) - (data.firstBuyTime || now3);
+            const hasExited = (data.sold || 0) >= data.bought * 0.5;
+            if (hasExited && holdDuration < 30000) return;
+
+            // ─── 12K QUALITY GATE — ignore entirely if token never reached $12K ───
+            // Filters bot noise: quick sub-$12K flips don't count as wins, losses, or holds
+            const sellEvts = data.sellEvents || [];
+            const peakMcap = Math.max(td.athMcap || 0, t.mcap || 0, data.exitMcap || 0, ...sellEvts.map(s => s.mcap));
+            if (peakMcap < 12000) return;
+
             // ─── WALLET-LEVEL OUTCOME (actual SOL P&L, not token price) ───
             const pnl = (data.sold || 0) - data.bought;
             const soldRatio = data.bought > 0 ? (data.sold || 0) / data.bought : 0;
             // WIN: sold ≥50% of position back (took profit = done)
             const positionClosed = soldRatio >= 0.5;
             // LOSS: requires either token dead OR sold ≥80% (substantially exited at loss)
-            // Prevents partial exits at slight negative from immediately counting as losses
             const positionSubstantiallyClosed = soldRatio >= 0.8;
 
             // exitMcap must be declared BEFORE walletWin check (uses it for 12K gate)
             const exitMcap = positionClosed
-              ? (data.exitMcap || t.mcap || 0)   // use mcap captured at actual sell time
-              : (t.mcap || 0);                    // for holds, use current mcap
+              ? (data.exitMcap || t.mcap || 0)
+              : (t.mcap || 0);
             const entryMcap = data.entryMcap || 0;
 
-            // WIN: profitable exit
-            // - Standard: sold ≥50%, profit ≥0.15 SOL, exited at ≥$12K mcap (filters lucky holds)
-            // - Full exit: sold ≥95% and profit ≥0.15 SOL regardless of mcap (they scalped it, that's a win)
-            const walletWin = positionClosed && pnl >= 0.15 && (exitMcap >= 12000 || soldRatio >= 0.95);
+            // WIN: sold ≥50%, profit ≥0.15 SOL, exited at ≥$12K
+            const walletWin = positionClosed && pnl >= 0.15 && exitMcap >= 12000;
             // LOSS: token dead OR substantially exited (80%+) at ≥0.15 SOL loss
             // Partial exits at slight negative stay as HOLD until token dies or they fully exit
             const walletLoss = !walletWin && (
