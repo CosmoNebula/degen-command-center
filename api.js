@@ -221,14 +221,14 @@ export async function fetchJupiterPrice(mintAddresses) {
   try {
     if (Date.now() < _jupBackoff) return {};
     const ids = Array.isArray(mintAddresses) ? mintAddresses.join(",") : mintAddresses;
-    // Try lite-api first (no auth required), fall back to main api
+    // Fetch direct — Jupiter blocks proxy/server requests, must come from browser
     const endpoints = [
       `https://lite-api.jup.ag/price/v2?ids=${ids}`,
       `https://api.jup.ag/price/v2?ids=${ids}`,
     ];
     for (const url of endpoints) {
       try {
-        const res = await proxyFetch(url);
+        const res = await fetch(url);
         if (res.status === 401 || res.status === 403 || res.status === 429) {
           _jupFailCount++;
           const wait = Math.min(300000, 10000 * Math.pow(2, Math.min(_jupFailCount - 1, 5)));
