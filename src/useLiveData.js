@@ -305,7 +305,7 @@ export function useLiveData() {
           const qualTotal = qualWinCount + qualLossCount;
           const qualRate = qualTotal > 0 ? qualWinCount / qualTotal : 0;
           const adjustedPnl = ws ? (ws.totalPnl||0) + unrealizedPnl : 0;
-          const isElite = ws && qualWinCount >= 4 && qualRate >= 0.60 && qualWinCount >= (qualLossCount*2) && qualTotal >= 5 && (ws.totalPnl||0) >= 1.0 && adjustedPnl > 0.5 && sol > 0.3;
+          const isElite = ws && qualWinCount >= 3 && qualRate >= 0.60 && qualWinCount >= (qualLossCount*2) && qualTotal >= 4 && (ws.totalPnl||0) >= 0.5 && adjustedPnl > 0.2 && sol > 0.2;
           if (isElite) {
             td.smartWallets.add(wallet);
             const alertKey = `${wallet.slice(0,8)}-${mint}`;
@@ -1873,15 +1873,15 @@ export function useLiveData() {
               }
               ws.wins++;
               ws.winAddrs.add(t.addr);
-              ws.tokens.push(t.addr); // store addr not name — dedup by addr
+              ws.tokens.push(t.name); // display name — winAddrs Set handles dedup
               ws.totalBought += data.bought;
-              ws.totalSold += (data.sold || 0);
+              ws.totalSold += sold; // use corrected sold not raw data.sold
               ws.totalPnl += pnl;
               if (exitMcap > 100000) ws.bigWins = (ws.bigWins || 0) + 1;
               if (ws.wins === 3) console.log(`[SMART$] 🧠 Wallet ${w.slice(0,8)} hit 3 wins`);
               if (ws.wins === 6) console.log(`[SMART$] 🧠🧠 Wallet ${w.slice(0,8)} hit 6 WINS`);
               td.wallets[w] = { bought: 0, sold: 0, firstBuyTime: null, lastSellTime: null, entryMcap: 0, exitMcap: 0, sellEvents: [] };
-              ws.winAddrs.delete(t.addr);
+              // Keep addr in winAddrs — never delete, prevents same position re-triggering as win
               if (ws.activeBuys) delete ws.activeBuys[t.addr];
             }
 
@@ -1901,12 +1901,12 @@ export function useLiveData() {
               }
               ws.losses++;
               ws.lossAddrs.add(t.addr);
-              ws.lossTokens.push(t.addr); // store addr not name
+              ws.lossTokens.push(t.name); // display name
               ws.totalBought += data.bought;
-              ws.totalSold += (data.sold || 0);
+              ws.totalSold += sold;
               ws.totalPnl += pnl;
               td.wallets[w] = { bought: 0, sold: 0, firstBuyTime: null, lastSellTime: null, entryMcap: 0, exitMcap: 0, sellEvents: [] };
-              ws.lossAddrs.delete(t.addr);
+              // Keep addr in lossAddrs — never delete
               if (ws.activeBuys) delete ws.activeBuys[t.addr];
             }
 
