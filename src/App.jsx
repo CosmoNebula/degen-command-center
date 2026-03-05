@@ -5721,10 +5721,17 @@ export default function DegenCommandCenter(){
                       const totalUnrealized=holdTrades.reduce((s,tr)=>{
                         const entryMc=tr.entryMcap||0;
                         const currentMc=tr.mcap||0;
-                        const mcPct=entryMc>0?(currentMc-entryMc)/entryMc:0;
-                        const stillExposed=Math.max(0,(tr.sol||0)-(tr.sold||0));
-                        const banked=(tr.sold||0)-(tr.sol||0);
-                        return s+banked+(stillExposed*mcPct);
+                        const solIn=tr.sol||0;
+                        const solOut=Math.min(tr.sold||0, solIn); // cap at buy size to prevent bleed
+                        const bagRemaining=Math.max(0,solIn-solOut);
+                        // Current value of remaining bag (mcap-adjusted)
+                        const bagValue=entryMc>0?bagRemaining*(currentMc/entryMc):bagRemaining;
+                        // Realized portion: what they received - their cost for that portion
+                        const costOfSold=solIn>0?(solOut/solIn)*solIn:0; // = solOut (proportional)
+                        const realizedPnl=solOut-costOfSold; // simplified: 0 if sold at same mcap
+                        // Total current value vs original cost
+                        const totalCurrentValue=solOut+bagValue;
+                        return s+(totalCurrentValue-solIn);
                       },0);
                       const deeplyUnder=holdTrades.filter(tr=>{
                         const entryMc=tr.entryMcap||0;
@@ -5744,12 +5751,12 @@ export default function DegenCommandCenter(){
                           const currentMc=tr.mcap||0;
                           const mcPct=entryMc>0?((currentMc-entryMc)/entryMc*100):0;
                           const solIn=tr.sol||0;
-                          const solOut=tr.sold||0;
+                          const solOut=Math.min(tr.sold||0, solIn);
                           const bagSize=Math.max(0,solIn-solOut); // remaining SOL exposure
                           const bagNow=entryMc>0?bagSize*(currentMc/entryMc):bagSize; // current worth
                           const bagPnl=bagNow-bagSize; // gain/loss on remaining bag
                           const hasPartialExit=solOut>0;
-                          const banked=solOut-(solIn*(solOut/solIn)); // realized portion pnl
+                          const totalHoldPnl=(solOut+bagNow)-solIn; // total P&L vs cost basis
                           const up=mcPct>=0;
                           return(<div key={hi} style={{padding:"5px 7px",marginBottom:3,borderRadius:4,fontSize:9,
                             background:up?"rgba(57,255,20,0.03)":"rgba(255,7,58,0.06)",
@@ -5774,7 +5781,7 @@ export default function DegenCommandCenter(){
                                 <span style={{color:up?NEON.green:NEON.red,marginLeft:2}}>({bagPnl>=0?"+":""}{bagPnl.toFixed(2)})</span>
                               </span>
                               <span>ATH <span style={{color:"#ffd740"}}>${formatNum(tr.athMcap||0)}</span></span>
-                              {hasPartialExit&&<span style={{color:"#ffa500"}}>banked {(solOut).toFixed(2)} SOL</span>}
+                              {hasPartialExit&&<span style={{color:"#ffa500"}}>banked {solOut.toFixed(2)} SOL</span>}
                             </div>
                           </div>);
                         })}
@@ -5804,15 +5811,19 @@ export default function DegenCommandCenter(){
                     // Build sell rows — fallback if no sellEvents recorded
                     const sellRows=sells.length>0?sells:
                       solOut>0?[{sol:solOut,mcap:tr.mcap||0,time:tr.exitTime}]:
-                      tr.type==="LOSS"?[]:  // token died with no sells — show nothing, note below
+                      tr.type==="LOSS"?[]:
                       [];
+                    // Cap cumulative sell amount at buy size — prevents bleed inflating rows
                     let bagLeft=solIn;
-                    const sellsWithPct=sellRows.map((s,si)=>{
-                      const pctOfRemaining=bagLeft>0.01?Math.min(100,Math.round(s.sol/bagLeft*100)):100;
-                      bagLeft=Math.max(0,bagLeft-s.sol);
-                      const isLast=si===sellRows.length-1&&bagLeft<0.05;
-                      return{...s,pctOfRemaining,bagLeft,isLast};
-                    });
+                    const sellsWithPct=sellRows.reduce((acc,s,si)=>{
+                      if(bagLeft<=0.001)return acc; // stop if bag exhausted
+                      const cappedSol=Math.min(s.sol,bagLeft);
+                      const pctOfRemaining=bagLeft>0.01?Math.min(100,Math.round(cappedSol/bagLeft*100)):100;
+                      bagLeft=Math.max(0,bagLeft-cappedSol);
+                      const isLast=(si===sellRows.length-1||bagLeft<0.01)&&bagLeft<0.05;
+                      acc.push({...s,sol:cappedSol,pctOfRemaining,bagLeft,isLast});
+                      return acc;
+                    },[]);
                     return(
                     <div key={ti} style={{padding:"6px 8px",marginBottom:6,borderRadius:5,fontSize:10,
                       background:tr.type==="WIN"?"rgba(57,255,20,0.04)":tr.type==="LOSS"?"rgba(255,7,58,0.04)":isPartial?"rgba(0,229,255,0.04)":"rgba(255,165,0,0.04)",
@@ -5887,8 +5898,8 @@ export default function DegenCommandCenter(){
                       {sellsWithPct.length===0&&tr.type==="LOSS"&&<div style={{fontSize:8,color:NEON.red,padding:"3px 5px",
                         background:"rgba(255,7,58,0.06)",borderRadius:3,fontStyle:"italic"}}>
                         💀 Token died — never exited · lost {solIn.toFixed(2)} SOL</div>}
-                      {/* Still holding remainder note */}
-                      {isHold&&!isPartial&&<div style={{fontSize:8,color:"#ffa500",marginTop:2,fontStyle:"italic"}}>
+                      {/* Still holding — only show when genuinely no sell events recorded */}
+                      {isHold&&sellsWithPct.length===0&&<div style={{fontSize:8,color:"#ffa500",marginTop:2,fontStyle:"italic"}}>
                         Still holding — no sells yet</div>}
                     </div>)})}
                 </div>);

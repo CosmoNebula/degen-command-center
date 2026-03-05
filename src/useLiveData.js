@@ -192,12 +192,23 @@ export function useLiveData() {
         td.lastTradeTime = now;  // track staleness
 
         // Track per-wallet activity
-        if (!td.wallets[wallet]) td.wallets[wallet] = { bought: 0, sold: 0, entryMcap: 0, firstBuyTime: now };
+        if (!td.wallets[wallet]) td.wallets[wallet] = { bought: 0, sold: 0, entryMcap: 0, firstBuyTime: now, sellEvents: [] };
 
         if (trade.type === "buy") {
+          // ─── CYCLE RESET: if wallet previously fully exited this token, start fresh ───
+          const wData = td.wallets[wallet];
+          if (wData && wData.bought > 0) {
+            const prevSoldRatio = wData.bought > 0 ? (wData.sold || 0) / wData.bought : 0;
+            if (prevSoldRatio >= 0.90) {
+              // New buy cycle — wipe old data so sells don't bleed across
+              td.wallets[wallet] = { bought: 0, sold: 0, entryMcap: 0, firstBuyTime: now, lastSellTime: null, exitMcap: 0, sellEvents: [] };
+            }
+          }
           td.buys++;
           td.totalBoughtSol += sol;
           td.wallets[wallet].bought += sol;
+          // Update firstBuyTime only if not already set for this cycle
+          if (!td.wallets[wallet].firstBuyTime) td.wallets[wallet].firstBuyTime = now;
           // Store entry mcap on first buy for this wallet on this token
           if (!td.wallets[wallet].entryMcap) {
             const mcapNow = (trade.marketCapSol || td.lastMcapSol || 0) * SOL_USD * MCAP_CORRECTION;
@@ -1791,8 +1802,16 @@ export function useLiveData() {
             if (hasExited && holdDuration < 30000) return;
 
             const sellEvts = (data.sellEvents || []).filter(s =>
-              s.time >= (data.firstBuyTime || 0) && s.time <= (data.lastSellTime || Infinity)
+              s.time >= (data.firstBuyTime || 0) &&
+              (!data.lastSellTime || s.time <= data.lastSellTime)
             );
+            // Cap sell amounts to bought so bleed can't inflate sells beyond buy size
+            let capRemaining = data.bought;
+            const cappedSellEvts = sellEvts.filter(s => {
+              if (capRemaining <= 0.001) return false;
+              capRemaining -= s.sol;
+              return true;
+            });
 
             // ─── WALLET-LEVEL OUTCOME ───
             const pnl = (data.sold || 0) - data.bought;
@@ -1810,7 +1829,8 @@ export function useLiveData() {
             );
             const walletHold = !walletWin && !walletLoss && tokenAlive;
 
-            const sellEvents = data.sellEvents || [];
+            // Use capped+filtered sell events for all trade records
+            const sellEvents = cappedSellEvts;
 
             // ── WIN ──
             if (walletWin && !ws.winAddrs.has(t.addr)) {
