@@ -4240,6 +4240,294 @@ function AlienHUD({aliens}){
 }
 
 // ═══════════════ MAIN ═══════════════
+// ═══════════════════════════════════════════════════════
+// LEADERBOARD PANEL — Historical DB-backed leaderboards
+// ═══════════════════════════════════════════════════════
+function LeaderboardPanel({ SB_URL, SB_KEY, onSelectToken, onSelectWallet, NEON, formatNum }) {
+  const [section, setSection] = useState("COINS"); // COINS | WALLETS | DEPLOYERS
+  const [timeframe, setTimeframe] = useState("ALL"); // 15M | 1H | 1D | ALL
+  const [category, setCategory] = useState(null);
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [deployerDetail, setDeployerDetail] = useState(null);
+
+  const SECTIONS = ["COINS","WALLETS","DEPLOYERS"];
+  const TIMEFRAMES = ["15M","1H","1D","ALL"];
+  const CATEGORIES = {
+    COINS: [
+      {id:"mcap",label:"💰 Highest MCap",color:"#ffd740"},
+      {id:"holders",label:"👥 Most Holders",color:"#00ffff"},
+      {id:"volume",label:"📊 Most Volume",color:"#39ff14"},
+    ],
+    WALLETS: [
+      {id:"wins",label:"🏆 Most Wins",color:"#ffd740"},
+      {id:"pnl",label:"💎 Highest PNL",color:"#39ff14"},
+      {id:"losers",label:"💀 Biggest Losers",color:"#ff073a"},
+      {id:"single",label:"⚡ Biggest Single Win",color:"#ff9500"},
+      {id:"trades",label:"🔄 Most Trades",color:"#00ffff"},
+    ],
+    DEPLOYERS: [
+      {id:"migrated",label:"🌉 Most Migrated",color:"#39ff14"},
+      {id:"100k",label:"🚀 Most to 100K+",color:"#ffd740"},
+      {id:"rugs",label:"💀 Most Rugs",color:"#ff073a"},
+      {id:"deploys",label:"📦 Most Deploys",color:"#00ffff"},
+    ],
+  };
+
+  const timeMs = { "15M": 900000, "1H": 3600000, "1D": 86400000, "ALL": 0 };
+
+  const fetchData = useCallback(async (sec, cat, tf) => {
+    if (!cat) return;
+    setLoading(true);
+    setData([]);
+    try {
+      const since = tf !== "ALL" ? Date.now() - timeMs[tf] : 0;
+      const sinceISO = since > 0 ? new Date(since).toISOString() : null;
+
+      if (sec === "COINS") {
+        const orderMap = { mcap:"peak_mcap.desc", holders:"holders.desc", volume:"volume.desc" };
+        let url = `${SB_URL}/rest/v1/token_history?order=${orderMap[cat]}&limit=50`;
+        if (sinceISO) url += `&first_seen=gte.${since}`;
+        const r = await fetch(url, { headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` } });
+        setData(await r.json());
+
+      } else if (sec === "WALLETS") {
+        let url = `${SB_URL}/rest/v1/wallet_scores?limit=200`;
+        if (sinceISO) url += `&updated_at=gte.${sinceISO}`;
+        const r = await fetch(url, { headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` } });
+        let rows = await r.json();
+        if (cat === "wins") rows.sort((a,b)=>(b.wins||0)-(a.wins||0));
+        else if (cat === "pnl") rows.sort((a,b)=>(b.total_pnl||0)-(a.total_pnl||0));
+        else if (cat === "losers") rows.sort((a,b)=>(a.total_pnl||0)-(b.total_pnl||0));
+        else if (cat === "trades") rows.sort((a,b)=>((b.wins||0)+(b.losses||0)+(b.holds||0))-((a.wins||0)+(a.losses||0)+(a.holds||0)));
+        else if (cat === "single") {
+          rows = rows.map(r => {
+            const best = (r.trades||[]).filter(t=>t.type==="WIN").reduce((mx,t)=>Math.max(mx,t.pnl||0),0);
+            return { ...r, bestSingle: best };
+          }).sort((a,b)=>(b.bestSingle||0)-(a.bestSingle||0));
+        }
+        setData(rows.slice(0,50));
+
+      } else if (sec === "DEPLOYERS") {
+        let url = `${SB_URL}/rest/v1/token_history?select=deployer,name,addr,peak_mcap,graduated,rug,first_seen&limit=2000`;
+        if (sinceISO) url += `&first_seen=gte.${since}`;
+        const r = await fetch(url, { headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` } });
+        const tokens = (await r.json()).filter(t => t.deployer);
+        // Group by deployer
+        const map = {};
+        tokens.forEach(t => {
+          if (!t.deployer) return;
+          if (!map[t.deployer]) map[t.deployer] = { deployer: t.deployer, deploys: 0, migrated: 0, to100k: 0, rugs: 0, tokens: [] };
+          map[t.deployer].deploys++;
+          if (t.graduated) map[t.deployer].migrated++;
+          if ((t.peak_mcap||0) >= 100000) map[t.deployer].to100k++;
+          if (t.rug) map[t.deployer].rugs++;
+          map[t.deployer].tokens.push(t);
+        });
+        let rows = Object.values(map);
+        if (cat === "migrated") rows.sort((a,b)=>b.migrated-a.migrated);
+        else if (cat === "100k") rows.sort((a,b)=>b.to100k-a.to100k);
+        else if (cat === "rugs") rows.sort((a,b)=>b.rugs-a.rugs);
+        else if (cat === "deploys") rows.sort((a,b)=>b.deploys-a.deploys);
+        setData(rows.slice(0, 50));
+      }
+    } catch(e) { console.warn("[LB] fetch failed:", e.message); }
+    setLoading(false);
+  }, [SB_URL, SB_KEY]);
+
+  useEffect(() => {
+    if (category) fetchData(section, category, timeframe);
+  }, [section, category, timeframe]);
+
+  useEffect(() => {
+    setCategory(null);
+    setData([]);
+    setDeployerDetail(null);
+  }, [section]);
+
+  const cats = CATEGORIES[section];
+  const selCat = cats.find(c=>c.id===category);
+
+  const fmtAddr = a => a ? `${a.slice(0,4)}...${a.slice(-4)}` : "???";
+  const fmtSol = v => v >= 0 ? `+${v.toFixed(2)}` : v.toFixed(2);
+
+  // Deployer detail view
+  if (deployerDetail) {
+    return (
+      <div style={{padding:"6px",height:"100%",overflowY:"auto"}}>
+        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+          <button onClick={()=>setDeployerDetail(null)} style={{background:"none",border:`1px solid ${NEON.cyan}40`,
+            color:NEON.cyan,padding:"2px 8px",borderRadius:3,cursor:"pointer",fontSize:10}}>← BACK</button>
+          <span style={{fontSize:11,fontWeight:900,color:NEON.cyan,fontFamily:"'Orbitron'"}}>{fmtAddr(deployerDetail.deployer)}</span>
+        </div>
+        <div style={{display:"flex",gap:6,marginBottom:8,flexWrap:"wrap"}}>
+          {[["DEPLOYS",deployerDetail.deploys,"#00ffff"],["MIGRATED",deployerDetail.migrated,"#39ff14"],
+            ["100K+",deployerDetail.to100k,"#ffd740"],["RUGS",deployerDetail.rugs,"#ff073a"]].map(([k,v,c])=>(
+            <div key={k} style={{background:`${c}10`,border:`1px solid ${c}30`,borderRadius:4,padding:"4px 8px",textAlign:"center"}}>
+              <div style={{fontSize:14,fontWeight:900,color:c,fontFamily:"'Orbitron'"}}>{v}</div>
+              <div style={{fontSize:8,color:NEON.dimText}}>{k}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{fontSize:10,color:NEON.dimText,marginBottom:4}}>ALL TOKENS</div>
+        {(deployerDetail.tokens||[]).sort((a,b)=>(b.peak_mcap||0)-(a.peak_mcap||0)).map((t,i)=>(
+          <div key={t.addr} onClick={()=>onSelectToken(t.addr,{name:t.name,mcap:t.peak_mcap})}
+            style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+              padding:"3px 5px",marginBottom:1,borderRadius:3,cursor:"pointer",
+              background:i%2===0?"rgba(255,255,255,0.02)":"transparent",
+              borderLeft:`2px solid ${t.rug?"#ff073a":t.graduated?"#39ff14":"#333"}`}}>
+            <div style={{display:"flex",alignItems:"center",gap:5}}>
+              <span style={{fontSize:9,color:t.rug?"#ff073a":t.graduated?"#39ff14":NEON.dimText}}>
+                {t.rug?"💀":t.graduated?"🌉":"●"}</span>
+              <span style={{fontSize:11,fontWeight:700,color:NEON.text}}>{t.name}</span>
+            </div>
+            <span style={{fontSize:10,color:"#ffd740",fontFamily:"'Share Tech Mono'"}}>${formatNum(t.peak_mcap||0)}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
+      {/* Section tabs */}
+      <div style={{display:"flex",borderBottom:`1px solid ${NEON.panelBorder}`,flexShrink:0}}>
+        {SECTIONS.map(s=>(
+          <button key={s} onClick={()=>setSection(s)} style={{flex:1,padding:"5px 2px",
+            background:section===s?"rgba(255,0,255,0.15)":"transparent",
+            border:"none",borderBottom:section===s?`2px solid ${NEON.magenta}`:"2px solid transparent",
+            color:section===s?NEON.magenta:NEON.dimText,cursor:"pointer",
+            fontSize:9,fontWeight:900,fontFamily:"'Orbitron'",letterSpacing:0.5}}>
+            {s}
+          </button>
+        ))}
+      </div>
+
+      {/* Timeframe */}
+      <div style={{display:"flex",gap:2,padding:"4px 6px",borderBottom:`1px solid ${NEON.panelBorder}30`,flexShrink:0}}>
+        {TIMEFRAMES.map(tf=>(
+          <button key={tf} onClick={()=>setTimeframe(tf)} style={{flex:1,padding:"3px 0",
+            background:timeframe===tf?"rgba(0,255,255,0.15)":"rgba(255,255,255,0.03)",
+            border:`1px solid ${timeframe===tf?NEON.cyan:"#333"}`,borderRadius:3,
+            color:timeframe===tf?NEON.cyan:NEON.dimText,cursor:"pointer",
+            fontSize:9,fontFamily:"'Share Tech Mono'"}}>
+            {tf}
+          </button>
+        ))}
+      </div>
+
+      {/* Category buttons */}
+      <div style={{padding:"4px 6px",borderBottom:`1px solid ${NEON.panelBorder}30`,flexShrink:0}}>
+        {cats.map(c=>(
+          <button key={c.id} onClick={()=>setCategory(c.id)} style={{
+            display:"block",width:"100%",textAlign:"left",padding:"4px 8px",marginBottom:2,
+            background:category===c.id?`${c.color}18`:"rgba(255,255,255,0.02)",
+            border:`1px solid ${category===c.id?c.color:"#333"}`,borderRadius:3,
+            color:category===c.id?c.color:NEON.dimText,cursor:"pointer",
+            fontSize:10,fontWeight:category===c.id?900:400,fontFamily:category===c.id?"'Orbitron'":"inherit",
+            letterSpacing:category===c.id?0.5:0}}>
+            {c.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Results */}
+      <div style={{flex:1,overflowY:"auto",padding:"4px 6px"}}>
+        {!category&&<div style={{color:NEON.dimText,fontSize:11,textAlign:"center",padding:20,fontStyle:"italic"}}>
+          SELECT A CATEGORY ABOVE
+        </div>}
+        {loading&&<div style={{color:NEON.cyan,fontSize:11,textAlign:"center",padding:20}}>
+          ⟳ LOADING...
+        </div>}
+        {!loading&&category&&data.length===0&&<div style={{color:NEON.dimText,fontSize:11,textAlign:"center",padding:20,fontStyle:"italic"}}>
+          NO DATA FOR THIS TIMEFRAME
+        </div>}
+        {!loading&&data.map((row,i)=>{
+          const rank = i+1;
+          const rankColor = rank===1?"#ffd740":rank===2?"#aaa":rank===3?"#cd7f32":NEON.dimText;
+          
+          if (section==="COINS") {
+            const val = category==="mcap"?`$${formatNum(row.peak_mcap||0)}`:
+                        category==="holders"?`${row.holders||0} w`:
+                        `$${formatNum(row.volume||0)}`;
+            const valColor = selCat?.color||NEON.yellow;
+            return (
+              <div key={row.addr} onClick={()=>onSelectToken(row.addr,{name:row.name,mcap:row.peak_mcap})}
+                style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+                  padding:"4px 5px",marginBottom:1,borderRadius:3,cursor:"pointer",
+                  background:rank===1?`${valColor}08`:"transparent",
+                  borderLeft:`2px solid ${rank<=3?rankColor:"#333"}`,
+                  transition:"background 0.1s"}}
+                onMouseEnter={e=>e.currentTarget.style.background=`${valColor}10`}
+                onMouseLeave={e=>e.currentTarget.style.background=rank===1?`${valColor}08`:"transparent"}>
+                <div style={{display:"flex",alignItems:"center",gap:5}}>
+                  <span style={{fontSize:10,fontWeight:900,color:rankColor,width:16,textAlign:"right",fontFamily:"'Orbitron'"}}>{rank}</span>
+                  <span style={{fontSize:11,fontWeight:700,color:NEON.text}}>{row.name||"???"}</span>
+                  {row.graduated&&<span style={{fontSize:8,color:"#39ff14",background:"rgba(57,255,20,0.1)",padding:"0 3px",borderRadius:2}}>RAY</span>}
+                  {row.rug&&<span style={{fontSize:8,color:"#ff073a",background:"rgba(255,7,58,0.1)",padding:"0 3px",borderRadius:2}}>RUG</span>}
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:5}}>
+                  <span style={{fontSize:10,color:valColor,fontFamily:"'Share Tech Mono'"}}>{val}</span>
+                </div>
+              </div>
+            );
+          }
+
+          if (section==="WALLETS") {
+            const totalTrades = (row.wins||0)+(row.losses||0)+(row.holds||0);
+            const winRate = totalTrades>0?Math.round((row.wins||0)/totalTrades*100):0;
+            const val = category==="wins"?`${row.wins||0}W ${winRate}%`:
+                        category==="pnl"||category==="losers"?`${fmtSol(row.total_pnl||0)} SOL`:
+                        category==="single"?`+${(row.bestSingle||0).toFixed(2)} SOL`:
+                        `${totalTrades} trades`;
+            const valColor = category==="losers"?"#ff073a":selCat?.color||NEON.yellow;
+            return (
+              <div key={row.addr} onClick={()=>onSelectWallet(row.addr)}
+                style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+                  padding:"4px 5px",marginBottom:1,borderRadius:3,cursor:"pointer",
+                  background:rank===1?`${valColor}08`:"transparent",
+                  borderLeft:`2px solid ${rank<=3?rankColor:"#333"}`}}
+                onMouseEnter={e=>e.currentTarget.style.background=`${valColor}10`}
+                onMouseLeave={e=>e.currentTarget.style.background=rank===1?`${valColor}08`:"transparent"}>
+                <div style={{display:"flex",alignItems:"center",gap:5}}>
+                  <span style={{fontSize:10,fontWeight:900,color:rankColor,width:16,textAlign:"right",fontFamily:"'Orbitron'"}}>{rank}</span>
+                  <span style={{fontSize:10,color:NEON.cyan,fontFamily:"'Share Tech Mono'",cursor:"pointer"}}>{fmtAddr(row.addr)}</span>
+                </div>
+                <span style={{fontSize:10,fontWeight:700,color:valColor,fontFamily:"'Share Tech Mono'"}}>{val}</span>
+              </div>
+            );
+          }
+
+          if (section==="DEPLOYERS") {
+            const val = category==="migrated"?`${row.migrated} migrated`:
+                        category==="100k"?`${row.to100k} × 100K+`:
+                        category==="rugs"?`${row.rugs} rugs`:
+                        `${row.deploys} deploys`;
+            const valColor = category==="rugs"?"#ff073a":selCat?.color||NEON.yellow;
+            return (
+              <div key={row.deployer} onClick={()=>setDeployerDetail(row)}
+                style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+                  padding:"4px 5px",marginBottom:1,borderRadius:3,cursor:"pointer",
+                  background:rank===1?`${valColor}08`:"transparent",
+                  borderLeft:`2px solid ${rank<=3?rankColor:"#333"}`}}
+                onMouseEnter={e=>e.currentTarget.style.background=`${valColor}10`}
+                onMouseLeave={e=>e.currentTarget.style.background=rank===1?`${valColor}08`:"transparent"}>
+                <div style={{display:"flex",alignItems:"center",gap:5}}>
+                  <span style={{fontSize:10,fontWeight:900,color:rankColor,width:16,textAlign:"right",fontFamily:"'Orbitron'"}}>{rank}</span>
+                  <span style={{fontSize:10,color:NEON.cyan,fontFamily:"'Share Tech Mono'"}}>{fmtAddr(row.deployer)}</span>
+                  <span style={{fontSize:8,color:NEON.dimText}}>{row.deploys}d</span>
+                </div>
+                <span style={{fontSize:10,fontWeight:700,color:valColor,fontFamily:"'Share Tech Mono'"}}>{val}</span>
+              </div>
+            );
+          }
+          return null;
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function DegenCommandCenter(){
   const [tokens,setTokens]=useState([]);const [radarPings,setRadarPings]=useState([]);
   const [dbStatus,setDbStatus]=useState({msg:"",type:"info",ts:0});
@@ -5467,30 +5755,14 @@ export default function DegenCommandCenter(){
           {leftTab==="WARLOG"&&<WarLog events={intelEvents}/>}
 
           {/* LEADERBOARD */}
-          {leftTab==="LEADERS"&&<div style={{padding:"6px"}}>
-            {[{title:"💰 TOP MCAP",data:leaderboard.byMcap,metric:t=>"$"+formatNum(t.mcap),color:"#ffd740"},
-              {title:"⚡ FASTEST",data:leaderboard.byVelocity,metric:t=>(t.velocity||0)+"/30s",color:NEON.green},
-              {title:"👥 MOST HOLDERS",data:leaderboard.byHolders,metric:t=>(t.holders||0)+"w",color:NEON.cyan},
-            ].map(cat=>(
-              <div key={cat.title} style={{marginBottom:10}}>
-                <div style={{fontSize:10,fontWeight:900,color:cat.color,fontFamily:"'Orbitron',sans-serif",
-                  letterSpacing:1,marginBottom:4,borderBottom:`1px solid ${cat.color}30`,paddingBottom:3}}>{cat.title}</div>
-                {cat.data.length===0&&<div style={{fontSize:10,color:NEON.dimText,fontStyle:"italic",padding:4}}>Waiting for data...</div>}
-                {cat.data.map((t,i)=>(
-                  <div key={t.id} onClick={()=>selectToken(t)} style={{display:"flex",justifyContent:"space-between",
-                    alignItems:"center",padding:"3px 4px",cursor:"pointer",borderRadius:3,
-                    background:i===0?`${cat.color}08`:"transparent",borderLeft:i===0?`2px solid ${cat.color}`:"2px solid transparent"}}>
-                    <div style={{display:"flex",alignItems:"center",gap:5}}>
-                      <span style={{fontSize:11,fontWeight:900,color:i===0?cat.color:NEON.dimText,width:14,textAlign:"right",
-                        fontFamily:"'Orbitron'"}}>{i+1}</span>
-                      <span style={{fontSize:11,fontWeight:700,color:i===0?NEON.text:"#aaa"}}>{t.name}</span>
-                    </div>
-                    <span style={{fontSize:11,fontWeight:700,color:cat.color,fontFamily:"'Share Tech Mono'"}}>{cat.metric(t)}</span>
-                  </div>
-                ))}
-              </div>
-            ))}
-          </div>}
+          {leftTab==="LEADERS"&&<LeaderboardPanel
+            SB_URL="https://yrmjphhfgduysoftnuxv.supabase.co"
+            SB_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlybWpwaGhmZ2R1eXNvZnRudXh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3MzI5MzAsImV4cCI6MjA4ODMwODkzMH0.scHhvTGiABJDybgbjgjilw8XuxOfmWPsqo4iytMZmio"
+            onSelectToken={(addr,stub)=>clickAddr(addr,stub)}
+            onSelectWallet={(addr)=>viewWalletDetail(addr)}
+            NEON={NEON}
+            formatNum={formatNum}
+          />}
 
           {/* LOCK HISTORY */}
           {leftTab==="HISTORY"&&<div style={{padding:"4px 6px"}}>

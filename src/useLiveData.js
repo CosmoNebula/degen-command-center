@@ -13,6 +13,12 @@ const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 async function sbUpsertToken(token) {
   if (!token?.addr) return;
   try {
+    // Detect rug: died fast (< 5 min) at low mcap (< 20k), or peak < 5k
+    const lifeMs = token.deathTime ? token.deathTime - (token.timestamp || 0) : null;
+    const isRug = token.alive === false && (
+      (lifeMs && lifeMs < 300000 && (token.peakMcap || 0) < 20000) ||
+      (token.peakMcap || 0) < 3000
+    );
     const r = await fetch(`${SB_URL}/rest/v1/token_history?on_conflict=addr`, {
       method: "POST",
       headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`, "Content-Type": "application/json", Prefer: "resolution=merge-duplicates" },
@@ -24,6 +30,11 @@ async function sbUpsertToken(token) {
         first_seen: token.timestamp || Date.now(),
         graduated: token.migrated || false,
         platform: token.platform || "PumpFun",
+        holders: token.holders || 0,
+        volume: token.vol || 0,
+        deployer: token.deployer || "",
+        rug: isRug,
+        image_uri: token.imageUri || "",
         updated_at: new Date().toISOString(),
       }]),
     });
