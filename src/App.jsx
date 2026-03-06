@@ -3974,7 +3974,7 @@ function KillFeed({events,onSelectByName}){
   const queueRef=useRef([]);
   const timerRef=useRef(null);
   const processedRef=useRef(new Set());
-  const DISPLAY_MS=7000;
+  const DISPLAY_MS=14000;
 
   const showNext=useCallback(()=>{
     if(queueRef.current.length===0){setCurrent(null);timerRef.current=null;return;}
@@ -4809,7 +4809,6 @@ export default function DegenCommandCenter(){
         }
 
         // 2. Delete wallet rows with less than 0.25 SOL total bought — pure noise
-        //    These are wallets we tracked but never put real money in
         const emptyWalletsRes = await fetch(
           `${SB_URL}/rest/v1/wallet_scores?select=addr,total_bought,wins,losses`,
           { headers: hdrs }
@@ -4823,6 +4822,23 @@ export default function DegenCommandCenter(){
           }
           if (toDelete.length > 0)
             console.log(`[MAINT] 🗑 Pruned ${toDelete.length} low-volume wallets (<0.25 SOL)`);
+        }
+
+        // 2b. Delete wallets with < 2 wins that entered DB more than 2 hours ago
+        //     Retroactive — catches existing rows too. They'll re-enter if they ever go on a run.
+        const h2 = new Date(now - 7200000).toISOString(); // 2 hours ago
+        const weakWalletsRes = await fetch(
+          `${SB_URL}/rest/v1/wallet_scores?select=addr,wins,first_seen&wins=lt.2&first_seen=lt.${h2}`,
+          { headers: hdrs }
+        );
+        if (weakWalletsRes.ok) {
+          const weak = await weakWalletsRes.json();
+          for (const w of weak) {
+            del("wallet_scores", `addr=eq.${encodeURIComponent(w.addr)}`);
+            pruned++;
+          }
+          if (weak.length > 0)
+            console.log(`[MAINT] 🗑 Pruned ${weak.length} underperforming wallets (<2 wins, 2h+ old)`);
         }
 
         // 3. Delete smart_alerts older than 7 days
@@ -4853,12 +4869,12 @@ export default function DegenCommandCenter(){
     runTokenScan();
     const scanIv = setInterval(runTokenScan, 30000);
 
-    // Run prune after 2min (let scan run first), then every 5min
+    // Run prune immediately (retroactive cleanup), then every 5min
+    runPrune();
     const pruneDelay = setTimeout(() => {
-      runPrune();
       const pruneIv = setInterval(runPrune, 300000);
       pruneIv_ref = pruneIv;
-    }, 120000);
+    }, 300000);
 
     let pruneIv_ref = null;
     return () => {
