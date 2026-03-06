@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useLiveData } from "./useLiveData";
 import { useSupabase } from "./useSupabase";
 import { fetchTokenByAddress, proxyUrl } from "./api";
-import { HunterPanel, TreasureChestOverlay, useChestSystem, rollLoot, ITEMS, RARITIES, HunterLeaderboard } from "./HunterSystem";
+import { HunterPanel, TreasureChestOverlay, useChestSystem, RARITIES, HunterLeaderboard } from "./HunterSystem";
 
 const NEON = {
   magenta:"#ff00ff",cyan:"#00ffff",green:"#39ff14",red:"#ff073a",
