@@ -6622,6 +6622,17 @@ export default function DegenCommandCenter(){
                 {token._loading&&<span style={{fontSize:10,color:NEON.cyan,fontFamily:"'Share Tech Mono'"}}>⟳ FETCHING LIVE DATA...</span>}
                 {!token._loading&&token._killed&&<span style={{fontSize:11,color:"#ff073a",fontWeight:900,fontFamily:"'Orbitron'",textShadow:"0 0 10px #ff073a"}}>💀 KILL CONFIRMED +{token._xp}XP</span>}
                 {!token._loading&&!token._killed&&token.priceUsd>0&&<span style={{fontSize:9,color:"#39ff14",background:"rgba(57,255,20,0.1)",padding:"1px 5px",borderRadius:3}}>● LIVE</span>}
+                {!token._loading&&!token._killed&&!token.priceUsd&&token.addr&&(
+                  <span onClick={()=>enrichAndSelect(token.addr,token)}
+                    style={{fontSize:9,color:"#00ffff",background:"rgba(0,255,255,0.08)",
+                      border:"1px solid rgba(0,255,255,0.3)",padding:"1px 7px",borderRadius:3,
+                      cursor:"pointer",fontFamily:"'Orbitron'",letterSpacing:0.5,
+                      transition:"all 0.15s"}}
+                    onMouseEnter={e=>e.target.style.background="rgba(0,255,255,0.18)"}
+                    onMouseLeave={e=>e.target.style.background="rgba(0,255,255,0.08)"}>
+                    🎯 SCAN DEX
+                  </span>
+                )}
                 <span style={{fontSize:11,color:PLATFORM_COLORS[token.platform]||NEON.dimText,background:"rgba(255,255,255,0.04)",
                   padding:"1px 6px",borderRadius:8,border:`1px solid ${(PLATFORM_COLORS[token.platform]||NEON.dimText)}30`}}>{token.platform}</span>
                 <span onClick={()=>navigator.clipboard.writeText(token.addr)} style={{fontSize:11,color:NEON.cyan,cursor:"pointer",
