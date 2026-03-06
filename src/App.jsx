@@ -4378,7 +4378,7 @@ function LeaderboardPanel({ SB_URL, SB_KEY, onSelectToken, onSelectWallet, onKil
     setDeployerDetail(null);
   }, [section]);
 
-  const cats = CATEGORIES[section];
+  const cats = CATEGORIES[section] || [];
   const selCat = cats.find(c=>c.id===category);
 
   const fmtAddr = a => a ? `${a.slice(0,4)}...${a.slice(-4)}` : "???";
@@ -4637,21 +4637,27 @@ export default function DegenCommandCenter(){
         const SB_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlybWpwaGhmZ2R1eXNvZnRudXh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3MzI5MzAsImV4cCI6MjA4ODMwODkzMH0.scHhvTGiABJDybgbjgjilw8XuxOfmWPsqo4iytMZmio";
         const currentMcap = live.mcap || 0;
         // Use PATCH with addr filter to force-overwrite peak_mcap (upsert merge-duplicates keeps ATH)
+        // Only update holders/volume if DexScreener actually returned them (it doesn't return holders)
+        const patchBody = {
+          peak_mcap: currentMcap,
+          name: live.name||stub.name,
+          graduated: stub.graduated||live.platform!=="pump",
+          platform: live.platform||stub.platform||"PumpFun",
+          updated_at: new Date().toISOString(),
+          ...(live.vol > 0 ? {volume: live.vol} : {}),
+        };
         fetch(`${SB_URL}/rest/v1/token_history?addr=eq.${encodeURIComponent(addr)}`, {
           method:"PATCH",
           headers:{apikey:SB_KEY,Authorization:`Bearer ${SB_KEY}`,"Content-Type":"application/json"},
-          body:JSON.stringify({peak_mcap:currentMcap,
-            name:live.name||stub.name,
-            graduated:stub.graduated||live.platform!=="pump",platform:live.platform||stub.platform||"PumpFun",
-            holders:live.holders||0,volume:live.vol||0,updated_at:new Date().toISOString()}),
+          body:JSON.stringify(patchBody),
         }).catch(()=>{
-          // Row might not exist yet — fallback to INSERT
+          // Row might not exist yet — fallback to INSERT, use stub holders as best guess
           fetch(`${SB_URL}/rest/v1/token_history?on_conflict=addr`, {
             method:"POST",
             headers:{apikey:SB_KEY,Authorization:`Bearer ${SB_KEY}`,"Content-Type":"application/json",Prefer:"resolution=merge-duplicates"},
             body:JSON.stringify([{addr,name:live.name||stub.name,peak_mcap:currentMcap,
               graduated:stub.graduated||live.platform!=="pump",platform:live.platform||stub.platform||"PumpFun",
-              holders:live.holders||0,volume:live.vol||0,updated_at:new Date().toISOString()}]),
+              holders:stub.holders||0,volume:live.vol||stub.vol||0,updated_at:new Date().toISOString()}]),
           });
         });
         setSelectedToken({...stub,...live,addr,
@@ -4879,7 +4885,7 @@ export default function DegenCommandCenter(){
             id: row.addr+"_db_"+Date.now(), addr: row.addr, name: row.name, fullName: row.name,
             platform: row.graduated?"Raydium":(row.platform||"PumpFun"), mcap: liveMcap,
             vol: pair?.volume?.h24||0, priceUsd: parseFloat(pair?.priceUsd||0),
-            liquidity: pair?.liquidity?.usd||0, holders:0, devWallet:0,
+            liquidity: pair?.liquidity?.usd||0, holders:row.holders||0, devWallet:0,
             buys: pair?.txns?.h1?.buys||0, sells: pair?.txns?.h1?.sells||0,
             riskScore:50, qualified:true, qualScore:5, qualChecks:[],
             threat:"ACTIVE", threatColor:"#39ff14", bundleDetected:false, bundleSize:0,
