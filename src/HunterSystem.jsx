@@ -4,19 +4,19 @@
 // ═══════════════════════════════════════════════════════════════
 import { useState, useEffect, useCallback, useRef } from "react";
 
-const SB_URL = "https://yrmjphhfgduysoftnuxv.supabase.co";
-const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlybWpwaGhmZ2R1eXNvZnRudXh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3MzI5MzAsImV4cCI6MjA4ODMwODkzMH0.scHhvTGiABJDybgbjgjilw8XuxOfmWPsqo4iytMZmio";
+const _HS_SB_URL = "https://yrmjphhfgduysoftnuxv.supabase.co";
+const _HS_SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlybWpwaGhmZ2R1eXNvZnRudXh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3MzI5MzAsImV4cCI6MjA4ODMwODkzMH0.scHhvTGiABJDybgbjgjilw8XuxOfmWPsqo4iytMZmio";
 
 
 import { STATS, RARITIES, ITEMS, LEVEL_TITLES, getLevelTitle, getLevel, xpForLevel, xpForNextLevel, calcGearScore, calcTotalStats, rollLoot } from './HunterData.js';
 
 async function sbLoad(name){
-  const r=await fetch(`${SB_URL}/rest/v1/hunter_profiles?name=eq.${encodeURIComponent(name)}&limit=1`,{headers:{apikey:SB_KEY,Authorization:`Bearer ${SB_KEY}`}});
+  const r=await fetch(`${_HS_SB_URL}/rest/v1/hunter_profiles?name=eq.${encodeURIComponent(name)}&limit=1`,{headers:{apikey:_HS_SB_KEY,Authorization:`Bearer ${_HS_SB_KEY}`}});
   const d=await r.json();return Array.isArray(d)&&d.length>0?d[0]:null;
 }
 async function sbSave(p){
-  const r=await fetch(`${SB_URL}/rest/v1/hunter_profiles?on_conflict=name`,{
-    method:"POST",headers:{apikey:SB_KEY,Authorization:`Bearer ${SB_KEY}`,"Content-Type":"application/json",Prefer:"resolution=merge-duplicates"},
+  const r=await fetch(`${_HS_SB_URL}/rest/v1/hunter_profiles?on_conflict=name`,{
+    method:"POST",headers:{apikey:_HS_SB_KEY,Authorization:`Bearer ${_HS_SB_KEY}`,"Content-Type":"application/json",Prefer:"resolution=merge-duplicates"},
     body:JSON.stringify([{...p,updated_at:new Date().toISOString()}])});
   return r.ok;
 }
@@ -426,7 +426,7 @@ export function HunterLeaderboard({NEON={cyan:"#00ffff",dimText:"#5a5a7a",text:"
   ];
   useEffect(()=>{
     const c=CATS.find(x=>x.id===cat);if(!c)return;setLoading(true);
-    fetch(`${SB_URL}/rest/v1/hunter_profiles?order=${c.order}&limit=50&select=name,xp,kills,level,gear_score,equipped`,{headers:{apikey:SB_KEY,Authorization:`Bearer ${SB_KEY}`}})
+    fetch(`${_HS_SB_URL}/rest/v1/hunter_profiles?order=${c.order}&limit=50&select=name,xp,kills,level,gear_score,equipped`,{headers:{apikey:_HS_SB_KEY,Authorization:`Bearer ${_HS_SB_KEY}`}})
       .then(r=>r.json()).then(rows=>{setData(Array.isArray(rows)?rows:[]);setLoading(false);}).catch(()=>setLoading(false));
   },[cat]);
   const selCat=CATS.find(c=>c.id===cat);
