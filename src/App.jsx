@@ -4356,7 +4356,7 @@ function LeaderboardPanel({ SB_URL, SB_KEY, onSelectToken, onSelectWallet, NEON,
   const selCat = cats.find(c=>c.id===category);
 
   const fmtAddr = a => a ? `${a.slice(0,4)}...${a.slice(-4)}` : "???";
-  const fmtSol = v => v >= 0 ? `+${v.toFixed(2)}` : v.toFixed(2);
+  const fmtSol = v => { const n = v||0; return n >= 0 ? `+${n.toFixed(2)}` : n.toFixed(2); };
 
   // Deployer detail view
   if (deployerDetail) {
@@ -4485,7 +4485,7 @@ function LeaderboardPanel({ SB_URL, SB_KEY, onSelectToken, onSelectWallet, NEON,
             const winRate = totalTrades>0?Math.round((row.wins||0)/totalTrades*100):0;
             const val = category==="wins"?`${row.wins||0}W ${winRate}%`:
                         category==="pnl"||category==="losers"?`${fmtSol(row.total_pnl||0)} SOL`:
-                        category==="single"?`+${(row.bestSingle||0).toFixed(2)} SOL`:
+                        category==="single"?`+${((row.bestSingle)||0).toFixed(2)} SOL`:
                         `${totalTrades} trades`;
             const valColor = category==="losers"?"#ff073a":selCat?.color||NEON.yellow;
             return (
