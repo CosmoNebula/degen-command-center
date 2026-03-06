@@ -1547,9 +1547,9 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
     const iv = setInterval(async () => {
       cycle++;
       const cur = tokensRef.current;
-      // Get qualified PumpFun tokens that haven't migrated yet
+      // Get qualified tokens — including migrated (SolanaTracker returns real holder count for both)
       const pumpTokens = cur.filter(t =>
-        t.alive && t.qualified && !t.migrated && t.platform === "PumpFun"
+        t.alive && t.qualified
       ).slice(0, 4); // max 4 per cycle to avoid rate limits
 
       for (const t of pumpTokens) {

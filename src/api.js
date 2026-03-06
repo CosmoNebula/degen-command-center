@@ -117,11 +117,12 @@ export async function fetchLargestHolders(mintAddress) {
     const total = accounts.reduce((s, a) => s + parseFloat(a.uiAmount || 0), 0);
     const top10 = accounts.slice(0, 10).reduce((s, a) => s + parseFloat(a.uiAmount || 0), 0);
     const topPct = total > 0 ? (top10 / total) * 100 : 0;
-    // Estimate holder count from unique accounts (this is top holders only)
+    // NOTE: getTokenLargestAccounts only returns top 20 accounts — holderCount here is NOT real
+    // Use SolanaTracker for real holder count. This call is only useful for topHolderPct concentration.
     return {
       holders: accounts.map(a => ({ address: a.address, amount: a.uiAmount })),
       topHolderPct: topPct,
-      holderCount: accounts.length, // minimum estimate
+      holderCount: 0, // intentionally 0 — don't use this as holder count
     };
   } catch (e) {
     console.error("[Helius] holders failed:", e);
