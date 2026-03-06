@@ -4566,6 +4566,7 @@ export default function DegenCommandCenter(){
   // ═══ NEW FEATURE STATE ═══
   const correspondentRef=useRef({queue:[],_lastId:0});
   const [corrDisplay,setCorrDisplay]=useState({visible:false,msg:"",mood:"idle"});
+  const pushMsg=(msg,mood)=>{const cr=correspondentRef.current;cr.queue.push({msg,mood});if(cr.queue.length>4)cr.queue.shift();};
   const comboRef=useRef({count:0,lastEvent:0,peak:0});
   const [comboDisplay,setComboDisplay]=useState(0);
   const deployerRepRef=useRef({}); // {deployer_addr: {launches:N,rugs:N,runners:N,tokens:[]}}
@@ -4615,10 +4616,11 @@ export default function DegenCommandCenter(){
             holders:live.holders||0,volume:live.vol||0,updated_at:new Date().toISOString()}]),
         });
         setSelectedToken({...stub,...live,addr,
+          migrated:false, graduated:false,
           peakMcap:Math.max(peakMcap,live.mcap||0),
           athMcap:Math.max(peakMcap,live.mcap||0),
           alive:true,threat:stub.threat||"HISTORICAL",threatColor:stub.threatColor||"#5a5a7a",
-          qualChecks:[],devWallet:0,_loading:false});
+          qualChecks:[],devWallet:0,_loading:false,_scanned:Date.now()});
       } else {
         setSelectedToken(prev=>prev?.addr===addr?{...prev,_loading:false}:prev);
       }
@@ -6628,7 +6630,8 @@ export default function DegenCommandCenter(){
                 {token._loading&&<span style={{fontSize:10,color:NEON.cyan,fontFamily:"'Share Tech Mono'"}}>⟳ FETCHING LIVE DATA...</span>}
                 {!token._loading&&token._killed&&<span style={{fontSize:11,color:"#ff073a",fontWeight:900,fontFamily:"'Orbitron'",textShadow:"0 0 10px #ff073a"}}>💀 KILL CONFIRMED +{token._xp}XP</span>}
                 {!token._loading&&!token._killed&&token.priceUsd>0&&!token.migrated&&!token.graduated&&<span style={{fontSize:9,color:"#39ff14",background:"rgba(57,255,20,0.1)",padding:"1px 5px",borderRadius:3}}>● LIVE</span>}
-                {!token._loading&&!token._killed&&token.addr&&(token.migrated||token.graduated||!token.priceUsd)&&(
+                {!token._loading&&token._scanned&&<span style={{fontSize:9,color:"#39ff14",background:"rgba(57,255,20,0.12)",border:"1px solid rgba(57,255,20,0.4)",padding:"1px 7px",borderRadius:3,fontFamily:"'Orbitron'"}}>✓ SCANNED ${formatNum(token.mcap||0)}</span>}
+                {!token._loading&&!token._killed&&!token._scanned&&token.addr&&(token.migrated||token.graduated||!token.priceUsd)&&(
                   <span onClick={(e)=>{
                       e.stopPropagation();
                       const scanAddr = token.addr || token.mint;
