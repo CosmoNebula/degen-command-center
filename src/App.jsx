@@ -29,7 +29,7 @@ const COIN_COLORS=[
 function rand(a,b){return Math.random()*(b-a)+a}
 function randInt(a,b){return Math.floor(rand(a,b))}
 function pick(a){return a[randInt(0,a.length)]}
-function formatNum(n){if(n>=1e6)return(n/1e6).toFixed(1)+"M";if(n>=1e3)return(n/1e3).toFixed(1)+"K";return n.toFixed(0)}
+function formatNum(n){n=n||0;if(n>=1e6)return(n/1e6).toFixed(1)+"M";if(n>=1e3)return(n/1e3).toFixed(1)+"K";return n.toFixed(0)}
 function formatAddr(a){return a.slice(0,4)+"..."+a.slice(-4)}
 function genAddr(){const c="0123456789abcdef";let s="";for(let i=0;i<40;i++)s+=c[randInt(0,16)];return s}
 
@@ -4025,12 +4025,12 @@ function IntelPanel({token,onLock,onClose}){
   if(!token)return null;
   const stats=[
     {l:"MCAP",v:"$"+formatNum(token.mcap),c:NEON.cyan},{l:"VOL",v:"$"+formatNum(token.vol),c:NEON.yellow},
-    {l:"ATH",v:"$"+formatNum(token.athMcap||token.mcap),c:"#ffd740"},
+    {l:"ATH",v:"$"+formatNum(token.athMcap||token.mcap||0),c:"#ffd740"},
     {l:"START",v:"$"+formatNum(token.startMcap||0),c:NEON.dimText},
-    {l:"HOLDERS",v:token.holders,c:token.holders>100?NEON.green:NEON.red},
-    {l:"DEV%",v:token.devWallet.toFixed(1)+"%",c:token.devWallet>15?NEON.red:NEON.green},
-    {l:"B/S",v:`${token.buys}/${token.sells}`,c:NEON.text},
-    {l:"QUAL",v:token.qualScore+"/8",c:NEON.green},
+    {l:"HOLDERS",v:token.holders||0,c:(token.holders||0)>100?NEON.green:NEON.red},
+    {l:"DEV%",v:(token.devWallet||0).toFixed(1)+"%",c:(token.devWallet||0)>15?NEON.red:NEON.green},
+    {l:"B/S",v:`${token.buys||0}/${token.sells||0}`,c:NEON.text},
+    {l:"QUAL",v:(token.qualScore||0)+"/8",c:NEON.green},
   ];
   const edgeStats=[
     {l:"👻 FRESH",v:(token.freshPct||0)+"%",c:(token.freshPct||0)>75?NEON.red:(token.freshPct||0)<50?NEON.green:NEON.yellow},
