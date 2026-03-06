@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useLiveData } from "./useLiveData";
 import { useSupabase } from "./useSupabase";
-import { fetchTokenByAddress, proxyUrl } from "./api";
+import { fetchTokenByAddress, fetchTokensBatch, proxyUrl } from "./api";
 import { HunterPanel, TreasureChestOverlay, useChestSystem, HunterLeaderboard } from "./HunterSystem";
 import { RARITIES } from "./HunterData.js";
 
@@ -4673,7 +4673,202 @@ export default function DegenCommandCenter(){
       setSelectedToken(prev=>prev?.addr===addr?{...prev,_loading:false}:prev);
     }
   }, [killStreak]);
-  const addLockHistoryEvent=(addr,name,type,reason,data={})=>{
+
+  // ─── BACKGROUND MAINTENANCE SYSTEM ───────────────────────────────────────────
+  // Runs on two timers:
+  //   30s — token scan: batch DexScreener → update mcap/vol → kill dead coins → resolve open HOLDs → reposition leaderboard
+  //   5min — prune pass: delete stale dead tokens, empty wallets, old alerts
+  useEffect(() => {
+    const SB_URL = "https://yrmjphhfgduysoftnuxv.supabase.co";
+    const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlybWpwaGhmZ2R1eXNvZnRudXh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3MzI5MzAsImV4cCI6MjA4ODMwODkzMH0.scHhvTGiABJDybgbjgjilw8XuxOfmWPsqo4iytMZmio";
+    const hdrs = { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`, "Content-Type": "application/json" };
+    const patch = (table, filter, body) => fetch(`${SB_URL}/rest/v1/${table}?${filter}`, { method:"PATCH", headers:hdrs, body:JSON.stringify(body) });
+    const del   = (table, filter)       => fetch(`${SB_URL}/rest/v1/${table}?${filter}`, { method:"DELETE", headers:hdrs });
+
+    // ── TOKEN SCAN (every 30s) ──────────────────────────────────────────────────
+    const runTokenScan = async () => {
+      try {
+        // Fetch top 100 alive tokens
+        const res = await fetch(
+          `${SB_URL}/rest/v1/token_history?select=addr,name,peak_mcap,holders,volume&order=peak_mcap.desc&limit=100&death_time=is.null`,
+          { headers: hdrs }
+        );
+        if (!res.ok) return;
+        const rows = await res.json();
+        if (!Array.isArray(rows) || rows.length === 0) return;
+
+        console.log(`[MAINT] 🔄 Scanning ${rows.length} tokens...`);
+
+        // Batch DexScreener — 30 per call
+        const results = {};
+        const addrs = rows.map(r => r.addr).filter(Boolean);
+        for (let i = 0; i < addrs.length; i += 30) {
+          try {
+            const batch = await fetchTokensBatch(addrs.slice(i, i + 30));
+            Object.assign(results, batch);
+          } catch(e) { /* skip */ }
+          if (i + 30 < addrs.length) await new Promise(r => setTimeout(r, 400));
+        }
+
+        const killedAddrs = [];
+        let updated = 0, killed = 0;
+
+        for (const row of rows) {
+          const live = results[row.addr];
+          const currentMcap = live?.mcap || 0;
+          const peakMcap = row.peak_mcap || 0;
+          const isDead = !live || currentMcap < 1000 || (peakMcap > 5000 && currentMcap < peakMcap * 0.05);
+
+          if (isDead) {
+            patch("token_history", `addr=eq.${encodeURIComponent(row.addr)}`,
+              { death_time: Date.now(), updated_at: new Date().toISOString() });
+            killedAddrs.push(row.addr);
+            killed++;
+          } else {
+            patch("token_history", `addr=eq.${encodeURIComponent(row.addr)}`, {
+              peak_mcap: currentMcap,
+              updated_at: new Date().toISOString(),
+              ...(live.vol > 0 ? { volume: live.vol } : {}),
+            });
+            updated++;
+          }
+        }
+
+        // ── HOLD RESOLUTION: close open wallet HOLDs on killed coins ──────────
+        if (killedAddrs.length > 0) {
+          try {
+            const wsRes = await fetch(
+              `${SB_URL}/rest/v1/wallet_scores?select=addr,wins,losses,holds,total_pnl,trades,win_addrs,loss_addrs,total_bought,total_sold,big_wins`,
+              { headers: hdrs }
+            );
+            if (wsRes.ok) {
+              const wallets = await wsRes.json();
+              const killedSet = new Set(killedAddrs);
+              let walletUpdates = 0;
+
+              for (const w of wallets) {
+                const trades = Array.isArray(w.trades) ? w.trades : [];
+                const openHolds = trades.filter(tr => tr.type === "HOLD" && killedSet.has(tr.addr));
+                if (openHolds.length === 0) continue;
+
+                // Force each open HOLD on a killed coin to LOSS
+                const updatedTrades = trades.map(tr => {
+                  if (tr.type !== "HOLD" || !killedSet.has(tr.addr)) return tr;
+                  return { ...tr, type: "LOSS", pnl: -(tr.sol || 0) }; // full loss = bought in, never got out
+                });
+
+                const newLosses = (w.losses || 0) + openHolds.length;
+                const lossAdded  = openHolds.reduce((s, tr) => s + (tr.sol || 0), 0);
+                const newPnl     = (w.total_pnl || 0) - lossAdded;
+                const lossAddrs  = [...(w.loss_addrs || []), ...openHolds.map(tr => tr.addr)];
+                const newHolds   = Math.max(0, (w.holds || 0) - openHolds.length);
+
+                patch("wallet_scores", `addr=eq.${encodeURIComponent(w.addr)}`, {
+                  losses: newLosses,
+                  holds: newHolds,
+                  total_pnl: newPnl,
+                  loss_addrs: [...new Set(lossAddrs)],
+                  trades: updatedTrades.slice(-50),
+                  updated_at: new Date().toISOString(),
+                });
+                walletUpdates++;
+              }
+              if (walletUpdates > 0)
+                console.log(`[MAINT] 💀 Resolved ${killedAddrs.length} kills → ${walletUpdates} wallet HOLDs closed as LOSS`);
+            }
+          } catch(e) { console.warn("[MAINT] HOLD resolution failed:", e.message); }
+        }
+
+        console.log(`[MAINT] ✅ Tokens: ${updated} updated, ${killed} killed`);
+      } catch(e) { console.warn("[MAINT] Token scan failed:", e.message); }
+    };
+
+    // ── PRUNE PASS (every 5 min) ────────────────────────────────────────────────
+    const runPrune = async () => {
+      try {
+        const now = Date.now();
+        const h24 = now - 86400000;   // 24h ago
+        const d7  = now - 604800000;  // 7 days ago
+        let pruned = 0;
+
+        // 1. Delete dead tokens older than 24h with low peak_mcap (< $10K — not worth keeping)
+        //    They'll re-enter naturally if they get volume again
+        const deadRes = await fetch(
+          `${SB_URL}/rest/v1/token_history?select=addr,peak_mcap,death_time&death_time=not.is.null&peak_mcap=lt.10000`,
+          { headers: hdrs }
+        );
+        if (deadRes.ok) {
+          const dead = await deadRes.json();
+          const toDelete = dead.filter(r => r.death_time && r.death_time < h24);
+          for (const r of toDelete) {
+            del("token_history", `addr=eq.${encodeURIComponent(r.addr)}`);
+            pruned++;
+          }
+          if (toDelete.length > 0)
+            console.log(`[MAINT] 🗑 Pruned ${toDelete.length} low-value dead tokens`);
+        }
+
+        // 2. Delete wallet rows with less than 0.25 SOL total bought — pure noise
+        //    These are wallets we tracked but never put real money in
+        const emptyWalletsRes = await fetch(
+          `${SB_URL}/rest/v1/wallet_scores?select=addr,total_bought,wins,losses`,
+          { headers: hdrs }
+        );
+        if (emptyWalletsRes.ok) {
+          const wallets = await emptyWalletsRes.json();
+          const toDelete = wallets.filter(w => (w.total_bought || 0) < 0.25);
+          for (const w of toDelete) {
+            del("wallet_scores", `addr=eq.${encodeURIComponent(w.addr)}`);
+            pruned++;
+          }
+          if (toDelete.length > 0)
+            console.log(`[MAINT] 🗑 Pruned ${toDelete.length} low-volume wallets (<0.25 SOL)`);
+        }
+
+        // 3. Delete smart_alerts older than 7 days
+        const alertCutoff = new Date(d7).toISOString();
+        del("smart_alerts", `created_at=lt.${alertCutoff}`);
+
+        // 4. Delete dead high-value tokens older than 7 days (mcap >= $10K but dead > 7d)
+        const oldHighRes = await fetch(
+          `${SB_URL}/rest/v1/token_history?select=addr,death_time&death_time=not.is.null&peak_mcap=gte.10000`,
+          { headers: hdrs }
+        );
+        if (oldHighRes.ok) {
+          const old = await oldHighRes.json();
+          const toDelete = old.filter(r => r.death_time && r.death_time < d7);
+          for (const r of toDelete) {
+            del("token_history", `addr=eq.${encodeURIComponent(r.addr)}`);
+            pruned++;
+          }
+          if (toDelete.length > 0)
+            console.log(`[MAINT] 🗑 Pruned ${toDelete.length} old high-value dead tokens (7d+)`);
+        }
+
+        if (pruned > 0) console.log(`[MAINT] 🧹 Prune pass complete — ${pruned} rows removed`);
+      } catch(e) { console.warn("[MAINT] Prune failed:", e.message); }
+    };
+
+    // Run token scan immediately, then every 30s
+    runTokenScan();
+    const scanIv = setInterval(runTokenScan, 30000);
+
+    // Run prune after 2min (let scan run first), then every 5min
+    const pruneDelay = setTimeout(() => {
+      runPrune();
+      const pruneIv = setInterval(runPrune, 300000);
+      pruneIv_ref = pruneIv;
+    }, 120000);
+
+    let pruneIv_ref = null;
+    return () => {
+      clearInterval(scanIv);
+      clearTimeout(pruneDelay);
+      if (pruneIv_ref) clearInterval(pruneIv_ref);
+    };
+  }, []); // eslint-disable-line
+
+  const addLockHistoryEvent
     setLockHistory(prev=>{
       const existing=prev.find(h=>h.addr===addr);
       const evt={type,reason,time:Date.now(),...data};
