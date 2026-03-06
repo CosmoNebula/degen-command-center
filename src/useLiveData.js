@@ -4,7 +4,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { useState, useEffect, useRef } from "react";
-import { connectPumpFun, fetchTokenByAddress, fetchTokensBatch, fetchTokenMeta, fetchLargestHolders, fetchLatestProfiles, fetchBoostedTokens, connectHeliusWS, fetchRugCheck, fetchGeckoTrending, fetchGeckoPoolByToken, fetchPumpCurveProgress, fetchDefinedTrending, fetchJupiterSlippage, fetchJupiterVerified, fetchPumpFunDirect, fetchRaydiumPool, fetchUniqueSigners } from "./api";
+import { connectPumpFun, fetchTokenByAddress, fetchTokensBatch, fetchTokenMeta, fetchHolderCount, fetchLargestHolders, fetchLatestProfiles, fetchBoostedTokens, connectHeliusWS, fetchRugCheck, fetchGeckoTrending, fetchGeckoPoolByToken, fetchPumpCurveProgress, fetchDefinedTrending, fetchJupiterSlippage, fetchJupiterVerified, fetchPumpFunDirect, fetchRaydiumPool, fetchUniqueSigners } from "./api";
 
 // ─── DIRECT SUPABASE WRITES (no callback chain needed) ───
 const SB_URL = "https://yrmjphhfgduysoftnuxv.supabase.co";
@@ -1058,29 +1058,31 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
       for (const mint of batch) {
         if (enriched[mint]?.heliusDone) continue;
         try {
-          const [meta, holders] = await Promise.all([
+          const [meta, largest, count] = await Promise.all([
             fetchTokenMeta(mint),
             fetchLargestHolders(mint),
+            fetchHolderCount(mint),
           ]);
           enriched[mint].heliusDone = true;
           enriched[mint].lastHelius = now;
+          const realHolders = count || meta?.holderCount || 0;
 
-          if (meta || holders) {
+          if (meta || realHolders > 0) {
             setTokens(prev => prev.map(t => {
               if (t.addr !== mint) return t;
               return {
                 ...t,
                 mintAuth: meta?.mintAuth || false,
                 frozen: meta?.frozen || false,
-                holders: (holders?.holderCount > 0) ? holders.holderCount : t.holders,
-                topHolderPct: holders?.topHolderPct > 0 ? Math.round(holders.topHolderPct) : t.topHolderPct,
+                holders: realHolders > 0 ? realHolders : t.holders,
+                topHolderPct: largest?.topHolderPct > 0 ? Math.round(largest.topHolderPct) : t.topHolderPct,
                 heliusEnriched: true,
               };
             }));
-            console.log(`[HELIUS] ✅ ${mint.slice(0, 8)} — mintAuth:${meta?.mintAuth} holders:${holders?.holderCount} top10:${holders?.topHolderPct?.toFixed(1)}%`);
+            console.log(`[HELIUS] ✅ ${mint.slice(0, 8)} — mintAuth:${meta?.mintAuth} holders:${realHolders} top10:${largest?.topHolderPct?.toFixed(1)}%`);
           }
         } catch (e) {
-          enriched[mint].heliusDone = true; // don't retry on failure
+          enriched[mint].heliusDone = true;
           console.warn(`[HELIUS] ❌ ${mint.slice(0, 8)}`, e.message);
         }
       }
@@ -1289,19 +1291,25 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
         });
       } catch(e) { console.warn("[MIGRATED-BATCH]", e.message); }
 
-      // Helius holders every 30s (every 15th cycle at 2s)
+      // Helius real holder count every 30s (every 15th cycle at 2s)
       migratedHolderCycle++;
       if (migratedHolderCycle % 15 === 0) {
         for (const mt of toPoll.slice(0, 3)) {
           try {
-            const h = await fetchLargestHolders(mt.addr);
-            if (!h || h.holderCount === 0) continue;
-            setTokens(prev => prev.map(t => t.id === mt.id ? {
-              ...t, holders: h.holderCount > 0 ? h.holderCount : t.holders, topHolderPct: h.topHolderPct || t.topHolderPct,
-            } : t));
-            setMigrations(prev => prev.map(m => m.mint === mt.addr ? {
-              ...m, curHolders: h.holderCount > 0 ? h.holderCount : m.curHolders, lastDexUpdate: now,
-            } : m));
+            const [count, largest] = await Promise.all([
+              fetchHolderCount(mt.addr),
+              fetchLargestHolders(mt.addr),
+            ]);
+            const holderCount = count || 0;
+            const topPct = largest?.topHolderPct || 0;
+            if (holderCount > 0) {
+              setTokens(prev => prev.map(t => t.id === mt.id ? {
+                ...t, holders: holderCount, topHolderPct: topPct,
+              } : t));
+              setMigrations(prev => prev.map(m => m.mint === mt.addr ? {
+                ...m, curHolders: holderCount, lastDexUpdate: now,
+              } : m));
+            }
           } catch(e) { /* skip */ }
         }
       }

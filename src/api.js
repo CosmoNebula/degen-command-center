@@ -93,10 +93,35 @@ export async function fetchTokenMeta(mintAddress) {
       supply: r.token_info?.supply || 0,
       decimals: r.token_info?.decimals || 9,
       owner: r.ownership?.owner || "",
+      holderCount: r.token_info?.holder_count || 0, // Helius DAS returns real holder count
     };
   } catch (e) {
     console.error("[Helius] getAsset failed:", e);
     return null;
+  }
+}
+
+export async function fetchHolderCount(mintAddress) {
+  if (!HELIUS_KEY) return 0;
+  try {
+    // getTokenAccounts with limit=1 + total in response gives exact holder count
+    const res = await fetch(`https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0", id: 1,
+        method: "getTokenAccounts",
+        params: { mint: mintAddress, limit: 1, page: 1 },
+      }),
+    });
+    const data = await res.json();
+    // Helius returns `total` field = exact holder count
+    const total = data.result?.total || 0;
+    console.log(`[Helius] holder count ${mintAddress.slice(0,8)}: ${total}`);
+    return total;
+  } catch (e) {
+    console.warn("[Helius] fetchHolderCount failed:", e.message);
+    return 0;
   }
 }
 
