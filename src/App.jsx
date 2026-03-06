@@ -4282,24 +4282,30 @@ function LeaderboardPanel({ SB_URL, SB_KEY, onSelectToken, onSelectWallet, NEON,
     setData([]);
     try {
       const since = tf !== "ALL" ? Date.now() - timeMs[tf] : 0;
-      const sinceISO = since > 0 ? new Date(since).toISOString() : null;
+      const sinceISO = (since > 0) ? new Date(since).toISOString() : null;
 
       if (sec === "COINS") {
         const orderMap = { mcap:"peak_mcap.desc", holders:"holders.desc", volume:"volume.desc" };
         let url = `${SB_URL}/rest/v1/token_history?order=${orderMap[cat]}&limit=50`;
-        if (sinceISO) url += `&first_seen=gte.${since}`;
+        if (since > 0) url += `&first_seen=gte.${since}`;
         const r = await fetch(url, { headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` } });
-        setData(await r.json());
+        const json = await r.json();
+        setData(Array.isArray(json) ? json : []);
 
       } else if (sec === "WALLETS") {
-        let url = `${SB_URL}/rest/v1/wallet_scores?limit=200`;
+        const orderMap = {
+          wins: "wins.desc",
+          pnl: "total_pnl.desc",
+          losers: "total_pnl.asc",
+          trades: "wins.desc", // fallback, will re-sort client side
+          single: "big_wins.desc", // approximation, re-sort client side
+        };
+        let url = `${SB_URL}/rest/v1/wallet_scores?order=${orderMap[cat]||"wins.desc"}&limit=50`;
         if (sinceISO) url += `&updated_at=gte.${sinceISO}`;
         const r = await fetch(url, { headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` } });
         let rows = await r.json();
-        if (cat === "wins") rows.sort((a,b)=>(b.wins||0)-(a.wins||0));
-        else if (cat === "pnl") rows.sort((a,b)=>(b.total_pnl||0)-(a.total_pnl||0));
-        else if (cat === "losers") rows.sort((a,b)=>(a.total_pnl||0)-(b.total_pnl||0));
-        else if (cat === "trades") rows.sort((a,b)=>((b.wins||0)+(b.losses||0)+(b.holds||0))-((a.wins||0)+(a.losses||0)+(a.holds||0)));
+        if (!Array.isArray(rows)) { setData([]); setLoading(false); return; }
+        if (cat === "trades") rows.sort((a,b)=>((b.wins||0)+(b.losses||0)+(b.holds||0))-((a.wins||0)+(a.losses||0)+(a.holds||0)));
         else if (cat === "single") {
           rows = rows.map(r => {
             const best = (r.trades||[]).filter(t=>t.type==="WIN").reduce((mx,t)=>Math.max(mx,t.pnl||0),0);
@@ -4310,9 +4316,10 @@ function LeaderboardPanel({ SB_URL, SB_KEY, onSelectToken, onSelectWallet, NEON,
 
       } else if (sec === "DEPLOYERS") {
         let url = `${SB_URL}/rest/v1/token_history?select=deployer,name,addr,peak_mcap,graduated,rug,first_seen&limit=2000`;
-        if (sinceISO) url += `&first_seen=gte.${since}`;
+        if (since > 0) url += `&first_seen=gte.${since}`;
         const r = await fetch(url, { headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` } });
-        const tokens = (await r.json()).filter(t => t.deployer);
+        const json = await r.json();
+        const tokens = (Array.isArray(json) ? json : []).filter(t => t.deployer);
         // Group by deployer
         const map = {};
         tokens.forEach(t => {
