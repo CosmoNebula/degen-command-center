@@ -31,6 +31,25 @@ export async function fetchTokenByAddress(address) {
   }
 }
 
+// Batch fetch up to 30 tokens in one DexScreener call
+export async function fetchTokensBatch(addresses) {
+  if (!addresses || addresses.length === 0) return {};
+  try {
+    const batch = addresses.slice(0, 30).join(",");
+    const res = await proxyFetch(`https://api.dexscreener.com/tokens/v1/solana/${batch}`);
+    const data = await res.json();
+    const pairs = data?.pairs || (Array.isArray(data) ? data : []);
+    const result = {};
+    pairs.forEach(p => {
+      if (p?.baseToken?.address) result[p.baseToken.address] = normalizePair(p);
+    });
+    return result;
+  } catch (e) {
+    console.error("[DexScreener] Batch failed:", e);
+    return {};
+  }
+}
+
 function normalizePair(p) {
   return {
     name: p.baseToken?.symbol || "???",

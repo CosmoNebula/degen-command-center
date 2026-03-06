@@ -4,7 +4,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { useState, useEffect, useRef } from "react";
-import { connectPumpFun, fetchTokenByAddress, fetchJupiterPrice, fetchTokenMeta, fetchLargestHolders, fetchLatestProfiles, fetchBoostedTokens, connectHeliusWS, fetchRugCheck, fetchGeckoTrending, fetchGeckoPoolByToken, fetchPumpCurveProgress, fetchDefinedTrending, fetchJupiterSlippage, fetchJupiterVerified, fetchPumpFunDirect, fetchRaydiumPool, fetchUniqueSigners } from "./api";
+import { connectPumpFun, fetchTokenByAddress, fetchTokensBatch, fetchTokenMeta, fetchLargestHolders, fetchLatestProfiles, fetchBoostedTokens, connectHeliusWS, fetchRugCheck, fetchGeckoTrending, fetchGeckoPoolByToken, fetchPumpCurveProgress, fetchDefinedTrending, fetchJupiterSlippage, fetchJupiterVerified, fetchPumpFunDirect, fetchRaydiumPool, fetchUniqueSigners } from "./api";
 
 // ─── DIRECT SUPABASE WRITES (no callback chain needed) ───
 const SB_URL = "https://yrmjphhfgduysoftnuxv.supabase.co";
@@ -1086,24 +1086,9 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
       }
     }, 10000);
 
-    // ─── SOL PRICE: Keep USD conversion accurate ───
+    // ─── SOL PRICE: DexScreener only (Jupiter API deprecated/auth required) ───
     const SOL_MINT = "So11111111111111111111111111111111111111112";
     const fetchSolPrice = async () => {
-      // Try Jupiter first
-      try {
-        const prices = await fetchJupiterPrice(SOL_MINT);
-        const p = prices[SOL_MINT];
-        if (p && p.price) {
-          const newPrice = parseFloat(p.price);
-          if (newPrice > 10 && newPrice < 1000) {
-            SOL_USD = newPrice;
-            console.log(`[SOL] ✅ Jupiter: $${SOL_USD.toFixed(2)} | MCAP corr: ${MCAP_CORRECTION.toFixed(3)} (${mcapSamples.length} samples)`);
-            return;
-          }
-        }
-        console.warn("[SOL] Jupiter returned no price, trying DexScreener...");
-      } catch (e) { console.warn("[SOL] Jupiter failed:", e.message); }
-      // Fallback: DexScreener SOL/USDC pair
       try {
         const res = await fetch("https://api.dexscreener.com/tokens/v1/solana/So11111111111111111111111111111111111111112");
         const data = await res.json();
@@ -1112,49 +1097,13 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
           const newPrice = parseFloat(pair.priceUsd);
           if (newPrice > 10 && newPrice < 1000) {
             SOL_USD = newPrice;
-            console.log(`[SOL] ✅ DexScreener fallback: $${SOL_USD.toFixed(2)}`);
             return;
           }
         }
-      } catch (e2) { console.warn("[SOL] DexScreener fallback also failed:", e2.message); }
-      console.warn(`[SOL] ⚠ Using default: $${SOL_USD}`);
+      } catch (e) { console.warn("[SOL] DexScreener failed:", e.message); }
     };
     fetchSolPrice(); // immediate
     const solPriceInterval = setInterval(fetchSolPrice, 30000); // every 30s
-
-    // ─── JUPITER: Batch price updates for all qualified tokens ───
-    const jupInterval = setInterval(async () => {
-      const mints = [];
-      tokensRef.current.forEach(t => { if (t.qualified && t.addr) mints.push(t.addr); });
-      if (mints.length === 0) return;
-
-      // Jupiter supports up to 100 comma-separated IDs
-      const batchMints = mints.slice(0, 50);
-      try {
-        const prices = await fetchJupiterPrice(batchMints);
-        if (!prices || Object.keys(prices).length === 0) return;
-
-        setTokens(prev => prev.map(t => {
-          const p = prices[t.addr];
-          if (!p || !p.price) return t;
-          const jupPrice = parseFloat(p.price);
-          // Update mcap from Jupiter price (most accurate)
-          const td = tradeData.current[t.addr];
-          const supply = td?.supply || 1000000000; // default 1B supply
-          const jupMcap = jupPrice * supply;
-          return {
-            ...t,
-            priceUsd: jupPrice,
-            // Only use Jupiter mcap if it seems reasonable (not 0 or astronomical)
-            mcap: jupMcap > 100 && jupMcap < 100000000 ? jupMcap : t.mcap,
-            jupEnriched: true,
-          };
-        }));
-        console.log(`[JUP] ✅ Priced ${Object.keys(prices).length}/${batchMints.length} tokens`);
-      } catch (e) {
-        console.warn("[JUP] ❌", e.message);
-      }
-    }, 15000);
 
     // ─── FALLBACK MIGRATION DETECTION: catch tokens PumpPortal missed ───
     // If a token has high mcap and goes silent, check DexScreener for Raydium pair
@@ -1252,13 +1201,12 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
       const id = mintToId.current[mint];
       if (!id) return;
 
-      // Instant Jupiter price fetch
+      // Instant DexScreener price fetch on swap event
       try {
-        const jupData = await fetchJupiterPrice([mint]);
-        const jp = jupData[mint];
-        if (!jp || !jp.price) return;
-        const priceUsd = parseFloat(jp.price);
-        const jupMcap = priceUsd * PUMP_SUPPLY;
+        const dex = await fetchTokenByAddress(mint);
+        if (!dex || !dex.mcap) return;
+        const jupMcap = dex.mcap;
+        const priceUsd = dex.priceUsd || 0;
 
         const td = tradeData.current[mint];
         if (td) { td.lastTradeTime = Date.now(); td.lastMcapSol = jupMcap / SOL_USD; }
@@ -1271,10 +1219,8 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
         setMigrations(prev => prev.map(m => m.mint === mint ? {
           ...m, curMcap: jupMcap, curPrice: priceUsd, lastDexUpdate: Date.now(),
         } : m));
-
-        console.log(`[HELIUS-WS] ⚡ ${mint.slice(0, 8)} swap → $${priceUsd.toFixed(8)} ($${formatNum(jupMcap)} mcap)`);
       } catch (e) {
-        console.warn("[HELIUS-WS] Jupiter fetch failed:", e.message);
+        console.warn("[HELIUS-WS] DexScreener fetch failed:", e.message);
       }
     });
     heliusWsRef.current = heliusWs;
@@ -1286,133 +1232,80 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
 
     // ─── MIGRATED TOKEN FALLBACK POLLING: DexScreener for vol/buys/sells + Helius holders ───
     let migratedLastSeen = {};
-    let migratedPollCycle = 0;
+    let migratedHolderCycle = 0;
 
+    // === BATCH 2s poll: all migrated tokens in ONE DexScreener request ===
     const migratedInterval = setInterval(async () => {
       const mints = [...migratedMints.current];
       if (mints.length === 0) return;
-
       const curTokens = tokensRef.current;
       const now = Date.now();
-      const toPoll = mints.slice(0, 8).map(mint => ({
-        addr: mint,
-        id: mintToId.current[mint] || null,
+
+      const toPoll = mints.map(mint => ({
+        addr: mint, id: mintToId.current[mint] || null,
       })).filter(m => {
         if (!m.id) return false;
         const live = curTokens.find(t => t.id === m.id);
         if (live) { migratedLastSeen[m.addr] = now; return true; }
         const lastSeen = migratedLastSeen[m.addr] || now;
         migratedLastSeen[m.addr] = migratedLastSeen[m.addr] || now;
-        const goneSec = (now - lastSeen) / 1000;
-        if (goneSec > 300) { migratedMints.current.delete(m.addr); delete migratedLastSeen[m.addr]; return false; }
+        if ((now - lastSeen) / 1000 > 300) { migratedMints.current.delete(m.addr); delete migratedLastSeen[m.addr]; return false; }
         return true;
       });
 
       if (toPoll.length === 0) return;
-      migratedPollCycle++;
 
-      // === JUPITER PRICE FALLBACK: only if Helius WS hasn't updated in 10s ===
-      if (migratedPollCycle % 2 === 0) {
-        const now2 = Date.now();
-        const staleTokens = toPoll.filter(mt => !lastWsPrice[mt.addr] || now2 - lastWsPrice[mt.addr] > 10000);
-        if (staleTokens.length > 0) {
-          try {
-            const jupAddrs = staleTokens.map(m => m.addr);
-            const jupData = await fetchJupiterPrice(jupAddrs);
-            for (const mt of staleTokens) {
-              const jp = jupData[mt.addr];
-              if (!jp || !jp.price) continue;
-              const priceUsd = parseFloat(jp.price);
-              const jupMcap = priceUsd * PUMP_SUPPLY;
-
+      // One batch request for ALL migrated tokens — much cheaper than N sequential calls
+      try {
+        const results = await fetchTokensBatch(toPoll.map(m => m.addr));
+        toPoll.forEach(mt => {
+          const dex = results[mt.addr];
+          if (!dex) return;
           const td = tradeData.current[mt.addr];
-          if (td) { td.lastTradeTime = now; td.lastMcapSol = jupMcap / SOL_USD; }
-
+          if (td) {
+            td.lastTradeTime = now;
+            if (dex.mcap) { td.lastMcapSol = dex.mcap / SOL_USD; td.mcapSource = "dex"; }
+            if (dex.buys > (td.buys || 0)) td.buys = dex.buys;
+            if (dex.sells > (td.sells || 0)) td.sells = dex.sells;
+          }
           setTokens(prev => prev.map(t => t.id === mt.id ? {
-            ...t, mcap: jupMcap, priceUsd: priceUsd,
-            health: jupMcap > 10000 ? Math.max(t.health, 50) : t.health,
+            ...t,
+            mcap: dex.mcap || t.mcap,
+            vol: dex.vol != null ? dex.vol : t.vol,
+            buys: dex.buys != null ? dex.buys : t.buys,
+            sells: dex.sells != null ? dex.sells : t.sells,
+            liquidity: dex.liquidity != null ? dex.liquidity : t.liquidity,
+            dexEnriched: true,
           } : t));
-
           setMigrations(prev => prev.map(m => m.mint === mt.addr ? {
-            ...m, curMcap: jupMcap, curPrice: priceUsd, lastDexUpdate: now,
+            ...m,
+            curMcap: dex.mcap || m.curMcap,
+            curVol: dex.vol || m.curVol,
+            curBuys: dex.buys != null ? dex.buys : m.curBuys,
+            curSells: dex.sells != null ? dex.sells : m.curSells,
+            curLiquidity: dex.liquidity || m.curLiquidity,
+            lastDexUpdate: now,
           } : m));
+        });
+      } catch(e) { console.warn("[MIGRATED-BATCH]", e.message); }
 
-          console.log("[MIGRATED-JUP] \u26A1 " + mt.addr.slice(0, 8) + " \u2192 $" + priceUsd.toFixed(8) + " ($" + formatNum(jupMcap) + " mcap) [FALLBACK]");
-        }
-          } catch (e) {
-            console.warn("[MIGRATED-JUP] fallback price failed:", e.message);
-          }
-        }
-      }
-
-      // === DEXSCREENER: every 3rd cycle (vol, buys, sells, liquidity) ===
-      if (migratedPollCycle % 3 === 0) {
-        for (const mt of toPoll) {
-          try {
-            const dex = await fetchTokenByAddress(mt.addr);
-            if (!dex) continue;
-
-            const td = tradeData.current[mt.addr];
-            if (td) {
-              td.lastTradeTime = now;
-              if (dex.mcap) { td.lastMcapSol = dex.mcap / SOL_USD; td.mcapSource = "dex"; }
-              if (dex.buys > (td.buys || 0)) td.buys = dex.buys;
-              if (dex.sells > (td.sells || 0)) td.sells = dex.sells;
-            }
-
-            setTokens(prev => prev.map(t => t.id === mt.id ? {
-              ...t,
-              mcap: dex.mcap || t.mcap,
-              vol: dex.vol != null ? dex.vol : t.vol,
-              buys: dex.buys != null ? dex.buys : t.buys,
-              sells: dex.sells != null ? dex.sells : t.sells,
-              holders: dex.holders != null ? dex.holders : t.holders,
-              liquidity: dex.liquidity != null ? dex.liquidity : t.liquidity,
-              dexEnriched: true,
-            } : t));
-
-            setMigrations(prev => prev.map(m => m.mint === mt.addr ? {
-              ...m,
-              curMcap: dex.mcap || m.curMcap,
-              curVol: dex.vol || m.curVol,
-              curBuys: dex.buys != null ? dex.buys : m.curBuys,
-              curSells: dex.sells != null ? dex.sells : m.curSells,
-              curHolders: dex.holders || m.curHolders,
-              curLiquidity: dex.liquidity || m.curLiquidity,
-              lastDexUpdate: now,
-            } : m));
-
-            console.log("[MIGRATED-DEX] \uD83D\uDCCA " + mt.addr.slice(0, 8) + " \u2192 $" + formatNum(dex.mcap) + " mcap, " + dex.buys + "b/" + dex.sells + "s liq:$" + formatNum(dex.liquidity));
-          } catch (e) {
-            console.warn("[MIGRATED-DEX] fetch failed:", e.message);
-          }
-        }
-      }
-
-      // === HELIUS HOLDERS: every 6th cycle (~30s) ===
-      if (migratedPollCycle % 6 === 0) {
+      // Helius holders every 30s (every 15th cycle at 2s)
+      migratedHolderCycle++;
+      if (migratedHolderCycle % 15 === 0) {
         for (const mt of toPoll.slice(0, 3)) {
           try {
             const h = await fetchLargestHolders(mt.addr);
             if (!h || h.holderCount === 0) continue;
-
             setTokens(prev => prev.map(t => t.id === mt.id ? {
-              ...t,
-              holders: Math.max(t.holders || 0, h.holderCount),
-              topHolderPct: h.topHolderPct || t.topHolderPct,
+              ...t, holders: Math.max(t.holders || 0, h.holderCount), topHolderPct: h.topHolderPct || t.topHolderPct,
             } : t));
-
             setMigrations(prev => prev.map(m => m.mint === mt.addr ? {
               ...m, curHolders: Math.max(m.curHolders || 0, h.holderCount), lastDexUpdate: now,
             } : m));
-
-            console.log("[MIGRATED-HEL] \uD83D\uDC65 " + mt.addr.slice(0, 8) + " \u2192 " + h.holderCount + " holders, top10: " + h.topHolderPct.toFixed(1) + "%");
-          } catch (e) {
-            console.warn("[MIGRATED-HEL] holders failed:", e.message);
-          }
+          } catch(e) { /* skip */ }
         }
       }
-    }, 5000);
+    }, 2000);
 
     // ─── DEAD FIELD CHECK: Verify DB-hydrated + stale tokens every 2 mins ───
     const deadCheckInterval = setInterval(async () => {
@@ -1461,7 +1354,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
       if (heliusWs) heliusWs.cleanup();
       clearInterval(qualInterval);
       clearInterval(dexInterval);
-      clearInterval(jupInterval);
+      // jupInterval removed - Jupiter API deprecated
       clearInterval(solPriceInterval);
       clearInterval(migratedInterval);
       clearInterval(migFallbackInterval);
