@@ -999,7 +999,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
         if (!t.qualified || !t.addr) return;
         const e = enriched[t.addr];
         if (!e) { enriched[t.addr] = { lastDex: 0, lastHelius: 0, heliusDone: false }; }
-        if (now - (enriched[t.addr]?.lastDex || 0) > 30000) {
+        if (now - (enriched[t.addr]?.lastDex || 0) > 10000) {
           needsEnrich.push(t.addr);
         }
       });
@@ -1020,7 +1020,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
               // DexScreener gives us real liquidity, mcap, volume, image
               liquidity: dex.liquidity || t.liquidity,
               mcap: dex.mcap > 0 ? dex.mcap : t.mcap,
-              vol: dex.vol > 0 ? Math.max(t.vol, dex.vol) : t.vol,
+              vol: dex.vol > 0 ? dex.vol : t.vol,
               priceUsd: dex.priceUsd || t.priceUsd,
               imageUri: dex.imageUrl || t.imageUri,
               dexPlatform: dex.platform || t.platform,
@@ -1072,7 +1072,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
                 ...t,
                 mintAuth: meta?.mintAuth || false,
                 frozen: meta?.frozen || false,
-                holders: holders?.holderCount > t.holders ? holders.holderCount : t.holders,
+                holders: (holders?.holderCount > 0) ? holders.holderCount : t.holders,
                 topHolderPct: holders?.topHolderPct > 0 ? Math.round(holders.topHolderPct) : t.topHolderPct,
                 heliusEnriched: true,
               };
@@ -1265,8 +1265,8 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
           if (td) {
             td.lastTradeTime = now;
             if (dex.mcap) { td.lastMcapSol = dex.mcap / SOL_USD; td.mcapSource = "dex"; }
-            if (dex.buys > (td.buys || 0)) td.buys = dex.buys;
-            if (dex.sells > (td.sells || 0)) td.sells = dex.sells;
+            if (dex.buys >= 0) td.buys = dex.buys;
+            if (dex.sells >= 0) td.sells = dex.sells;
           }
           setTokens(prev => prev.map(t => t.id === mt.id ? {
             ...t,
@@ -1297,10 +1297,10 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
             const h = await fetchLargestHolders(mt.addr);
             if (!h || h.holderCount === 0) continue;
             setTokens(prev => prev.map(t => t.id === mt.id ? {
-              ...t, holders: Math.max(t.holders || 0, h.holderCount), topHolderPct: h.topHolderPct || t.topHolderPct,
+              ...t, holders: h.holderCount > 0 ? h.holderCount : t.holders, topHolderPct: h.topHolderPct || t.topHolderPct,
             } : t));
             setMigrations(prev => prev.map(m => m.mint === mt.addr ? {
-              ...m, curHolders: Math.max(m.curHolders || 0, h.holderCount), lastDexUpdate: now,
+              ...m, curHolders: h.holderCount > 0 ? h.holderCount : m.curHolders, lastDexUpdate: now,
             } : m));
           } catch(e) { /* skip */ }
         }
@@ -1564,15 +1564,18 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
 
           setTokens(prev => prev.map(tok => tok.addr === t.addr ? {
             ...tok,
-            // Only set bondingPct from SolanaTracker if PumpFun Direct hasn't already set it
-            // PumpFun Direct reads actual on-chain reserves (accurate), SolanaTracker estimates from mcap (rough)
             bondingPct: tok.realSolReserves ? tok.bondingPct : st.bondingCurvePct,
             stVol1h: st.vol1h,
             stPriceChange5m: st.priceChange5m,
             stPriceChange1h: st.priceChange1h,
-            stHolders: st.holders > (tok.holders || 0) ? st.holders : tok.holders,
+            holders: st.holders > 0 ? st.holders : tok.holders,
             stLiquidity: st.liquidityUsd,
           } : tok));
+
+          // Persist real holder count to Supabase so leaderboard stays accurate
+          if (st.holders > 0 && onUpsertTokenRef.current) {
+            sbUpsertToken({ addr: t.addr, name: t.name, holders: st.holders });
+          }
 
           // Alert when token is close to migration (>80% bonding)
           const effectivePct = t.realSolReserves ? t.bondingPct : st.bondingCurvePct;
