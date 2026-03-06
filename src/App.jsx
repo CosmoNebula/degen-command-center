@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useLiveData } from "./useLiveData";
 import { useSupabase } from "./useSupabase";
 import { fetchTokenByAddress, proxyUrl } from "./api";
+import { HunterPanel, TreasureChestOverlay, useChestSystem, rollLoot, ITEMS, RARITIES, HunterLeaderboard } from "./HunterSystem";
 
 const NEON = {
   magenta:"#ff00ff",cyan:"#00ffff",green:"#39ff14",red:"#ff073a",
@@ -4251,7 +4252,7 @@ function LeaderboardPanel({ SB_URL, SB_KEY, onSelectToken, onSelectWallet, NEON,
   const [loading, setLoading] = useState(false);
   const [deployerDetail, setDeployerDetail] = useState(null);
 
-  const SECTIONS = ["COINS","WALLETS","DEPLOYERS"];
+  const SECTIONS = ["COINS","WALLETS","DEPLOYERS","HUNTERS"];
   const TIMEFRAMES = ["15M","1H","1D","ALL"];
   const CATEGORIES = {
     COINS: [
@@ -4378,7 +4379,7 @@ function LeaderboardPanel({ SB_URL, SB_KEY, onSelectToken, onSelectWallet, NEON,
         </div>
         <div style={{fontSize:10,color:NEON.dimText,marginBottom:4}}>ALL TOKENS</div>
         {(deployerDetail.tokens||[]).sort((a,b)=>(b.peak_mcap||0)-(a.peak_mcap||0)).map((t,i)=>(
-          <div key={t.addr} onClick={()=>onSelectToken(t.addr,{name:t.name,mcap:t.peak_mcap})}
+          <div key={t.addr} onClick={()=>onSelectToken(t.addr,{name:t.name,mcap:t.peak_mcap||0,peakMcap:t.peak_mcap||0,graduated:t.graduated,alive:!t.death_time,platform:t.platform||"PumpFun",qualScore:0,devWallet:0,buys:0,sells:0,holders:t.holders||0,vol:t.volume||0,threat:t.rug?"RUG":t.graduated?"MIGRATED":"HISTORICAL",threatColor:t.rug?"#ff073a":t.graduated?"#39ff14":"#5a5a7a",qualChecks:[]})}
             style={{display:"flex",justifyContent:"space-between",alignItems:"center",
               padding:"3px 5px",marginBottom:1,borderRadius:3,cursor:"pointer",
               background:i%2===0?"rgba(255,255,255,0.02)":"transparent",
@@ -4410,8 +4411,8 @@ function LeaderboardPanel({ SB_URL, SB_KEY, onSelectToken, onSelectWallet, NEON,
         ))}
       </div>
 
-      {/* Timeframe */}
-      <div style={{display:"flex",gap:2,padding:"4px 6px",borderBottom:`1px solid ${NEON.panelBorder}30`,flexShrink:0}}>
+      {/* Timeframe — hide for hunters */}
+      {section!=="HUNTERS"&&<div style={{display:"flex",gap:2,padding:"4px 6px",borderBottom:`1px solid ${NEON.panelBorder}30`,flexShrink:0}}>
         {TIMEFRAMES.map(tf=>(
           <button key={tf} onClick={()=>setTimeframe(tf)} style={{flex:1,padding:"3px 0",
             background:timeframe===tf?"rgba(0,255,255,0.15)":"rgba(255,255,255,0.03)",
@@ -4421,10 +4422,10 @@ function LeaderboardPanel({ SB_URL, SB_KEY, onSelectToken, onSelectWallet, NEON,
             {tf}
           </button>
         ))}
-      </div>
+      </div>}
 
-      {/* Category buttons */}
-      <div style={{padding:"4px 6px",borderBottom:`1px solid ${NEON.panelBorder}30`,flexShrink:0}}>
+      {/* Category buttons — hide for hunters */}
+      {section!=="HUNTERS"&&<div style={{padding:"4px 6px",borderBottom:`1px solid ${NEON.panelBorder}30`,flexShrink:0}}>
         {cats.map(c=>(
           <button key={c.id} onClick={()=>setCategory(c.id)} style={{
             display:"block",width:"100%",textAlign:"left",padding:"4px 8px",marginBottom:2,
@@ -4436,10 +4437,13 @@ function LeaderboardPanel({ SB_URL, SB_KEY, onSelectToken, onSelectWallet, NEON,
             {c.label}
           </button>
         ))}
-      </div>
+      </div>}
 
-      {/* Results */}
-      <div style={{flex:1,overflowY:"auto",padding:"4px 6px"}}>
+      {/* HUNTERS leaderboard */}
+      {section==="HUNTERS"&&<HunterLeaderboard NEON={NEON} formatNum={formatNum}/>}
+
+      {/* Results — only for non-hunters */}
+      {section!=="HUNTERS"&&<div style={{flex:1,overflowY:"auto",padding:"4px 6px"}}>
         {!category&&<div style={{color:NEON.dimText,fontSize:11,textAlign:"center",padding:20,fontStyle:"italic"}}>
           SELECT A CATEGORY ABOVE
         </div>}
@@ -4459,7 +4463,22 @@ function LeaderboardPanel({ SB_URL, SB_KEY, onSelectToken, onSelectWallet, NEON,
                         `$${formatNum(row.volume||0)}`;
             const valColor = selCat?.color||NEON.yellow;
             return (
-              <div key={row.addr} onClick={()=>onSelectToken(row.addr,{name:row.name,mcap:row.peak_mcap})}
+              <div key={row.addr} onClick={()=>            onSelectToken(row.addr, {
+              name: row.name,
+              mcap: row.peak_mcap || 0,
+              peakMcap: row.peak_mcap || 0,
+              holders: row.holders || 0,
+              vol: row.volume || 0,
+              graduated: row.graduated,
+              alive: !row.death_time,
+              platform: row.platform || "PumpFun",
+              qualScore: 0,
+              devWallet: 0,
+              buys: 0, sells: 0,
+              threat: row.rug ? "RUG" : row.graduated ? "MIGRATED" : "HISTORICAL",
+              threatColor: row.rug ? "#ff073a" : row.graduated ? "#39ff14" : "#5a5a7a",
+              qualChecks: [],
+            })}
                 style={{display:"flex",justifyContent:"space-between",alignItems:"center",
                   padding:"4px 5px",marginBottom:1,borderRadius:3,cursor:"pointer",
                   background:rank===1?`${valColor}08`:"transparent",
@@ -4530,7 +4549,7 @@ function LeaderboardPanel({ SB_URL, SB_KEY, onSelectToken, onSelectWallet, NEON,
           }
           return null;
         })}
-      </div>
+      </div>}
     </div>
   );
 }
@@ -4555,6 +4574,54 @@ export default function DegenCommandCenter(){
   const [filter,setFilter]=useState("ALL");const [selectedToken,setSelectedToken]=useState(null);
   const [radarTab,setRadarTab]=useState("RADAR");
   const selectToken=(t)=>{setSelectedToken(t);};
+  const enrichAndSelect = useCallback(async (addr, stub) => {
+    setSelectedToken({...stub, addr, _loading: true});
+    try {
+      const live = await fetchTokenByAddress(addr);
+      const peakMcap = stub.peakMcap || stub.mcap || 0;
+      const isDead = !live || (live.mcap||0) < 1000 || ((live.mcap||0) < peakMcap * 0.05 && peakMcap > 5000);
+      const wasAlive = stub.alive !== false;
+
+      if (isDead && wasAlive) {
+        // KILL CONFIRMED — award XP
+        const xp = awardKillXP(stub.name||"???", peakMcap, killStreak+1);
+        pushMsg(`💀 ${stub.name||"???"} CONFIRMED DEAD — +${xp} KILL XP${killStreak>=2?" 🔥 STREAK x"+(killStreak+1):""}`, "sus");
+        // Write death to Supabase
+        const SB_URL="https://yrmjphhfgduysoftnuxv.supabase.co";
+        const SB_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlybWpwaGhmZ2R1eXNvZnRudXh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3MzI5MzAsImV4cCI6MjA4ODMwODkzMH0.scHhvTGiABJDybgbjgjilw8XuxOfmWPsqo4iytMZmio";
+        fetch(`${SB_URL}/rest/v1/token_history?on_conflict=addr`, {
+          method:"POST",
+          headers:{apikey:SB_KEY,Authorization:`Bearer ${SB_KEY}`,"Content-Type":"application/json",Prefer:"resolution=merge-duplicates"},
+          body:JSON.stringify([{addr,name:stub.name||"???",peak_mcap:peakMcap,death_time:Date.now(),
+            graduated:stub.graduated||false,platform:stub.platform||"PumpFun",
+            holders:live?.holders||stub.holders||0,volume:live?.vol||stub.vol||0,
+            rug:peakMcap<20000,updated_at:new Date().toISOString()}]),
+        });
+        setSelectedToken({...stub,addr,alive:false,health:0,mcap:live?.mcap||0,
+          threat:"DEAD",threatColor:"#5a5a7a",qualChecks:[],devWallet:0,_loading:false,_killed:true,_xp:xp});
+      } else if (live) {
+        // Alive — update with fresh data, also refresh DB
+        const SB_URL="https://yrmjphhfgduysoftnuxv.supabase.co";
+        const SB_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlybWpwaGhmZ2R1eXNvZnRudXh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3MzI5MzAsImV4cCI6MjA4ODMwODkzMH0.scHhvTGiABJDybgbjgjilw8XuxOfmWPsqo4iytMZmio";
+        fetch(`${SB_URL}/rest/v1/token_history?on_conflict=addr`, {
+          method:"POST",
+          headers:{apikey:SB_KEY,Authorization:`Bearer ${SB_KEY}`,"Content-Type":"application/json",Prefer:"resolution=merge-duplicates"},
+          body:JSON.stringify([{addr,name:live.name||stub.name,peak_mcap:Math.max(peakMcap,live.mcap||0),
+            graduated:stub.graduated||live.platform!=="pump",platform:live.platform||stub.platform||"PumpFun",
+            holders:live.holders||0,volume:live.vol||0,updated_at:new Date().toISOString()}]),
+        });
+        setSelectedToken({...stub,...live,addr,
+          peakMcap:Math.max(peakMcap,live.mcap||0),
+          athMcap:Math.max(peakMcap,live.mcap||0),
+          alive:true,threat:stub.threat||"HISTORICAL",threatColor:stub.threatColor||"#5a5a7a",
+          qualChecks:[],devWallet:0,_loading:false});
+      } else {
+        setSelectedToken(prev=>prev?.addr===addr?{...prev,_loading:false}:prev);
+      }
+    } catch(e) {
+      setSelectedToken(prev=>prev?.addr===addr?{...prev,_loading:false}:prev);
+    }
+  }, [killStreak]);
   const addLockHistoryEvent=(addr,name,type,reason,data={})=>{
     setLockHistory(prev=>{
       const existing=prev.find(h=>h.addr===addr);
@@ -4565,7 +4632,19 @@ export default function DegenCommandCenter(){
       return[{addr,name,events:[evt]},...prev].slice(0,200);
     });
   };
-  const clickAddr=(addr,stub=null)=>{const t=tokens.find(x=>x.addr===addr);if(t){setSelectedToken(t);}else if(stub){setSelectedToken({...stub,addr,alive:false,health:0,threat:"DEAD",threatColor:"#5a5a7a",qualChecks:[],devWallet:0,buys:stub.buys||0,sells:stub.sells||0});}};
+  const clickAddr=(addr,stub=null)=>{
+    const t=tokens.find(x=>x.addr===addr);
+    if(t && !t.migrated){
+      // Pure PumpFun live token — already streaming, just show it
+      setSelectedToken(t);
+    } else if(t && t.migrated){
+      // Migrated token on field — refresh from DexScreener
+      enrichAndSelect(addr, {...t, ...stub});
+    } else if(stub){
+      // DB/historical token — fetch live data
+      enrichAndSelect(addr, {...stub, alive:false, health:0, qualChecks:[], devWallet:0});
+    }
+  };
   const selectByName=(name,stub=null)=>{const t=tokens.find(x=>x.name===name);if(t){setSelectedToken(t);}else if(stub){setSelectedToken({...stub,alive:false,health:0,threat:"DEAD",threatColor:"#5a5a7a",qualChecks:[],devWallet:0,buys:stub.buys||0,sells:stub.sells||0});}};
   const viewWalletDetail=(walletAddr)=>{setLeftTab("REPORT");setSelectedWallet(walletAddr);setReportView("detail");};
   const [leftTab,setLeftTab]=useState("SCANNER");
@@ -4574,6 +4653,56 @@ export default function DegenCommandCenter(){
   const [migrations,setMigrations]=useState([]);
   const [rightTab,setRightTab]=useState("LOCKS");
   const [graveyard,setGraveyard]=useState([]);
+  // ── HUNTER XP ──
+  const [hunterXP,setHunterXP]=useState(()=>{try{return parseInt(localStorage.getItem("hunter_xp")||"0")}catch{return 0}});
+  const [hunterKills,setHunterKills]=useState(()=>{try{return parseInt(localStorage.getItem("hunter_kills")||"0")}catch{return 0}});
+  const [killStreak,setKillStreak]=useState(0);
+  const [killPopups,setKillPopups]=useState([]); // [{id,xp,name,x,y}]
+  const killStreakTimer=useRef(null);
+  const HUNTER_RANKS=[
+    {min:0,label:"ROOKIE",icon:"🔍",color:"#5a5a7a"},
+    {min:50,label:"SCOUT",icon:"🎯",color:"#00ffff"},
+    {min:200,label:"HUNTER",icon:"🏹",color:"#39ff14"},
+    {min:500,label:"ASSASSIN",icon:"⚔️",color:"#ffd740"},
+    {min:1200,label:"GRIM REAPER",icon:"💀",color:"#ff073a"},
+  ];
+  const hunterRank=HUNTER_RANKS.slice().reverse().find(r=>hunterXP>=r.min)||HUNTER_RANKS[0];
+  const awardKillXP=(coinName,peakMcap,streakCount)=>{
+    const base=Math.min(500,Math.max(10,Math.floor((peakMcap||0)/1000)));
+    const mult=streakCount>=5?3:streakCount>=3?2:1;
+    const xp=base*mult;
+    const id=Date.now()+Math.random();
+    setHunterXP(p=>{const n=p+xp;try{localStorage.setItem("hunter_xp",n)}catch{};return n;});
+    setHunterKills(p=>{const n=p+1;try{localStorage.setItem("hunter_kills",n)}catch{};return n;});
+    setKillPopups(p=>[...p,{id,xp,name:coinName,mult,x:0.3+Math.random()*0.4,y:0.3+Math.random()*0.4}]);
+    setTimeout(()=>setKillPopups(p=>p.filter(k=>k.id!==id)),2500);
+    if(killStreakTimer.current)clearTimeout(killStreakTimer.current);
+    killStreakTimer.current=setTimeout(()=>setKillStreak(0),8000);
+    setKillStreak(p=>p+1);
+    return xp;
+  };
+  // ── CHEST SYSTEM ──
+  const {chests,openChest}=useChestSystem();
+  const [chestPopup,setChestPopup]=useState(null);
+  const handleChestOpen=(chestId)=>{
+    openChest(chestId,(item,xpGain,rarity)=>{
+      setHunterXP(p=>{const n=p+xpGain;try{localStorage.setItem("hunter_xp",n)}catch{};return n;});
+      const id=Date.now();
+      setChestPopup({id,item,xpGain,rarity});
+      setTimeout(()=>setChestPopup(null),4000);
+      // Add to hunter profile inventory in localStorage (HunterPanel will sync to Supabase)
+      try{
+        const raw=localStorage.getItem("degen_hunter_v2");
+        if(raw){
+          const profile=JSON.parse(raw);
+          const inv=[...(profile.inventory||[]),item.id].slice(-100);
+          const updated={...profile,inventory:inv};
+          localStorage.setItem("degen_hunter_v2",JSON.stringify(updated));
+        }
+      }catch{}
+      pushMsg(`🎁 ${RARITIES[rarity]?.label} CHEST — Found ${item.icon} ${item.name} +${xpGain}XP`,"hype");
+    });
+  };
   const [lockHistory,setLockHistory]=useState([]);
   const lockHistoryRef=useRef([]);
   useEffect(()=>{lockHistoryRef.current=lockHistory},[lockHistory]);
@@ -5536,6 +5665,8 @@ export default function DegenCommandCenter(){
         @keyframes scanDown{0%{top:-10%}100%{top:110%}}
 @keyframes pulse{0%,100%{opacity:0.8;transform:scale(1)}50%{opacity:1;transform:scale(1.05)}}
 @keyframes slideIn{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:translateX(0)}}
+@keyframes floatUp{0%{opacity:0;transform:translate(-50%,-50%) scale(0.5)}15%{opacity:1;transform:translate(-50%,-70%) scale(1.1)}80%{opacity:1;transform:translate(-50%,-120%) scale(1)}100%{opacity:0;transform:translate(-50%,-160%) scale(0.9)}}
+@keyframes chestBob{0%,100%{transform:translate(-50%,-50%) scale(1)}50%{transform:translate(-50%,-60%) scale(1.05)}}
         @keyframes marqueeScroll{0%{transform:translateX(100%)}15%{transform:translateX(0)}85%{transform:translateX(0)}100%{transform:translateX(-100%)}}
         @keyframes newToken{from{background:rgba(255,7,58,0.06)}to{background:transparent}}
         @keyframes promoted{from{background:rgba(57,255,20,0.1)}to{background:transparent}}
@@ -5572,7 +5703,13 @@ export default function DegenCommandCenter(){
           <h1 style={{fontFamily:"'Orbitron',sans-serif",fontSize:16,fontWeight:900,lineHeight:1.2,
             background:`linear-gradient(90deg,${NEON.magenta},${NEON.pink},${NEON.cyan})`,
             WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",letterSpacing:3}}>◈ DEGEN COMMAND CENTER</h1>
-          <div style={{fontSize:11,color:NEON.dimText,letterSpacing:2,marginTop:1}}>🌸 SOLANA BATTLEFIELD v7.0 🌸</div>
+          <div style={{fontSize:11,color:NEON.dimText,letterSpacing:2,marginTop:1,display:"flex",alignItems:"center",gap:8}}>
+            🌸 SOLANA BATTLEFIELD v7.0 🌸
+            {hunterKills>0&&<span style={{fontSize:9,color:hunterRank.color,fontFamily:"'Share Tech Mono'",
+              background:`${hunterRank.color}15`,padding:"1px 6px",borderRadius:3,border:`1px solid ${hunterRank.color}30`}}>
+              {hunterRank.icon} {hunterRank.label} · {hunterXP}XP · {hunterKills}💀{killStreak>=3?` 🔥x${killStreak}`:""}
+            </span>}
+          </div>
         </div>
         {/* ═══ CORRESPONDENT MARQUEE — expands when active ═══ */}
         <div style={{flex:1,margin:"0 14px",height:corrDisplay.visible?52:32,overflow:"hidden",position:"relative",
@@ -5765,7 +5902,7 @@ export default function DegenCommandCenter(){
           {leftTab==="LEADERS"&&<LeaderboardPanel
             SB_URL="https://yrmjphhfgduysoftnuxv.supabase.co"
             SB_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlybWpwaGhmZ2R1eXNvZnRudXh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3MzI5MzAsImV4cCI6MjA4ODMwODkzMH0.scHhvTGiABJDybgbjgjilw8XuxOfmWPsqo4iytMZmio"
-            onSelectToken={(addr,stub)=>clickAddr(addr,stub)}
+            onSelectToken={(addr,stub)=>enrichAndSelect(addr,stub)}
             onSelectWallet={(addr)=>viewWalletDetail(addr)}
             NEON={NEON}
             formatNum={formatNum}
@@ -6398,6 +6535,37 @@ export default function DegenCommandCenter(){
             selectedId={selectedToken?.id} onKillFeed={addKillFeed} onAlienUpdate={setAlienStats}
             onMenuToggle={()=>setShowMenu(p=>!p)} whaleTrigger={whaleTriggerRef} dolphinTrigger={dolphinTriggerRef}/>
           <KillFeed events={killFeed} onSelectByName={selectByName}/>
+          {/* ── HUNTER KILL POPUPS ── */}
+          {killPopups.map(k=>(
+            <div key={k.id} style={{position:"absolute",left:`${k.x*100}%`,top:`${k.y*100}%`,
+              transform:"translate(-50%,-50%)",pointerEvents:"none",zIndex:50,
+              animation:"floatUp 2.5s ease-out forwards",textAlign:"center"}}>
+              <div style={{fontSize:18,fontWeight:900,color:"#ff073a",fontFamily:"'Orbitron'",
+                textShadow:"0 0 20px #ff073a",letterSpacing:2}}>💀 KILL</div>
+              <div style={{fontSize:14,fontWeight:900,color:"#ffd740",fontFamily:"'Share Tech Mono'",
+                textShadow:"0 0 12px #ffd740"}}>+{k.xp} XP</div>
+              {k.mult>1&&<div style={{fontSize:11,color:"#ff6600",fontWeight:900}}>🔥 {k.mult}x STREAK</div>}
+              <div style={{fontSize:10,color:"#aaa"}}>{k.name}</div>
+            </div>
+          ))}
+          {/* ── TREASURE CHESTS ── */}
+          <TreasureChestOverlay chests={chests} onOpen={handleChestOpen}/>
+          {/* ── CHEST LOOT POPUP ── */}
+          {chestPopup&&(
+            <div style={{position:"absolute",top:"30%",left:"50%",transform:"translate(-50%,-50%)",
+              zIndex:60,pointerEvents:"none",textAlign:"center",animation:"floatUp 4s ease-out forwards"}}>
+              <div style={{background:"rgba(5,3,14,0.97)",border:`2px solid ${RARITIES[chestPopup.rarity]?.color}`,
+                borderRadius:8,padding:"12px 20px",boxShadow:`0 0 30px ${RARITIES[chestPopup.rarity]?.color}60`}}>
+                <div style={{fontSize:10,fontWeight:900,color:RARITIES[chestPopup.rarity]?.color,
+                  fontFamily:"'Orbitron'",letterSpacing:2,marginBottom:4}}>
+                  🎁 {RARITIES[chestPopup.rarity]?.label} CHEST OPENED
+                </div>
+                <div style={{fontSize:28,marginBottom:4}}>{chestPopup.item?.icon}</div>
+                <div style={{fontSize:13,fontWeight:700,color:"#e0e0ff",marginBottom:2}}>{chestPopup.item?.name}</div>
+                <div style={{fontSize:11,color:"#ffd740",fontFamily:"'Share Tech Mono'"}}>+{chestPopup.xpGain} XP</div>
+              </div>
+            </div>
+          )}
           {/* ═══ INTEL PANEL — bottom of battlefield on token select ═══ */}
           {selectedToken&&(()=>{
             const token=selectedToken;
@@ -6450,6 +6618,9 @@ export default function DegenCommandCenter(){
                   <span style={{color:token.threatColor,fontSize:14,fontWeight:900,fontFamily:"'Orbitron',sans-serif",letterSpacing:2}}>◉ {token.name}</span>
                   {token.fullName&&token.fullName!==token.name&&<span style={{fontSize:9,color:NEON.dimText,letterSpacing:0.5,fontStyle:"italic"}}>{token.fullName}</span>}
                 </div>
+                {token._loading&&<span style={{fontSize:10,color:NEON.cyan,fontFamily:"'Share Tech Mono'"}}>⟳ FETCHING LIVE DATA...</span>}
+                {!token._loading&&token._killed&&<span style={{fontSize:11,color:"#ff073a",fontWeight:900,fontFamily:"'Orbitron'",textShadow:"0 0 10px #ff073a"}}>💀 KILL CONFIRMED +{token._xp}XP</span>}
+                {!token._loading&&!token._killed&&token.priceUsd>0&&<span style={{fontSize:9,color:"#39ff14",background:"rgba(57,255,20,0.1)",padding:"1px 5px",borderRadius:3}}>● LIVE</span>}
                 <span style={{fontSize:11,color:PLATFORM_COLORS[token.platform]||NEON.dimText,background:"rgba(255,255,255,0.04)",
                   padding:"1px 6px",borderRadius:8,border:`1px solid ${(PLATFORM_COLORS[token.platform]||NEON.dimText)}30`}}>{token.platform}</span>
                 <span onClick={()=>navigator.clipboard.writeText(token.addr)} style={{fontSize:11,color:NEON.cyan,cursor:"pointer",
@@ -6485,14 +6656,14 @@ export default function DegenCommandCenter(){
         {/* RIGHT COLUMN — 6-TAB INTEL SYSTEM */}
         <div style={{display:"flex",flexDirection:"column",gap:6,overflow:"hidden"}}>
           {/* RADAR + FLEET tabs */}
-          <GlassPanel accent={radarTab==="FLEET"?"#ff00ff":NEON.cyan} style={{flexShrink:0}}>
+          <GlassPanel accent={radarTab==="FLEET"?"#ff00ff":radarTab==="CHARACTER"?"#ffd740":NEON.cyan} style={{flexShrink:0}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"2px 8px",gap:2}}>
-              {[{id:"RADAR",icon:"📡",label:"RADAR"},{id:"FLEET",icon:"👾",label:"FLEET"}].map(t=>(
+              {[{id:"RADAR",icon:"📡",label:"RADAR"},{id:"FLEET",icon:"👾",label:"FLEET"},{id:"CHARACTER",icon:"⚔️",label:"HUNTER"}].map(t=>(
                 <button key={t.id} onClick={()=>setRadarTab(t.id)} style={{
-                  padding:"3px 10px",fontSize:10,fontWeight:700,cursor:"pointer",border:"none",
+                  padding:"3px 8px",fontSize:10,fontWeight:700,cursor:"pointer",border:"none",
                   fontFamily:"'Orbitron',sans-serif",letterSpacing:1,borderRadius:4,
                   background:radarTab===t.id?"rgba(0,255,255,0.12)":"transparent",
-                  color:radarTab===t.id?(t.id==="FLEET"?"#ff00ff":NEON.cyan):NEON.dimText,
+                  color:radarTab===t.id?(t.id==="FLEET"?"#ff00ff":t.id==="CHARACTER"?"#ffd740":NEON.cyan):NEON.dimText,
                 }}>{t.icon} {t.label}</button>
               ))}
             </div>
@@ -6531,6 +6702,9 @@ export default function DegenCommandCenter(){
                   </div>):(<div style={{fontSize:8,color:"#ffd740",fontWeight:700,textAlign:"center",letterSpacing:2}}>★ MAX LEVEL ★</div>)}
                 </div>);})}
               {alienStats.length===0&&<div style={{color:NEON.dimText,fontSize:11,textAlign:"center",padding:12}}>Waiting for fleet deployment...</div>}
+            </div>}
+            {radarTab==="CHARACTER"&&<div style={{maxHeight:420,overflow:"auto"}}>
+              <HunterPanel hunterXP={hunterXP} hunterKills={hunterKills} killStreak={killStreak} NEON={NEON}/>
             </div>}
           </GlassPanel>
 
