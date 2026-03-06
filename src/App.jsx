@@ -4557,6 +4557,7 @@ function LeaderboardPanel({ SB_URL, SB_KEY, onSelectToken, onSelectWallet, NEON,
 
 export default function DegenCommandCenter(){
   const [tokens,setTokens]=useState([]);const [radarPings,setRadarPings]=useState([]);
+  const [killStreak,setKillStreak]=useState(0);
   const [dbStatus,setDbStatus]=useState({msg:"",type:"info",ts:0});
   const [lockedTokens,setLockedTokens]=useState([]);const [scanLine,setScanLine]=useState(0);
   const [totalScanned,setTotalScanned]=useState(0);const [deployed,setDeployed]=useState(0);
@@ -4657,7 +4658,6 @@ export default function DegenCommandCenter(){
   // ── HUNTER XP ──
   const [hunterXP,setHunterXP]=useState(()=>{try{return parseInt(localStorage.getItem("hunter_xp")||"0")}catch{return 0}});
   const [hunterKills,setHunterKills]=useState(()=>{try{return parseInt(localStorage.getItem("hunter_kills")||"0")}catch{return 0}});
-  const [killStreak,setKillStreak]=useState(0);
   const [killPopups,setKillPopups]=useState([]); // [{id,xp,name,x,y}]
   const killStreakTimer=useRef(null);
   const HUNTER_RANKS=[
