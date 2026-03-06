@@ -151,3 +151,33 @@ export const LEVEL_TITLES = [
   {lvl:95, title:"Transcendent Degen",   icon:"⚡",color:"#ff00ff"},
   {lvl:100,title:"DEGEN GOD",            icon:"🔱",color:"#ffd740"},
 ];
+
+export function getLevelTitle(lvl){return[...LEVEL_TITLES].reverse().find(t=>lvl>=t.lvl)||LEVEL_TITLES[0];}
+export function getLevel(xp){let l=1;while(l<100&&xp>=(l+1)*(l+1)*10)l++;return l;}
+export function xpForLevel(lvl){return lvl*lvl*10;}
+export function xpForNextLevel(lvl){return Math.min((lvl+1)*(lvl+1)*10,100*100*10);}
+export function calcGearScore(eq){
+  return Object.values(eq||{}).reduce((s,id)=>{
+    const item=ITEMS.find(i=>i.id===id);if(!item)return s;
+    return s+Math.round((item.power||0)*(RARITIES[item.rarity]?.mult||1));
+  },0);
+}
+export function calcTotalStats(eq){
+  const t={};Object.keys(STATS).forEach(k=>t[k]=0);
+  Object.values(eq||{}).forEach(id=>{
+    const item=ITEMS.find(i=>i.id===id);if(!item?.stats)return;
+    Object.entries(item.stats).forEach(([k,v])=>{t[k]=(t[k]||0)+v;});
+  });return t;
+}
+export function rollLoot(luck=0){
+  const r=Math.random();
+  let rarity;
+  if(r<RARITIES.mythic.chance+luck*0.003)rarity="mythic";
+  else if(r<RARITIES.mythic.chance+RARITIES.legendary.chance+luck*0.01)rarity="legendary";
+  else if(r<0.12+luck*0.02)rarity="epic";
+  else if(r<0.25+luck*0.03)rarity="rare";
+  else if(r<0.50)rarity="uncommon";
+  else rarity="common";
+  const pool=ITEMS.filter(i=>i.rarity===rarity);
+  return pool[Math.floor(Math.random()*pool.length)]||ITEMS[0];
+}
