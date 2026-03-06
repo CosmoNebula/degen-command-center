@@ -4577,9 +4577,11 @@ export default function DegenCommandCenter(){
   const [radarTab,setRadarTab]=useState("RADAR");
   const selectToken=(t)=>{setSelectedToken(t);};
   const enrichAndSelect = useCallback(async (addr, stub) => {
+    console.log("[enrichAndSelect] addr=", addr, "stub=", stub?.name);
     setSelectedToken({...stub, addr, _loading: true});
     try {
       const live = await fetchTokenByAddress(addr);
+      console.log("[enrichAndSelect] live=", live);
       const peakMcap = stub.peakMcap || stub.mcap || 0;
       const isDead = !live || (live.mcap||0) < 1000 || ((live.mcap||0) < peakMcap * 0.05 && peakMcap > 5000);
       const wasAlive = stub.alive !== false;
@@ -6627,13 +6629,18 @@ export default function DegenCommandCenter(){
                 {!token._loading&&token._killed&&<span style={{fontSize:11,color:"#ff073a",fontWeight:900,fontFamily:"'Orbitron'",textShadow:"0 0 10px #ff073a"}}>💀 KILL CONFIRMED +{token._xp}XP</span>}
                 {!token._loading&&!token._killed&&token.priceUsd>0&&!token.migrated&&!token.graduated&&<span style={{fontSize:9,color:"#39ff14",background:"rgba(57,255,20,0.1)",padding:"1px 5px",borderRadius:3}}>● LIVE</span>}
                 {!token._loading&&!token._killed&&token.addr&&(token.migrated||token.graduated||!token.priceUsd)&&(
-                  <span onClick={()=>enrichAndSelect(token.addr,token)}
+                  <span onClick={(e)=>{
+                      e.stopPropagation();
+                      const scanAddr = token.addr || token.mint;
+                      console.log("[SCAN DEX] clicking, addr=", scanAddr, "token=", token);
+                      if(scanAddr) enrichAndSelect(scanAddr, {...token, addr: scanAddr});
+                    }}
                     style={{fontSize:9,color:"#00ffff",background:"rgba(0,255,255,0.08)",
                       border:"1px solid rgba(0,255,255,0.3)",padding:"1px 7px",borderRadius:3,
                       cursor:"pointer",fontFamily:"'Orbitron'",letterSpacing:0.5,
                       transition:"all 0.15s"}}
-                    onMouseEnter={e=>e.target.style.background="rgba(0,255,255,0.18)"}
-                    onMouseLeave={e=>e.target.style.background="rgba(0,255,255,0.08)"}>
+                    onMouseEnter={e=>e.currentTarget.style.background="rgba(0,255,255,0.18)"}
+                    onMouseLeave={e=>e.currentTarget.style.background="rgba(0,255,255,0.08)"}>
                     🎯 SCAN DEX
                   </span>
                 )}
