@@ -4278,10 +4278,9 @@ function LeaderboardPanel({ SB_URL, SB_KEY, onSelectToken, onSelectWallet, NEON,
 
   const timeMs = { "15M": 900000, "1H": 3600000, "1D": 86400000, "ALL": 0 };
 
-  const fetchData = useCallback(async (sec, cat, tf) => {
+  const fetchData = useCallback(async (sec, cat, tf, silent=false) => {
     if (!cat) return;
-    setLoading(true);
-    setData([]);
+    if (!silent) { setLoading(true); setData([]); }
     try {
       const since = tf !== "ALL" ? Date.now() - timeMs[tf] : 0;
       const sinceISO = (since > 0) ? new Date(since).toISOString() : null;
@@ -4341,11 +4340,18 @@ function LeaderboardPanel({ SB_URL, SB_KEY, onSelectToken, onSelectWallet, NEON,
         setData(rows.slice(0, 50));
       }
     } catch(e) { console.warn("[LB] fetch failed:", e.message); }
-    setLoading(false);
+    if (!silent) setLoading(false);
   }, [SB_URL, SB_KEY]);
 
   useEffect(() => {
     if (category) fetchData(section, category, timeframe);
+  }, [section, category, timeframe]);
+
+  // Auto-refresh every 3s while a category is selected
+  useEffect(() => {
+    if (!category || section === "HUNTERS") return;
+    const iv = setInterval(() => fetchData(section, category, timeframe, true), 3000);
+    return () => clearInterval(iv);
   }, [section, category, timeframe]);
 
   useEffect(() => {
@@ -4400,7 +4406,7 @@ function LeaderboardPanel({ SB_URL, SB_KEY, onSelectToken, onSelectWallet, NEON,
   return (
     <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
       {/* Section tabs */}
-      <div style={{display:"flex",borderBottom:`1px solid ${NEON.panelBorder}`,flexShrink:0}}>
+      <div style={{display:"flex",borderBottom:`1px solid ${NEON.panelBorder}`,flexShrink:0,alignItems:"center"}}>
         {SECTIONS.map(s=>(
           <button key={s} onClick={()=>setSection(s)} style={{flex:1,padding:"5px 2px",
             background:section===s?"rgba(255,0,255,0.15)":"transparent",
@@ -4410,6 +4416,7 @@ function LeaderboardPanel({ SB_URL, SB_KEY, onSelectToken, onSelectWallet, NEON,
             {s}
           </button>
         ))}
+        {category&&section!=="HUNTERS"&&<span style={{fontSize:8,color:"#39ff14",opacity:0.7,paddingRight:6,whiteSpace:"nowrap",animation:"pulse 3s infinite"}}>⟳ LIVE</span>}
       </div>
 
       {/* Timeframe — hide for hunters */}
