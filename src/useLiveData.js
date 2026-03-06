@@ -63,7 +63,7 @@ async function sbUpsertWallet(addr, ws) {
 }
 
 
-const COIN_COLORS = [
+const _LIVE_COIN_COLORS = [
   { bg: "#ff6b35", fg: "#fff", rim: "#cc5528" },
   { bg: "#00d4aa", fg: "#fff", rim: "#00a885" },
   { bg: "#7c4dff", fg: "#fff", rim: "#6237cc" },
@@ -216,7 +216,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
           warpStartX: Math.random(), warpStartY: Math.random() * 0.2 - 0.1,
           bobOffset: Math.random() * Math.PI * 2,
           initials: name.slice(0, 2).toUpperCase(),
-          coinColor: pick(COIN_COLORS),
+          coinColor: pick(_LIVE_COIN_COLORS),
           timestamp: Date.now(), deployer: newToken.deployer || "",
           imageUri: newToken.imageUri || "",
           jupVerified: jupVerifiedRef.current.has(newToken.mint),
@@ -1541,7 +1541,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
               warpStartX: Math.random(), warpStartY: Math.random() * 0.2 - 0.1,
               bobOffset: Math.random() * Math.PI * 2,
               initials: name.slice(0, 2).toUpperCase(),
-              coinColor: pick(COIN_COLORS),
+              coinColor: pick(_LIVE_COIN_COLORS),
               timestamp: Date.now(), deployer: "",
               imageUri: pair.info?.imageUrl || "",
             };
