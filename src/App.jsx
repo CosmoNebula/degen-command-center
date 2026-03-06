@@ -387,7 +387,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         // Always mark laserFired if token has migrated to prevent re-fire
         if(t.migrated)existing.laserFired=true;
       }});
-    if(tokensRef.current.length>150)tokensRef.current=tokensRef.current.slice(-150);
+    if(tokensRef.current.length>300)tokensRef.current=tokensRef.current.slice(-300);
   },[tokens]);
 
   useEffect(()=>{for(let i=0;i<45;i++)fogRef.current.push({x:rand(0,1),y:rand(0.7,1.05),vx:rand(-0.0004,0.0004),size:rand(30,90),opacity:rand(0.02,0.06)})},[]);
@@ -486,8 +486,8 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
           ctx.beginPath();ctx.arc(p3.x*W,p3.y*H,Math.max(0.3,2*ex.life),0,Math.PI*2);ctx.fill()});
         ctx.shadowBlur=0});
 
-      // Tokens — render only top 40 visually, but update ALL data
-      const MAX_VISUAL=40;
+      // Tokens — render only top 80 visually, but update ALL data
+      const MAX_VISUAL=80;
       const visualSet=new Set();
       const aliveAll=tokensRef.current.filter(t=>t.alive&&(t.mcap||0)>=5000);
       // Priority: locked first, then migrated, then by mcap descending
