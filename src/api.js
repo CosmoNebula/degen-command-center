@@ -20,7 +20,7 @@ export function proxyFetch(u,o){return IS_DEPLOYED?fetch("/api/proxy?url="+encod
 
 export async function fetchTokenByAddress(address) {
   try {
-    const res = await fetch(`https://api.dexscreener.com/tokens/v1/solana/${address}`);
+    const res = await proxyFetch(`https://api.dexscreener.com/tokens/v1/solana/${address}`);
     const data = await res.json();
     // v1 endpoint returns array directly, not {pairs:[...]}
     const pair = data?.pairs?.[0] || (Array.isArray(data) ? data[0] : null);
@@ -257,7 +257,7 @@ export async function fetchJupiterPrice(mintAddresses) {
 
 export async function fetchLatestProfiles() {
   try {
-    const res = await fetch("https://api.dexscreener.com/token-profiles/latest/v1");
+    const res = await proxyFetch("https://api.dexscreener.com/token-profiles/latest/v1");
     const data = await res.json();
     // Filter to Solana tokens only
     return (data || []).filter(t => t.chainId === "solana").slice(0, 20);
@@ -269,7 +269,7 @@ export async function fetchLatestProfiles() {
 
 export async function fetchBoostedTokens() {
   try {
-    const res = await fetch("https://api.dexscreener.com/token-boosts/latest/v1");
+    const res = await proxyFetch("https://api.dexscreener.com/token-boosts/latest/v1");
     const data = await res.json();
     return (data || []).filter(t => t.chainId === "solana").slice(0, 10);
   } catch (e) {
