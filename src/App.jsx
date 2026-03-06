@@ -4868,7 +4868,7 @@ export default function DegenCommandCenter(){
     };
   }, []); // eslint-disable-line
 
-  const addLockHistoryEvent
+  const addLockHistoryEvent=(addr,name,type,reason,data={})=>{
     setLockHistory(prev=>{
       const existing=prev.find(h=>h.addr===addr);
       const evt={type,reason,time:Date.now(),...data};
