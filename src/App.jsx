@@ -4638,12 +4638,16 @@ export default function DegenCommandCenter(){
     const t=tokens.find(x=>x.addr===addr);
     if(t && !t.migrated){
       // Pure PumpFun live token — already streaming, just show it
-      setSelectedToken(t);
+      // But if it's stale (no helius feed), trigger a dex scan too
+      if(t.isStale || (t.staleSec||0) > 60){
+        enrichAndSelect(addr, {...t, ...stub});
+      } else {
+        setSelectedToken(t);
+      }
     } else if(t && t.migrated){
-      // Migrated token on field — refresh from DexScreener
+      // Migrated token — always refresh from DexScreener
       enrichAndSelect(addr, {...t, ...stub});
     } else if(stub){
-      // DB/historical token — fetch live data
       enrichAndSelect(addr, {...stub, alive:false, health:0, qualChecks:[], devWallet:0});
     }
   };
@@ -6621,8 +6625,8 @@ export default function DegenCommandCenter(){
                 </div>
                 {token._loading&&<span style={{fontSize:10,color:NEON.cyan,fontFamily:"'Share Tech Mono'"}}>⟳ FETCHING LIVE DATA...</span>}
                 {!token._loading&&token._killed&&<span style={{fontSize:11,color:"#ff073a",fontWeight:900,fontFamily:"'Orbitron'",textShadow:"0 0 10px #ff073a"}}>💀 KILL CONFIRMED +{token._xp}XP</span>}
-                {!token._loading&&!token._killed&&token.priceUsd>0&&<span style={{fontSize:9,color:"#39ff14",background:"rgba(57,255,20,0.1)",padding:"1px 5px",borderRadius:3}}>● LIVE</span>}
-                {!token._loading&&!token._killed&&!token.priceUsd&&token.addr&&(
+                {!token._loading&&!token._killed&&token.priceUsd>0&&!token.migrated&&!token.graduated&&<span style={{fontSize:9,color:"#39ff14",background:"rgba(57,255,20,0.1)",padding:"1px 5px",borderRadius:3}}>● LIVE</span>}
+                {!token._loading&&!token._killed&&token.addr&&(token.migrated||token.graduated||!token.priceUsd)&&(
                   <span onClick={()=>enrichAndSelect(token.addr,token)}
                     style={{fontSize:9,color:"#00ffff",background:"rgba(0,255,255,0.08)",
                       border:"1px solid rgba(0,255,255,0.3)",padding:"1px 7px",borderRadius:3,
