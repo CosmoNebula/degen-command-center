@@ -438,58 +438,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         ctx.font=z.bold?"bold 14px 'Orbitron'":"bold 11px 'Orbitron'";ctx.fillStyle=z.c;ctx.shadowColor=z.sc;ctx.shadowBlur=12;
         ctx.fillText(z.l,8,z.y*H-4);ctx.shadowBlur=0});
 
-      // ── HOLDING BAY — bottom-right, pixel style ─────────────────────────────
-      const bunkerCount=tokensRef.current.filter(t=>t.parked&&t.alive).length;
-      {
-        const bkW=Math.floor(W*0.16),bkH=36;
-        const bkX=W-bkW-2,bkY=H-bkH-2;
-        const pulse=0.4+Math.sin(f*0.05)*0.2;
-        const holderColor=bunkerCount>0?`rgba(120,60,255,${pulse})`:`rgba(60,40,100,0.25)`;
-        // Pixel bg — chunky 2px blocks
-        ctx.imageSmoothingEnabled=false;
-        ctx.fillStyle="rgba(8,4,20,0.88)";
-        ctx.fillRect(bkX,bkY,bkW,bkH);
-        // Pixel border — 2px thick
-        ctx.strokeStyle=holderColor;ctx.lineWidth=2;
-        ctx.strokeRect(bkX+1,bkY+1,bkW-2,bkH-2);
-        // Inner accent line
-        ctx.strokeStyle=`rgba(120,60,255,0.15)`;ctx.lineWidth=1;
-        ctx.strokeRect(bkX+4,bkY+4,bkW-8,bkH-8);
-        // Pixel corner decorations
-        const corners=[[bkX+2,bkY+2,4,2],[bkX+bkW-6,bkY+2,4,2],[bkX+2,bkY+bkH-4,4,2],[bkX+bkW-6,bkY+bkH-4,4,2]];
-        corners.forEach(([cx2,cy2,cw,ch])=>{ctx.fillStyle=holderColor;ctx.fillRect(cx2,cy2,cw,ch);});
-        // Horizontal pixel stripes inside
-        for(let py2=bkY+6;py2<bkY+bkH-6;py2+=4){
-          ctx.fillStyle=`rgba(120,60,255,0.04)`;
-          ctx.fillRect(bkX+3,py2,bkW-6,2);
-        }
-        // Label — pixel font style
-        ctx.font="bold 7px 'Share Tech Mono',monospace";
-        ctx.textAlign="left";
-        ctx.fillStyle=bunkerCount>0?`rgba(160,100,255,${0.8+Math.sin(f*0.06)*0.15})`:`rgba(80,50,120,0.5)`;
-        ctx.shadowColor="#7840ff";ctx.shadowBlur=bunkerCount>0?6:0;
-        ctx.fillText("▣ HOLDING BAY",bkX+6,bkY+14);
-        ctx.shadowBlur=0;
-        // Count + status
-        if(bunkerCount>0){
-          ctx.font="bold 9px 'Orbitron',sans-serif";
-          ctx.fillStyle=`rgba(180,130,255,${pulse})`;
-          ctx.shadowColor="#9050ff";ctx.shadowBlur=8;
-          ctx.fillText(`${bunkerCount} DOCKED`,bkX+6,bkY+27);
-          ctx.shadowBlur=0;
-          // Blinking indicator dots
-          for(let di=0;di<Math.min(bunkerCount,8);di++){
-            const dotOn=(f+di*7)%20<12;
-            ctx.fillStyle=dotOn?`rgba(160,100,255,0.8)`:`rgba(60,30,100,0.3)`;
-            ctx.fillRect(bkX+bkW-12-(di*6),bkY+bkH-10,4,4);
-          }
-        } else {
-          ctx.font="7px 'Share Tech Mono',monospace";
-          ctx.fillStyle="rgba(60,40,100,0.35)";
-          ctx.fillText("EMPTY",bkX+6,bkY+27);
-        }
-        ctx.textAlign="left";
-      }
+      // Holding Bay drawn after tokens — see bottom of frame
 
       // War fog
       fogRef.current.forEach(fog=>{fog.x+=fog.vx;if(fog.x<-0.1)fog.x=1.1;if(fog.x>1.1)fog.x=-0.1;
@@ -561,7 +510,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         const sessionAge = now_vs - (t.sessionLoadTime || t.timestamp || now_vs);
         const dbGrace = t.fromDB && sessionAge < 180000;
         const staleHigh=(t.mcap||0)>=40000&&silentMs>150000; // >=$40K, silent 2.5min
-        const staleMid=(t.mcap||0)<40000&&silentMs>60000&&!t.fromDB; // <$40K, 1min — live tokens only
+        const staleMid=(t.mcap||0)<40000&&silentMs>60000; // <$40K, 1min silence — dbGrace handles fresh loads
         const preMigration=(t.bondingPct||0)>80&&!t.migrated; // close to migration — park to bay
         const shouldPark=(staleHigh||staleMid||preMigration)&&!isLocked&&!t.laserIn&&!t.accelerating&&!dbGrace;
         if(preMigration&&!t.parked) t._preMig=true; // tag so audit knows why it's parked
@@ -569,7 +518,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
           t.parked=true;
           t.parkedAt=t.parkedAt||now_vs; // stamp when first parked for bunker decay timer
           // Assign a stable bunker slot so they don't all stack on same pixel
-          if(!t.bunkerX){ t.bunkerX=0.84+Math.random()*0.12; t.bunkerY=0.90+Math.random()*0.07; }
+          if(!t.bunkerX){ t.bunkerX=0.79+Math.random()*0.18; t.bunkerY=0.80+Math.random()*0.14; }
           console.log(`[FIELD] 🅿 ${t.name} parked — $${((t.mcap||0)/1000).toFixed(0)}K, ${Math.floor(silentMs/60000)}min silent`);
         }
         // Un-park if new activity arrives (trade within last 30s)
@@ -806,7 +755,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         const canMove=t.migrated||(t.buys>=1&&t.vol>50);
         if(t.parked){
           // Fly to bunker — top-right corner above battlefield
-          const bx3=t.bunkerX||0.90,by3=t.bunkerY||0.92;
+          const bx3=t.bunkerX||0.88,by3=t.bunkerY||0.87;
           t.bx+=(bx3-t.bx)*0.04; t.by+=(by3-t.by)*0.04; // smooth glide in
           t.vx=0; // no horizontal drift in bunker
         } else {
@@ -4010,7 +3959,167 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         if(f>=mf){lm.active=false;lm.frame=0;}
       }
 
-                  // Corner brackets
+                  // ═══════════════════════════════════════════════════════════════
+      // ██ HOLDING BAY — pixel city building, drawn LAST so it covers docked coins
+      // ═══════════════════════════════════════════════════════════════
+      {
+        const bunkerCount=tokensRef.current.filter(t=>t.parked&&t.alive).length;
+        const BW=Math.floor(W*0.22);   // building width
+        const BH=Math.floor(H*0.22);   // building height from bottom
+        const BX=W-BW-2;               // right edge flush
+        const BY=H-BH;                 // bottom of canvas
+        const pulse=0.5+Math.sin(f*0.04)*0.25;
+        const pulse2=0.5+Math.sin(f*0.07+1.2)*0.25;
+        const glow=bunkerCount>0;
+        const baseC="rgba(90,40,200,";
+        const accentC="rgba(160,80,255,";
+        const winC="rgba(200,150,255,";
+
+        ctx.save();
+        ctx.imageSmoothingEnabled=false;
+
+        // ── FOUNDATION / BASE SLAB ──
+        ctx.fillStyle="rgba(12,6,28,0.97)";
+        ctx.fillRect(BX,BY,BW,BH);
+
+        // ── MAIN BUILDING SILHOUETTE (3 towers) ──
+        // Tower 1 — center, tallest
+        const t1x=BX+Math.floor(BW*0.3),t1w=Math.floor(BW*0.38),t1h=Math.floor(BH*0.78);
+        ctx.fillStyle="rgba(14,7,32,0.99)";
+        ctx.fillRect(t1x,BY-t1h+BH,t1w,t1h);
+        // Tower 2 — left, medium
+        const t2x=BX+4,t2w=Math.floor(BW*0.26),t2h=Math.floor(BH*0.55);
+        ctx.fillRect(t2x,BY-t2h+BH,t2w,t2h);
+        // Tower 3 — right, short-wide
+        const t3x=BX+Math.floor(BW*0.72),t3w=Math.floor(BW*0.26),t3h=Math.floor(BH*0.42);
+        ctx.fillRect(t3x,BY-t3h+BH,t3w,t3h);
+
+        // ── PIXEL GRID WINDOWS ── (3 towers separately)
+        const drawWindows=(tx,ty,tw,th,cols,rows)=>{
+          const pw=Math.floor((tw-4)/cols),ph=Math.floor((th-8)/rows);
+          for(let row=0;row<rows;row++){
+            for(let col=0;col<cols;col++){
+              const wx=tx+2+col*pw+1,wy=ty+4+row*ph+1,ww=pw-2,wh=ph-2;
+              const seed=(row*cols+col+f*0.02+tx*0.01)%17;
+              const lit=seed<(glow?10:6);
+              const flicker=lit&&((f+row*3+col*7)%40<2);
+              if(lit){
+                ctx.fillStyle=flicker?"rgba(255,240,180,0.9)":`rgba(180,120,255,${0.35+((row*cols+col)%5)*0.08})`;
+                ctx.fillRect(wx,wy,ww,wh);
+                // window glow
+                ctx.fillStyle=flicker?"rgba(255,230,100,0.12)":`rgba(140,80,255,0.06)`;
+                ctx.fillRect(wx-1,wy-1,ww+2,wh+2);
+              } else {
+                ctx.fillStyle="rgba(20,10,40,0.8)";
+                ctx.fillRect(wx,wy,ww,wh);
+              }
+            }
+          }
+        };
+        // Tower 1 windows (center) — 5 cols 7 rows
+        drawWindows(t1x,BY-t1h+BH,t1w,t1h,5,7);
+        // Tower 2 windows (left) — 3 cols 5 rows
+        drawWindows(t2x,BY-t2h+BH,t2w,t2h,3,5);
+        // Tower 3 windows (right) — 3 cols 4 rows
+        drawWindows(t3x,BY-t3h+BH,t3w,t3h,3,4);
+
+        // ── ROOFTOP ANTENNA on center tower ──
+        const antX=t1x+Math.floor(t1w/2);
+        const antBaseY=BY-t1h+BH;
+        ctx.strokeStyle=`rgba(160,80,255,0.6)`;ctx.lineWidth=1;
+        ctx.beginPath();ctx.moveTo(antX,antBaseY);ctx.lineTo(antX,antBaseY-18);ctx.stroke();
+        // Antenna blinking beacon
+        const beaconOn=(f%30)<18;
+        ctx.fillStyle=beaconOn?`rgba(255,80,80,${0.6+pulse*0.4})`:`rgba(120,30,30,0.4)`;
+        ctx.beginPath();ctx.arc(antX,antBaseY-18,3,0,Math.PI*2);ctx.fill();
+        if(beaconOn){ctx.shadowColor="#ff4040";ctx.shadowBlur=8;ctx.fill();ctx.shadowBlur=0;}
+        // Antenna cross bar
+        ctx.strokeStyle=`rgba(140,70,220,0.4)`;
+        ctx.beginPath();ctx.moveTo(antX-6,antBaseY-12);ctx.lineTo(antX+6,antBaseY-12);ctx.stroke();
+
+        // ── TOWER OUTLINES — pixel border ──
+        ctx.strokeStyle=glow?`rgba(130,60,255,${0.45+pulse*0.2})`:`rgba(70,30,140,0.3)`;
+        ctx.lineWidth=1;
+        ctx.strokeRect(t1x,BY-t1h+BH,t1w,t1h);
+        ctx.strokeRect(t2x,BY-t2h+BH,t2w,t2h);
+        ctx.strokeRect(t3x,BY-t3h+BH,t3w,t3h);
+
+        // ── LEDGE / FLOOR LINES on center tower ──
+        for(let fl=1;fl<=3;fl++){
+          const fy=BY-t1h+BH+Math.floor((t1h/4)*fl);
+          ctx.strokeStyle=`rgba(100,50,200,0.2)`;ctx.lineWidth=1;
+          ctx.beginPath();ctx.moveTo(t1x,fy);ctx.lineTo(t1x+t1w,fy);ctx.stroke();
+        }
+
+        // ── NEON SIGN BOARD above entrance ──
+        const signX=BX+Math.floor(BW*0.08),signY=BY+Math.floor(BH*0.08);
+        const signW=Math.floor(BW*0.84),signH=18;
+        ctx.fillStyle="rgba(8,4,24,0.92)";ctx.fillRect(signX,signY,signW,signH);
+        // Sign border — animated neon
+        ctx.strokeStyle=glow?`rgba(180,90,255,${0.6+pulse*0.35})`:`rgba(80,40,160,0.4)`;
+        ctx.lineWidth=2;ctx.strokeRect(signX,signY,signW,signH);
+        // Sign text
+        ctx.font="bold 8px 'Orbitron',sans-serif";
+        ctx.textAlign="center";
+        ctx.fillStyle=glow?`rgba(220,160,255,${0.85+pulse2*0.15})`:`rgba(120,70,200,0.6)`;
+        ctx.shadowColor="#9040ff";ctx.shadowBlur=glow?8:3;
+        ctx.fillText("▣ HOLDING BAY",signX+signW/2,signY+12);
+        ctx.shadowBlur=0;
+
+        // ── DOCK COUNT DISPLAY ──
+        const dockY=signY+signH+4;
+        ctx.font="9px 'Share Tech Mono',monospace";
+        ctx.textAlign="center";
+        if(bunkerCount>0){
+          ctx.fillStyle=`rgba(160,100,255,${0.7+pulse*0.3})`;
+          ctx.shadowColor="#8030ee";ctx.shadowBlur=6;
+          ctx.fillText(`${bunkerCount} DOCKED`,BX+BW/2,dockY+10);
+          ctx.shadowBlur=0;
+          // Activity indicator dots row
+          const dotRowY=dockY+16,dotSpacing=8,dotTotal=Math.min(bunkerCount,12);
+          const dotStartX=BX+BW/2-(dotTotal*dotSpacing)/2;
+          for(let di=0;di<dotTotal;di++){
+            const dotOn=(f+di*5)%16<10;
+            ctx.fillStyle=dotOn?`rgba(180,100,255,0.9)`:`rgba(50,20,100,0.5)`;
+            ctx.fillRect(dotStartX+di*dotSpacing,dotRowY,5,5);
+            if(dotOn){ctx.shadowColor="#9040ff";ctx.shadowBlur=4;ctx.fillRect(dotStartX+di*dotSpacing,dotRowY,5,5);ctx.shadowBlur=0;}
+          }
+        } else {
+          ctx.fillStyle="rgba(60,30,100,0.4)";
+          ctx.fillText("-- EMPTY --",BX+BW/2,dockY+10);
+        }
+
+        // ── BUILDING EDGE GLOW when active ──
+        if(glow){
+          const grad=ctx.createLinearGradient(BX,0,BX+BW,0);
+          grad.addColorStop(0,"rgba(100,40,220,0)");
+          grad.addColorStop(0.1,`rgba(120,50,255,${0.08+pulse*0.06})`);
+          grad.addColorStop(0.9,`rgba(120,50,255,${0.08+pulse*0.06})`);
+          grad.addColorStop(1,"rgba(100,40,220,0)");
+          ctx.fillStyle=grad;
+          ctx.fillRect(BX,BY-t1h+BH-20,BW,t1h+20);
+          // Left edge glow line
+          ctx.strokeStyle=`rgba(140,60,255,${0.3+pulse*0.2})`;ctx.lineWidth=2;
+          ctx.beginPath();ctx.moveTo(BX,BY-t1h+BH);ctx.lineTo(BX,H);ctx.stroke();
+        }
+
+        // ── PIXEL GROUND STRIP at very bottom ──
+        ctx.fillStyle="rgba(30,12,60,0.95)";
+        ctx.fillRect(BX,H-6,BW,6);
+        ctx.fillStyle=`rgba(100,50,200,${0.4+pulse*0.2})`;
+        ctx.fillRect(BX,H-4,BW,2); // neon ground line
+
+        // ── SCAN LINES over entire building ──
+        for(let sl=BY-t1h+BH-20;sl<H;sl+=4){
+          ctx.fillStyle="rgba(80,30,160,0.025)";
+          ctx.fillRect(BX,sl,BW,2);
+        }
+
+        ctx.restore();
+        ctx.textAlign="left";
+      }
+
+      // Corner brackets
       const bL=30;ctx.strokeStyle="rgba(255,0,255,0.1)";ctx.lineWidth=1;
       [[5,bL+5,5,5,bL+5,5],[W-bL-5,5,W-5,5,W-5,bL+5],[5,H-bL-5,5,H-5,bL+5,H-5],[W-bL-5,H-5,W-5,H-5,W-5,H-bL-5]]
         .forEach(([x1,y1,x2,y2,x3,y3])=>{ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.lineTo(x3,y3);ctx.stroke()});
