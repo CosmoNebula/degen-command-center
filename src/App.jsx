@@ -760,8 +760,13 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
           t.vx=0; // no horizontal drift in bunker
         } else {
           t.targetY=Math.max(-0.1,Math.min(0.95,canMove?gatedProgress:0.95));
+          if(t.bx>0.76)t.targetY=Math.min(t.targetY,0.74); // don't sink into bay zone
           const moveSpeed=t.migrated?0.015:0.005;
-          t.by+=(t.targetY-t.by)*moveSpeed;t.bx+=t.vx;if(t.bx<0.05||t.bx>0.95)t.vx*=-1;
+          t.by+=(t.targetY-t.by)*moveSpeed;t.bx+=t.vx;
+          // ── HOLDING BAY EXCLUSION ZONE (bottom-right) — field tokens bounce off ──
+          const bayLeft=0.76,bayTop=0.76;
+          if(t.bx>bayLeft&&t.by>bayTop){t.bx=bayLeft-(t.bx-bayLeft)*0.5;t.vx*=-1;}
+          if(t.bx<0.05||t.bx>0.95)t.vx*=-1;
         }
         if(f%4===0){t.trail.push({x:t.bx,y:t.by,life:1});if(t.trail.length>20)t.trail.shift()}
         if(t.by<0.12&&!t.mooned){t.mooned=true;
@@ -6293,7 +6298,7 @@ export default function DegenCommandCenter(){
           {[{l:"SCANNED",v:totalScanned,c:NEON.cyan},{l:"DEPLOYED",v:deployed,c:NEON.green},
             {l:"REJECTED",v:rejected,c:NEON.red},{l:"QUAL%",v:qualRate+"%",c:parseInt(qualRate)>40?NEON.green:NEON.orange},
             {l:"LOCKED",v:lockedTokens.length,c:NEON.yellow},
-            {l:"PARKED",v:tokensRef.current.filter(t=>t.alive&&t.parked).length,c:NEON.dimText}].map(s=>(
+            ].map(s=>(
             <StatChip key={s.l} label={s.l} value={s.v} color={s.c}/>))}
           {/* ── MARKET TEMPERATURE GAUGE ── */}
           {intel && intel.marketTemp && (() => {
