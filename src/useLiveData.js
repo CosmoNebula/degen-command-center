@@ -134,6 +134,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
   const firedEvents = useRef(new Set());
   const migratedMints = useRef(new Set());
   const heliusWsRef = useRef(null);        // Helius WebSocket for post-migration live tracking
+  const bondingAlerted = useRef(new Set()); // track bonding alerts to avoid state mutation
   const rugCheckCache = useRef({});         // {mint: rugCheckResult}
   const geckoTrendingRef = useRef([]);      // GeckoTerminal trending pool addresses
   const definedTrendingRef = useRef([]);    // Defined.fi trending token addresses
@@ -164,8 +165,8 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
       (newToken) => {
         if (seenMints.current.has(newToken.mint)) return;
         seenMints.current.add(newToken.mint);
-        if (seenMints.current.size > 500) {
-          seenMints.current = new Set([...seenMints.current].slice(-600));
+        if (seenMints.current.size > 600) {
+          seenMints.current = new Set([...seenMints.current].slice(-500));
         }
 
         const name = newToken.symbol || newToken.name || "???";
@@ -1558,9 +1559,11 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
 
         // Fire intel events for newly trending tokens
         setTokens(prev => {
-          prev.forEach(t => {
+          var changed = false;
+          var updated = prev.map(t => {
+            var needsUpdate = false;
             if (t.onGeckoTrending && !t._geckoAnnounced) {
-              t._geckoAnnounced = true;
+              needsUpdate = true;
               setIntelEvents(ev => [{
                 id: Date.now() + Math.random(), type: "trend", icon: "🦎", color: "#39ff14",
                 text: `${t.name} trending on GeckoTerminal! Cross-platform buzz detected.`,
@@ -1568,15 +1571,20 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
               }, ...ev].slice(0, 40));
             }
             if (t.onDefinedTrending && !t._definedAnnounced) {
-              t._definedAnnounced = true;
+              needsUpdate = true;
               setIntelEvents(ev => [{
                 id: Date.now() + Math.random(), type: "trend", icon: "📡", color: "#00ccff",
                 text: `${t.name} flagged by Defined.fi — high social activity.`,
                 timestamp: Date.now(), priority: "NORMAL",
               }, ...ev].slice(0, 40));
             }
+            if (needsUpdate) {
+              changed = true;
+              return { ...t, _geckoAnnounced: t.onGeckoTrending || t._geckoAnnounced, _definedAnnounced: t.onDefinedTrending || t._definedAnnounced };
+            }
+            return t;
           });
-          return prev;
+          return changed ? updated : prev;
         });
 
         console.log(`[TRENDING] 🦎 Gecko: ${geckoTrending.length} pools | 📡 Defined: ${definedTrending.length} tokens`);
@@ -1588,6 +1596,8 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
     setTimeout(pollTrending, 15000); // first poll after 15s
     return () => clearInterval(iv);
   }, []);
+
+  var NEON_GREEN = "#39ff14";
 
   // ─── SOLANATRACKER: Bonding curve progress for pre-migration PumpFun tokens ───
   useEffect(() => {
@@ -1629,9 +1639,9 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
           }
 
           // Alert when token is close to migration (>80% bonding)
-          const effectivePct = t.realSolReserves ? t.bondingPct : st.bondingCurvePct;
-          if (effectivePct != null && effectivePct > 80 && !t._bondingAlerted) {
-            t._bondingAlerted = true;
+          var effectivePct = t.realSolReserves ? t.bondingPct : st.bondingCurvePct;
+          if (effectivePct != null && effectivePct > 80 && !bondingAlerted.current.has(t.addr)) {
+            bondingAlerted.current.add(t.addr);
             setIntelEvents(ev => [{
               id: Date.now() + Math.random(), type: "migrate", icon: "🔥", color: NEON_GREEN,
               text: `${t.name} at ${effectivePct.toFixed(0)}% bonding — MIGRATION IMMINENT!`,
@@ -1857,14 +1867,13 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
     return () => clearInterval(iv);
   }, []);
 
-  const NEON_GREEN = "#39ff14";
 
   // ═══ SMART MONEY: Score wallets based on WALLET P&L, not token outcome ═══
   useEffect(() => {
     const iv = setInterval(() => {
       const now3 = Date.now();
-      setTokens(prev => {
-        prev.forEach(t => {
+      // Read tokens from ref — no setTokens needed since we only update walletScores ref
+      tokensRef.current.forEach(t => {
           const td = tradeData.current[t.addr];
           if (!td) return;
 
@@ -2042,8 +2051,6 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
             }
           });
         });
-        return prev;
-      });
       // ── SMART PRUNING ──
       const keys = Object.keys(walletScores.current);
       // Hard cap
@@ -2074,6 +2081,46 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
           delete walletScores.current[k]; return;
         }
       });
+
+      // ── PRUNE REFS for dead/removed tokens (every 30s) ──
+      if (now3 % 30000 < 3000) {
+        var liveAddrs = new Set(tokensRef.current.map(t => t.addr));
+        // tradeData — keep only live tokens + recently scored wallets (via walletScores)
+        Object.keys(tradeData.current).forEach(addr => {
+          if (!liveAddrs.has(addr)) delete tradeData.current[addr];
+        });
+        // mintToId — keep only live tokens
+        Object.keys(mintToId.current).forEach(mint => {
+          if (!liveAddrs.has(mint)) delete mintToId.current[mint];
+        });
+        // firedEvents — cap at 500
+        if (firedEvents.current.size > 500) {
+          var arr = [...firedEvents.current];
+          firedEvents.current = new Set(arr.slice(-300));
+        }
+        // copyTradeAlerts — cap at 500
+        if (copyTradeAlerts.current.size > 500) {
+          var arr2 = [...copyTradeAlerts.current];
+          copyTradeAlerts.current = new Set(arr2.slice(-300));
+        }
+        // bondingAlerted — prune dead tokens
+        bondingAlerted.current.forEach(addr => {
+          if (!liveAddrs.has(addr)) bondingAlerted.current.delete(addr);
+        });
+        // cache refs — prune dead tokens
+        [rugCheckCache, curveProgressCache, slippageCache, pumpDirectCache, raydiumPoolCache, activityCache].forEach(cache => {
+          Object.keys(cache.current).forEach(addr => {
+            if (!liveAddrs.has(addr)) delete cache.current[addr];
+          });
+        });
+        // flashSnapsRef, fastSnapRef — prune dead tokens
+        Object.keys(flashSnapsRef.current).forEach(addr => {
+          if (!liveAddrs.has(addr)) delete flashSnapsRef.current[addr];
+        });
+        Object.keys(fastSnapRef.current).forEach(addr => {
+          if (!liveAddrs.has(addr)) delete fastSnapRef.current[addr];
+        });
+      }
     }, 3000);
     return () => clearInterval(iv);
   }, []);
@@ -2309,7 +2356,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
           const extData = externalBoostRef.current[t.addr];
           const reasons = [];
           if ((t.smartWalletCount||0) >= 2) reasons.push(`🧠 ${t.smartWalletCount}x smart wallets`);
-          if (t._hotCluster) reasons.push(`🔗 CLUSTER ${intel?.clusters?.find(c=>c.tokens?.includes(t.addr))?.wallets?.length||'?'}w`);
+          if (t._hotCluster) reasons.push(`🔗 CLUSTER detected`);
           if (t.accelerating) reasons.push(`⚡ accelerating`);
           if (t.onGeckoTrending) reasons.push(`🦎 gecko trending`);
           if ((t.bondingPct || 0) > 80 && !t.migrated) reasons.push(`🚀 ${t.bondingPct?.toFixed(0)}% bonding`);
