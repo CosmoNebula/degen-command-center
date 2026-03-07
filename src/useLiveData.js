@@ -1318,33 +1318,46 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
       }
     }, 2000);
 
-    // ─── DEAD FIELD CHECK: Verify DB-hydrated + stale tokens every 2 mins ───
+    // ─── BUNKER AUDIT: scan parked tokens with DexScreener, nuke dead ones ────
     const deadCheckInterval = setInterval(async () => {
       const now = Date.now();
-      const candidates = tokensRef.current.filter(t => {
-        if (!t.alive) return false;
+
+      // Priority 1: parked tokens — batch scan up to 10 at once
+      const parked = tokensRef.current.filter(t => t.alive && t.parked);
+      // Priority 2: DB-loaded or long-silent unparked tokens
+      const staleUnparked = tokensRef.current.filter(t => {
+        if (!t.alive || t.parked) return false;
         const td = tradeData.current[t.addr];
-        const lastTrade = td?.lastTradeTime || t.timestamp;
-        const silentMs = now - lastTrade;
-        // Check DB tokens after 3 mins silence, live tokens after 8 mins
+        const silentMs = now - (td?.lastTradeTime || t.timestamp);
         return t.fromDB ? silentMs > 180000 : (silentMs > 480000 && t.qualified);
-      }).slice(0, 5); // max 5 at a time
+      });
 
-      for (const t of candidates) {
-        try {
-          const res = await fetch(`https://api.dexscreener.com/tokens/v1/solana/${t.addr}`);
-          const data = await res.json();
-          const pair = data?.pairs?.[0] || (Array.isArray(data) ? data[0] : null);
-          const liveMcap = pair?.marketCap || pair?.fdv || 0;
+      const toAudit = [...parked, ...staleUnparked].slice(0, 10);
+      if (!toAudit.length) return;
+
+      console.log(`[BUNKER] 🔍 Auditing ${toAudit.length} tokens (${parked.length} parked, ${staleUnparked.length} stale)`);
+
+      try {
+        const results = await fetchTokensBatch(toAudit.map(t => t.addr));
+
+        for (const t of toAudit) {
+          const dex = results[t.addr];
+          const liveMcap = dex?.mcap || 0;
           const peakMcap = t.peakMcap || t.mcap || 0;
-          const isDead = !pair || liveMcap < 1000 || (peakMcap > 5000 && liveMcap < peakMcap * 0.12);
 
-          if (isDead) {
-            console.log(`[DEADCHECK] 💀 ${t.name} — no activity, mcap $${liveMcap?.toFixed(0)||0} (peak $${peakMcap?.toFixed(0)}) — removing`);
+          // Dead criteria: no dex data, mcap < $800, OR fell >92% from peak
+          const isDead = !dex || liveMcap < 800 || (peakMcap > 3000 && liveMcap < peakMcap * 0.08);
+          // Extra: parked token that's been parked 10+ min and mcap fell >75% from peak
+          const bunkerDead = t.parked && (now - (t.parkedAt || now)) > 600000 && peakMcap > 5000 && liveMcap < peakMcap * 0.25;
+
+          if (isDead || bunkerDead) {
+            const reason = bunkerDead ? `bunker decay (${((liveMcap/peakMcap)*100).toFixed(0)}% of peak)` : `dead ($${liveMcap?.toFixed(0)||0})`;
+            console.log(`[BUNKER] 💀 ${t.name} evicted — ${reason}`);
             setTokens(prev => prev.map(tok => tok.addr === t.addr ? { ...tok, alive: false, health: 0, deathTime: now } : tok));
             if (onUpsertTokenRef.current) sbUpsertToken({ ...t, alive: false, mcap: liveMcap, peakMcap });
-          } else if (liveMcap > 0 && Math.abs(liveMcap - t.mcap) / (t.mcap || 1) > 0.05) {
-            // Still alive but mcap changed — update position + DB
+          } else if (liveMcap > 0) {
+            // Still alive — update mcap. If parked token is pumping again, un-park it
+            const pumpingAgain = t.parked && liveMcap > (t.mcap || 0) * 1.15;
             const zz=[[5000,0.95],[10000,0.63],[20000,0.47],[50000,0.32],[100000,0.20],[300000,0.10]];
             let targetY=0.95;
             if(liveMcap>=300000)targetY=0.08;
@@ -1352,12 +1365,15 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
             setTokens(prev => prev.map(tok => tok.addr === t.addr ? {
               ...tok, mcap: liveMcap, targetY,
               peakMcap: Math.max(tok.peakMcap || 0, liveMcap),
+              // Un-park if pumping from bunker
+              ...(pumpingAgain ? { parked: false, bunkerX: null, bunkerY: null, by: 0.95 } : {}),
             } : tok));
+            if (pumpingAgain) console.log(`[BUNKER] 🔄 ${t.name} PUMPING FROM BUNKER — $${(liveMcap/1000).toFixed(1)}K — returning to field`);
             if (onUpsertTokenRef.current) sbUpsertToken({ ...t, mcap: liveMcap, peakMcap: Math.max(peakMcap, liveMcap), alive: true });
           }
-        } catch(e) { /* network err, skip */ }
-      }
-    }, 120000); // every 2 mins
+        }
+      } catch(e) { console.warn('[BUNKER] Audit failed:', e.message); }
+    }, 180000); // every 3 mins
 
     return () => {
       if (typeof pf === 'function') pf();

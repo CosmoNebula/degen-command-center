@@ -218,7 +218,8 @@ function RadarScope({pings}){
 }
 
 // ═══════════════ BATTLEFIELD ═══════════════
-function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAlienUpdate,onMenuToggle,whaleTrigger,dolphinTrigger}){
+function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAlienUpdate,onMenuToggle,whaleTrigger,dolphinTrigger,tradeDataRef}){
+  const tradeData = tradeDataRef || {current:{}};
   const canvasRef=useRef(null);const tokensRef=useRef([]);const frameRef=useRef(0);
   const explosionsRef=useRef([]);const fogRef=useRef([]);const lockedRef=useRef([]);
   const selectedRef=useRef(null);const warpTrailsRef=useRef([]);
@@ -437,6 +438,36 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         ctx.font=z.bold?"bold 14px 'Orbitron'":"bold 11px 'Orbitron'";ctx.fillStyle=z.c;ctx.shadowColor=z.sc;ctx.shadowBlur=12;
         ctx.fillText(z.l,8,z.y*H-4);ctx.shadowBlur=0});
 
+      // ── SPACE BUNKER — top-right corner ─────────────────────────────────────
+      const bunkerCount=tokensRef.current.filter(t=>t.parked&&t.alive).length;
+      if(bunkerCount>0){
+        const bkX=W*0.82,bkY=0,bkW=W*0.18,bkH=H*0.13;
+        // Background
+        ctx.fillStyle="rgba(10,5,25,0.75)";
+        ctx.fillRect(bkX,bkY,bkW,bkH);
+        // Border — pulsing purple
+        const bkPulse=0.35+Math.sin(f*0.04)*0.15;
+        ctx.strokeStyle=`rgba(140,80,255,${bkPulse})`;ctx.lineWidth=1;
+        ctx.strokeRect(bkX,bkY,bkW,bkH);
+        // Scan lines
+        for(let sl=6;sl<bkH;sl+=6){
+          ctx.fillStyle="rgba(140,80,255,0.025)";
+          ctx.fillRect(bkX,bkY+sl,bkW,2);
+        }
+        // Label
+        ctx.font="bold 7px 'Orbitron',sans-serif";
+        ctx.fillStyle=`rgba(180,120,255,${0.7+Math.sin(f*0.06)*0.2})`;
+        ctx.shadowColor="#8840ff";ctx.shadowBlur=8;
+        ctx.fillText(`🅿 SPACE BUNKER`,bkX+5,bkY+10);
+        ctx.fillStyle="rgba(140,80,255,0.5)";ctx.shadowBlur=0;
+        ctx.fillText(`${bunkerCount} PARKED`,bkX+5,bkY+20);
+        ctx.shadowBlur=0;
+        // Corner rivets
+        [[bkX+2,bkY+2],[bkX+bkW-4,bkY+2],[bkX+2,bkY+bkH-4],[bkX+bkW-4,bkY+bkH-4]].forEach(([rx,ry])=>{
+          ctx.fillStyle="rgba(140,80,255,0.4)";ctx.beginPath();ctx.arc(rx,ry,2,0,Math.PI*2);ctx.fill();
+        });
+      }
+
       // War fog
       fogRef.current.forEach(fog=>{fog.x+=fog.vx;if(fog.x<-0.1)fog.x=1.1;if(fog.x>1.1)fog.x=-0.1;
         const grd=ctx.createRadialGradient(fog.x*W,fog.y*H,0,fog.x*W,fog.y*H,fog.size);
@@ -492,20 +523,59 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
       // Tokens — render only top 80 visually, but update ALL data
       const MAX_VISUAL=80;
       const visualSet=new Set();
+      const now_vs=Date.now();
       const aliveAll=tokensRef.current.filter(t=>t.alive&&(t.mcap||0)>=5000);
-      // Priority: locked first, then migrated, then by mcap descending
+
+      // ── PARKED: tokens alive for scoring but hidden from battlefield ──────────
+      // A token is parked if: mcap > $40K AND no trade activity for 8+ minutes AND not locked
+      // This keeps the battlefield fresh with movers, not stale giants from last session
+      aliveAll.forEach(t=>{
+        const isLocked=!!lockedRef.current.find(l=>l.id===t.id);
+        const td=tradeData.current[t.addr];
+        const lastTrade=td?.lastTradeTime||t.timestamp||0;
+        const silentMs=now_vs-lastTrade;
+        const staleHigh=(t.mcap||0)>=40000&&silentMs>150000; // >=$40K, silent 2.5min
+        const staleMid=(t.mcap||0)<40000&&silentMs>60000;   // <$40K, silent 1min
+        const shouldPark=(staleHigh||staleMid)&&!isLocked&&!t.laserIn&&!t.accelerating;
+        if(shouldPark&&!t.parked){
+          t.parked=true;
+          t.parkedAt=t.parkedAt||now_vs; // stamp when first parked for bunker decay timer
+          // Assign a stable bunker slot so they don't all stack on same pixel
+          if(!t.bunkerX){ t.bunkerX=0.87+Math.random()*0.10; t.bunkerY=-0.06+Math.random()*0.10; }
+          console.log(`[FIELD] 🅿 ${t.name} parked — $${((t.mcap||0)/1000).toFixed(0)}K, ${Math.floor(silentMs/60000)}min silent`);
+        }
+        // Un-park if new activity arrives (trade within last 30s)
+        if(t.parked&&silentMs<30000){
+          t.parked=false;
+          t.parkedAt=null;t.bunkerX=null;t.bunkerY=null;
+          t.by=0.95;t.bx=rand(0.08,0.92); // re-enter at pit
+          console.log(`[FIELD] 🔄 ${t.name} un-parked — new activity`);
+        }
+      });
+
+      // Priority: locked > laserIn > active movers > fresh qualified > parked last
       aliveAll.sort((a,b)=>{
         const aLk=lockedRef.current.find(l=>l.id===a.id)?1:0;
         const bLk=lockedRef.current.find(l=>l.id===b.id)?1:0;
         if(aLk!==bLk)return bLk-aLk;
         if(a.laserIn&&!b.laserIn)return -1;if(b.laserIn&&!a.laserIn)return 1;
+        // Parked tokens go to back of queue
+        if(a.parked&&!b.parked)return 1;if(b.parked&&!a.parked)return -1;
         if(a.migrated&&!b.migrated)return -1;if(b.migrated&&!a.migrated)return 1;
-        // Momentum score: mcap + volume + holders + acceleration
-        const aScore=(a.mcap||0)+(a.vol||0)*2+(a.holders||0)*100+(a.accelerating?50000:0)+(a.qualScore||0)*5000;
-        const bScore=(b.mcap||0)+(b.vol||0)*2+(b.holders||0)*100+(b.accelerating?50000:0)+(b.qualScore||0)*5000;
+        // Momentum score: recency-weighted
+        const tdA=tradeData.current[a.addr];const tdB=tradeData.current[b.addr];
+        const recA=tdA?Math.max(0,1-((now_vs-(tdA.lastTradeTime||0))/600000)):0; // freshness 0-1 over 10min
+        const recB=tdB?Math.max(0,1-((now_vs-(tdB.lastTradeTime||0))/600000)):0;
+        const aScore=(a.mcap||0)*0.3+(a.vol||0)*2+(a.holders||0)*100+(a.accelerating?80000:0)+(a.qualScore||0)*5000+recA*60000;
+        const bScore=(b.mcap||0)*0.3+(b.vol||0)*2+(b.holders||0)*100+(b.accelerating?80000:0)+(b.qualScore||0)*5000+recB*60000;
         return bScore-aScore;
       });
-      aliveAll.slice(0,MAX_VISUAL).forEach(t=>visualSet.add(t.id));
+      // Active tokens fill the 80 slots — parked tokens don't count against limit
+      const activeTokens=aliveAll.filter(t=>!t.parked);
+      const parkedTokens=aliveAll.filter(t=>t.parked);
+      activeTokens.slice(0,MAX_VISUAL).forEach(t=>visualSet.add(t.id));
+      // Parked tokens are always "visible" so they can be drawn in the bunker
+      parkedTokens.forEach(t=>visualSet.add(t.id));
 
       tokensRef.current.forEach(t=>{
         if(!t.alive)return;t.age++;
@@ -705,9 +775,16 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
             targetFromMcap=zones[i][1]+(zones[i+1][1]-zones[i][1])*pct;break;}}}
         const gatedProgress=targetFromMcap+(0.95-targetFromMcap)*(1-Math.max(volGate,t.migrated?0.8:t.qualified?0.3:0));
         const canMove=t.migrated||(t.buys>=1&&t.vol>50);
-        t.targetY=Math.max(-0.1,Math.min(0.95,canMove?gatedProgress:0.95)); // allow negative Y (off screen)
-        const moveSpeed=t.migrated?0.015:0.005;
-        t.by+=(t.targetY-t.by)*moveSpeed;t.bx+=t.vx;if(t.bx<0.05||t.bx>0.95)t.vx*=-1;
+        if(t.parked){
+          // Fly to bunker — top-right corner above battlefield
+          const bx3=t.bunkerX||0.92,by3=t.bunkerY||-0.02;
+          t.bx+=(bx3-t.bx)*0.04; t.by+=(by3-t.by)*0.04; // smooth glide in
+          t.vx=0; // no horizontal drift in bunker
+        } else {
+          t.targetY=Math.max(-0.1,Math.min(0.95,canMove?gatedProgress:0.95));
+          const moveSpeed=t.migrated?0.015:0.005;
+          t.by+=(t.targetY-t.by)*moveSpeed;t.bx+=t.vx;if(t.bx<0.05||t.bx>0.95)t.vx*=-1;
+        }
         if(f%4===0){t.trail.push({x:t.bx,y:t.by,life:1});if(t.trail.length>20)t.trail.shift()}
         if(t.by<0.12&&!t.mooned){t.mooned=true;
           onKillFeedRef.current?.({type:"moon",name:t.name,text:`🚀 ${t.name} HIT THE MOON! 🌙`});
@@ -859,9 +936,16 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
 
         // Name — small, above
         ctx.font="10px 'Share Tech Mono'";
-        ctx.fillStyle=isLk?NEON.yellow:isSel?NEON.cyan:`rgba(224,224,255,0.4)`;
+        ctx.fillStyle=isParked?`rgba(180,180,200,0.35)`:isLk?NEON.yellow:isSel?NEON.cyan:`rgba(224,224,255,0.4)`;
         ctx.textAlign="center";ctx.textBaseline="alphabetic";
         ctx.fillText(t.name,px,py+bob-cr-3);
+        // Parked indicator
+        if(isParked){
+          ctx.font="bold 7px 'Orbitron',sans-serif";
+          ctx.fillStyle="rgba(150,150,180,0.5)";
+          ctx.fillText("P",px+cr-1,py+bob-cr);
+          ctx.globalAlpha=1.0; // restore after parked token
+        }
         ctx.textAlign="left";ctx.textBaseline="alphabetic";
       });
       // Clean up truly dead tokens from ref only if they've been dead 2+ min
@@ -6114,7 +6198,8 @@ export default function DegenCommandCenter(){
         <div style={{display:"flex",gap:14,alignItems:"center",flexShrink:0}}>
           {[{l:"SCANNED",v:totalScanned,c:NEON.cyan},{l:"DEPLOYED",v:deployed,c:NEON.green},
             {l:"REJECTED",v:rejected,c:NEON.red},{l:"QUAL%",v:qualRate+"%",c:parseInt(qualRate)>40?NEON.green:NEON.orange},
-            {l:"LOCKED",v:lockedTokens.length,c:NEON.yellow}].map(s=>(
+            {l:"LOCKED",v:lockedTokens.length,c:NEON.yellow},
+            {l:"PARKED",v:tokens.filter(t=>t.alive&&t.parked).length,c:NEON.dimText}].map(s=>(
             <StatChip key={s.l} label={s.l} value={s.v} color={s.c}/>))}
           {/* ── MARKET TEMPERATURE GAUGE ── */}
           {intel && intel.marketTemp && (() => {
@@ -6922,7 +7007,7 @@ export default function DegenCommandCenter(){
 
         {/* CENTER: BATTLEFIELD */}
         <GlassPanel accent={NEON.cyan} style={{position:"relative",overflow:"hidden"}}>
-          <BattlefieldMap tokens={tokens} lockedTokens={lockedTokens} onSelect={selectToken}
+          <BattlefieldMap tokens={tokens} lockedTokens={lockedTokens} onSelect={selectToken} tradeDataRef={live.tradeDataRef}
             selectedId={selectedToken?.id} onKillFeed={addKillFeed} onAlienUpdate={setAlienStats}
             onMenuToggle={()=>setShowMenu(p=>!p)} whaleTrigger={whaleTriggerRef} dolphinTrigger={dolphinTriggerRef}/>
           <KillFeed events={killFeed} onSelectByName={selectByName}/>
