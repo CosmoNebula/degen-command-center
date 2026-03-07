@@ -51,11 +51,11 @@ function classifyWalletDNA(ws) {
   if (avgBuy >= 1.5) scores.WHALE += 4;
   else if (avgBuy >= 0.7) scores.WHALE += 2;
 
-  // SNIPER: fast holder, high mcap exits
+  // SNIPER: fast holder, high mcap exits (avgHoldMs must be > 0 — no closed trades = no sniper score)
   if (avgHoldMs > 0 && avgHoldMs < 120000) scores.SNIPER += 4;   // <2min
-  else if (avgHoldMs < 300000) scores.SNIPER += 2;               // <5min
+  else if (avgHoldMs > 0 && avgHoldMs < 300000) scores.SNIPER += 2;  // <5min
   if (bigWinRate >= 0.4) scores.SNIPER += 2;
-  if (winRate >= 0.55 && avgHoldMs < 300000) scores.SNIPER += 1;
+  if (winRate >= 0.55 && avgHoldMs > 0 && avgHoldMs < 300000) scores.SNIPER += 1;
 
   // HOLDER: long holds
   if (avgHoldMs >= 600000) scores.HOLDER += 4;                   // 10+ min
@@ -549,7 +549,8 @@ export function useIntelligence({ walletScoresRef, tokens, tradeDataRef, deploye
             pScore += decay * sizeM;
           }
           const tier = pScore >= 8 ? 'LEGENDARY' : pScore >= 4 ? 'ELITE' : pScore >= 1.5 ? 'PROVEN' : 'EMERGING';
-          if (['LEGENDARY','ELITE','PROVEN'].indexOf(tier) > ['LEGENDARY','ELITE','PROVEN'].indexOf(bestPersistTier)) {
+          var tierRank = { LEGENDARY: 3, ELITE: 2, PROVEN: 1, EMERGING: 0 };
+          if ((tierRank[tier] || 0) > (tierRank[bestPersistTier] || 0)) {
             bestPersistTier = tier;
           }
         }
@@ -580,8 +581,9 @@ export function useIntelligence({ walletScoresRef, tokens, tradeDataRef, deploye
         }
       }
 
-      setHotClusterTokens(hotTokens);
-      setSignalBoost(boosts);
+      // NOTE: don't setSignalBoost/setHotClusterTokens here — the 3s signal boost
+      // effect is the single source of truth and would immediately overwrite these.
+      // Cluster data flows via the `clusters` state which the 3s effect reads.
 
       // Fire alerts for new hot clusters
       const newAlerts = [];
