@@ -173,9 +173,6 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
         const mcap = (newToken.marketCapSol || 0) * SOL_USD * MCAP_CORRECTION;
         const id = newToken.mint + Date.now();
 
-        // Skip tokens under $3200 mcap — no micro-caps on the battlefield
-        if (mcap < 3200) return;
-
         console.log(`[LIVE] 🆕 ${name} | mcap: $${formatNum(mcap)} | ${newToken.mint.slice(0, 12)}...`);
 
         // Subscribe to this token's trades
