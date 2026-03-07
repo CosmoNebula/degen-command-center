@@ -6536,59 +6536,7 @@ export default function DegenCommandCenter(){
               </div>
             );
           })()}
-          {/* ── LIVE FLASH STRIP + NEURAL SURFACE: top movers + high-signal tokens ── */}
-          {(()=>{
-            const top30 = live.flashBoard30s?.[0];
-            const top1m = live.flashBoard1m?.[0];
-            const top5m = live.flashBoard5m?.[0];
-            // Top neural signal (not already in flash)
-            const topSig = (() => {
-              const flashAddrs = new Set([top30?.addr, top1m?.addr, top5m?.addr].filter(Boolean));
-              return tokens.filter(t=>t.alive&&t.qualified)
-                .map(t=>({t, sig: (live.signalScoresRef?.current?.[t.addr]||0) + (intel?.signalBoost?.[t.addr]?.boost||0)}))
-                .filter(x => x.sig >= 80 && !flashAddrs.has(x.t.addr))
-                .sort((a,b)=>b.sig-a.sig)[0];
-            })();
-            const hasAny = top30 || top1m || top5m || topSig;
-            if (!hasAny) return null;
-            return(
-              <div style={{display:"flex",flexDirection:"column",gap:1,padding:"3px 6px",
-                background:"rgba(255,7,58,0.05)",border:"1px solid rgba(255,7,58,0.18)",borderRadius:6,minWidth:140}}>
-                <div style={{fontSize:7,color:"#ff073a",letterSpacing:1.5,fontFamily:"'Orbitron'",marginBottom:1}}>⚡ LIVE FLASH</div>
-                {top30&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:4,cursor:"pointer"}}
-                  onClick={()=>{const t=tokens.find(tk=>tk.addr===top30.addr);if(t)selectToken(t);}}>
-                  <span style={{fontSize:7,color:"#ff073a",fontFamily:"'Orbitron'",minWidth:14}}>30s</span>
-                  <span style={{fontSize:9,fontWeight:900,color:NEON.text,maxWidth:52,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{top30.name}</span>
-                  <span style={{fontSize:9,fontWeight:900,color:top30.gain>0?NEON.green:"#ff073a",fontFamily:"'Orbitron'"}}>
-                    {top30.gain>0?"+":""}{top30.gain.toFixed(1)}%</span>
-                  {top30.hasSmartMoney&&<span style={{fontSize:7,color:"#ff9500"}}>🧠</span>}
-                </div>}
-                {top1m&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:4,cursor:"pointer"}}
-                  onClick={()=>{const t=tokens.find(tk=>tk.addr===top1m.addr);if(t)selectToken(t);}}>
-                  <span style={{fontSize:7,color:"#ff6600",fontFamily:"'Orbitron'",minWidth:14}}>1m</span>
-                  <span style={{fontSize:9,fontWeight:900,color:NEON.text,maxWidth:52,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{top1m.name}</span>
-                  <span style={{fontSize:9,fontWeight:900,color:top1m.gain>0?"#ff6600":"#ff073a",fontFamily:"'Orbitron'"}}>
-                    {top1m.gain>0?"+":""}{top1m.gain.toFixed(1)}%</span>
-                  {top1m.isCluster&&<span style={{fontSize:7,color:"#bf00ff"}}>🔗</span>}
-                </div>}
-                {top5m&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:4,cursor:"pointer"}}
-                  onClick={()=>{const t=tokens.find(tk=>tk.addr===top5m.addr);if(t)selectToken(t);}}>
-                  <span style={{fontSize:7,color:"#ffe600",fontFamily:"'Orbitron'",minWidth:14}}>5m</span>
-                  <span style={{fontSize:9,fontWeight:900,color:NEON.text,maxWidth:52,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{top5m.name}</span>
-                  <span style={{fontSize:9,fontWeight:900,color:top5m.gain>0?"#ffe600":"#ff073a",fontFamily:"'Orbitron'"}}>
-                    {top5m.gain>0?"+":""}{top5m.gain.toFixed(1)}%</span>
-                </div>}
-                {topSig&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:4,
-                  borderTop:"1px solid rgba(0,255,255,0.1)",paddingTop:1,cursor:"pointer"}}
-                  onClick={()=>selectToken(topSig.t)}>
-                  <span style={{fontSize:7,color:NEON.cyan,fontFamily:"'Orbitron'",minWidth:14}}>◈</span>
-                  <span style={{fontSize:9,fontWeight:900,color:NEON.text,maxWidth:52,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{topSig.t.name}</span>
-                  <span style={{fontSize:9,fontWeight:900,color:"#ffd700",fontFamily:"'Orbitron'",textShadow:"0 0 6px #ffd700"}}>
-                    {Math.round(topSig.sig)}</span>
-                </div>}
-              </div>
-            );
-          })()}
+          {/* LIVE FLASH moved to battlefield bottom-right */}
           <div style={{display:"flex",alignItems:"center",gap:5,marginLeft:6}}>
             <div style={{width:6,height:6,borderRadius:"50%",background:NEON.green,
               boxShadow:`0 0 8px ${NEON.green}`,animation:"blink 1s infinite"}}/>
@@ -7425,6 +7373,60 @@ export default function DegenCommandCenter(){
               </div>
             );
           })()}
+          {/* ── LIVE FLASH — bottom-left of battlefield ── */}
+          {(()=>{
+            const top30 = live.flashBoard30s?.[0];
+            const top1m = live.flashBoard1m?.[0];
+            const top5m = live.flashBoard5m?.[0];
+            const topSig = (() => {
+              const flashAddrs = new Set([top30?.addr, top1m?.addr, top5m?.addr].filter(Boolean));
+              return tokens.filter(t=>t.alive&&t.qualified)
+                .map(t=>({t, sig: (live.signalScoresRef?.current?.[t.addr]||0) + (intel?.signalBoost?.[t.addr]?.boost||0)}))
+                .filter(x => x.sig >= 80 && !flashAddrs.has(x.t.addr))
+                .sort((a,b)=>b.sig-a.sig)[0];
+            })();
+            const hasAny = top30 || top1m || top5m || topSig;
+            if (!hasAny) return null;
+            return (
+              <div style={{
+                position:"absolute", bottom:14, left:14,
+                zIndex:40, pointerEvents:"auto",
+                display:"flex", flexDirection:"column", gap:2,
+                padding:"5px 8px",
+                background:"rgba(4,2,14,0.88)",
+                border:"1px solid rgba(255,7,58,0.25)",
+                borderRadius:6, minWidth:148,
+                backdropFilter:"blur(4px)",
+                boxShadow:"0 0 14px rgba(255,7,58,0.12)",
+              }}>
+                <div style={{fontSize:7,color:"#ff073a",letterSpacing:2,fontFamily:"'Orbitron'",marginBottom:1,fontWeight:700}}>⚡ LIVE FLASH</div>
+                {top30&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:4,cursor:"pointer"}} onClick={()=>{const t=tokens.find(tk=>tk.addr===top30.addr);if(t)selectToken(t);}}>
+                  <span style={{fontSize:7,color:"#ff073a",fontFamily:"'Orbitron'",width:16,flexShrink:0}}>30s</span>
+                  <span style={{fontSize:10,fontWeight:900,color:NEON.text,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{top30.name}</span>
+                  <span style={{fontSize:10,fontWeight:900,color:top30.gain>0?NEON.green:"#ff073a",fontFamily:"'Orbitron'",flexShrink:0}}>{top30.gain>0?"+":""}{top30.gain.toFixed(1)}%</span>
+                  {top30.hasSmartMoney&&<span style={{fontSize:8,flexShrink:0}}>🧠</span>}
+                </div>}
+                {top1m&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:4,cursor:"pointer"}} onClick={()=>{const t=tokens.find(tk=>tk.addr===top1m.addr);if(t)selectToken(t);}}>
+                  <span style={{fontSize:7,color:"#ff6600",fontFamily:"'Orbitron'",width:16,flexShrink:0}}>1m</span>
+                  <span style={{fontSize:10,fontWeight:900,color:NEON.text,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{top1m.name}</span>
+                  <span style={{fontSize:10,fontWeight:900,color:top1m.gain>0?"#ff6600":"#ff073a",fontFamily:"'Orbitron'",flexShrink:0}}>{top1m.gain>0?"+":""}{top1m.gain.toFixed(1)}%</span>
+                  {top1m.isCluster&&<span style={{fontSize:8,flexShrink:0}}>🔗</span>}
+                </div>}
+                {top5m&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:4,cursor:"pointer"}} onClick={()=>{const t=tokens.find(tk=>tk.addr===top5m.addr);if(t)selectToken(t);}}>
+                  <span style={{fontSize:7,color:"#ffe600",fontFamily:"'Orbitron'",width:16,flexShrink:0}}>5m</span>
+                  <span style={{fontSize:10,fontWeight:900,color:NEON.text,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{top5m.name}</span>
+                  <span style={{fontSize:10,fontWeight:900,color:top5m.gain>0?"#ffe600":"#ff073a",fontFamily:"'Orbitron'",flexShrink:0}}>{top5m.gain>0?"+":""}{top5m.gain.toFixed(1)}%</span>
+                </div>}
+                {topSig&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:4,
+                  borderTop:"1px solid rgba(0,255,255,0.08)",paddingTop:2,cursor:"pointer"}} onClick={()=>selectToken(topSig.t)}>
+                  <span style={{fontSize:7,color:NEON.cyan,fontFamily:"'Orbitron'",width:16,flexShrink:0}}>◈</span>
+                  <span style={{fontSize:10,fontWeight:900,color:NEON.text,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{topSig.t.name}</span>
+                  <span style={{fontSize:10,fontWeight:900,color:"#ffd700",fontFamily:"'Orbitron'",textShadow:"0 0 6px #ffd700",flexShrink:0}}>{Math.round(topSig.sig)}</span>
+                </div>}
+              </div>
+            );
+          })()}
+
           {/* ── HUNTER KILL POPUPS ── */}
           {killPopups.map(k=>(
             <div key={k.id} style={{position:"absolute",left:`${k.x*100}%`,top:`${k.y*100}%`,

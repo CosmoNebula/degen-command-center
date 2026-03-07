@@ -2335,21 +2335,38 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
         if (t.isStale || t.isDead) s -= 15;
         scores[t.addr] = Math.max(0, Math.min(100, Math.round(s)));
 
-        // ── AUTO-SURFACE: emit when score crosses 85+ (once per 60s per token) ──
+        // ── AUTO-SURFACE: emit when score crosses 92+ with hard quality gates ──
         const prev = prevScores[t.addr] || 0;
         const cur = scores[t.addr];
         const lastSurface = autoSurfaceCooldown[t.addr] || 0;
-        if (cur >= 85 && prev < 85 && now - lastSurface > 60000) {
+
+        // Hard gates — reject trash before it can surface
+        const meetsGates = (
+          (t.mcap || 0) >= 8000                              // min $8K mcap — no dust
+          && (t.qualScore || 0) >= 6                        // must be near-qualified
+          && !t.bundleDetected                              // no bundles ever
+          && t.deployerGrade !== 'F' && t.deployerGrade !== 'D' // no known ruggers
+          && !t.isStale && !t.isDead                        // must be alive and trading
+          && (t.liquidityRating !== 'PAPER')                // must have real liquidity
+          && (
+            (t.smartWalletCount || 0) >= 2                  // 2+ smart wallets, OR
+            || (t.accelerating && t._hotCluster)            // accel + cluster combo, OR
+            || (t.onGeckoTrending && (t.qualScore||0) >= 7) // gecko trending + strong qual
+          )
+        );
+
+        if (cur >= 92 && prev < 92 && now - lastSurface > 90000 && meetsGates) {
           autoSurfaceCooldown[t.addr] = now;
           const extData = externalBoostRef.current[t.addr];
           const reasons = [];
-          if (t.hasSmartMoney) reasons.push(`🧠 ${t.smartWalletCount}x smart wallets`);
-          if (t._hotCluster) reasons.push(`🔗 cluster active`);
+          if ((t.smartWalletCount||0) >= 2) reasons.push(`🧠 ${t.smartWalletCount}x smart wallets`);
+          if (t._hotCluster) reasons.push(`🔗 CLUSTER ${intel?.clusters?.find(c=>c.tokens?.includes(t.addr))?.wallets?.length||'?'}w`);
           if (t.accelerating) reasons.push(`⚡ accelerating`);
           if (t.onGeckoTrending) reasons.push(`🦎 gecko trending`);
-          if (extData?.reasons?.length) reasons.push(...extData.reasons.slice(0, 2));
           if ((t.bondingPct || 0) > 80 && !t.migrated) reasons.push(`🚀 ${t.bondingPct?.toFixed(0)}% bonding`);
-          if (t.activityLevel === 'BLAZING') reasons.push(`🔥 blazing tx`);
+          if (t.activityLevel === 'BLAZING') reasons.push(`🔥 blazing`);
+          if (t.deployerGrade === 'A') reasons.push(`✅ PROVEN dev`);
+          if (extData?.reasons?.length) reasons.push(...extData.reasons.slice(0, 2));
           newSurfaces.push({
             id: Date.now() + Math.random(),
             addr: t.addr, name: t.name, score: cur,
