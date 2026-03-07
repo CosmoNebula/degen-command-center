@@ -257,8 +257,6 @@ export function useIntelligence({ walletScoresRef, tokens, tradeDataRef, deploye
   const [clusterAlerts, setClusterAlerts] = useState([]);
   const [signalBoost, setSignalBoost] = useState({});        // addr -> {boost:0-100, reasons[], tier}
   const [hotClusterTokens, setHotClusterTokens] = useState(new Set()); // addrs being cluster-bought now
-  const [signalBoost, setSignalBoost] = useState({});        // addr -> {boost, reasons[]}
-  const [hotClusterTokens, setHotClusterTokens] = useState(new Set()); // addrs in active clusters
 
   const winnerFPs = useRef([]);
   const coBuyMatrix = useRef({});      // "addrA|addrB" -> {count, lastSeen, tokens:Set}
