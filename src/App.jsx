@@ -5360,6 +5360,7 @@ export default function DegenCommandCenter(){
   const [leftTab,setLeftTab]=useState("SCANNER");
   const [showMenu,setShowMenu]=useState(false);
   const [bayExpanded,setBayExpanded]=useState(false);
+  const [dangerTab,setDangerTab]=useState("30s");
   const [intelEvents,setIntelEvents]=useState([]);
   const [migrations,setMigrations]=useState([]);
   const [rightTab,setRightTab]=useState("LOCKS");
@@ -5582,7 +5583,15 @@ export default function DegenCommandCenter(){
           await new Promise(r => setTimeout(r, 100));
           const res = await fetch(`https://api.dexscreener.com/tokens/v1/solana/${row.addr}`);
           const data = await res.json();
-          const pair = data?.pairs?.[0] || (Array.isArray(data) ? data[0] : null);
+          const allPairs = data?.pairs || (Array.isArray(data) ? data : []);
+          // Prefer non-pumpfun pair (Raydium) then highest liquidity
+          const isPump = d => (d.dexId||'').toLowerCase().includes('pump');
+          const pair = allPairs.reduce((a,b)=>{
+            if(!a)return b;
+            if(isPump(a)&&!isPump(b))return b;
+            if(!isPump(a)&&isPump(b))return a;
+            return (b.liquidity?.usd||0)>(a.liquidity?.usd||0)?b:a;
+          }, null);
           const liveMcap = pair?.marketCap || pair?.fdv || 0;
           const peakMcap = row.peak_mcap || 0;
           const isDead = !pair || liveMcap < 1000 || (peakMcap > 5000 && liveMcap < peakMcap * 0.15);
@@ -5621,7 +5630,7 @@ export default function DegenCommandCenter(){
     setTimeout(hydrate, 3000);
   }, []);
 
-  // ── HOLDING BAY AUDIT — stagger DB tokens onto battlefield after a grace period ──
+  // ── HOLDING BAY AUDIT — stagger DB tokens, incinerate dead ones ──
   useEffect(() => {
     const iv = setInterval(() => {
       const now = Date.now();
@@ -5630,9 +5639,13 @@ export default function DegenCommandCenter(){
         const next = prev.map(t => {
           if (!t.inHoldingBay) return t;
           const age = now - (t.holdingEnteredAt || now);
-          // Release after 30s — stagger so they don't all flood in at once
-          // Use addr hash for spread: each token gets a random 30-90s window
-          const releaseAfter = 30000 + (parseInt(t.addr?.slice(-4) || '0', 16) % 60000);
+          // Incinerate: mcap = 0 after 30s (never got data) or mcap < $500
+          if (age > 30000 && (t.mcap || 0) < 500) {
+            changed = true;
+            return {...t, alive:false, inHoldingBay:false, health:0, deathTime:now};
+          }
+          // Release: stagger by addr hash, 15-60s window
+          const releaseAfter = 15000 + (parseInt(t.addr?.slice(-4) || '0', 16) % 45000);
           if (age >= releaseAfter) {
             changed = true;
             return {...t, inHoldingBay:false, warpIn:true,
@@ -5642,7 +5655,7 @@ export default function DegenCommandCenter(){
         });
         return changed ? next : prev;
       });
-    }, 5000);
+    }, 3000); // check every 3s
     return () => clearInterval(iv);
   }, []);
 
@@ -7606,7 +7619,7 @@ export default function DegenCommandCenter(){
                       <div style={{fontSize:9,color:"rgba(80,40,160,0.5)",textAlign:"center",paddingTop:8}}>No tokens in audit queue</div>
                     ) : holdingTokens.map(t => {
                       const age = Math.round((Date.now() - (t.holdingEnteredAt||Date.now())) / 1000);
-                      const releaseAfter = 30000 + (parseInt(t.addr?.slice(-4) || '0', 16) % 60000); const pct = Math.min(100, age / releaseAfter * 100);
+                      const releaseAfter = 15000 + (parseInt(t.addr?.slice(-4) || '0', 16) % 45000); const pct = Math.min(100, age / releaseAfter * 100);
                       const col = pct > 75 ? "#ff073a" : pct > 40 ? "#ffd700" : "rgba(130,60,255,0.8)";
                       return (
                         <div key={t.id} style={{display:"flex",alignItems:"center",gap:6,padding:"2px 0",
@@ -7634,7 +7647,7 @@ export default function DegenCommandCenter(){
                   <div style={{padding:"0 8px 3px",display:"flex",gap:3,overflow:"hidden"}}>
                     {holdingTokens.slice(0,6).map(t => {
                       const age = Math.round((Date.now() - (t.holdingEnteredAt||Date.now())) / 1000);
-                      const releaseAfter = 30 + (parseInt(t.addr?.slice(-4) || '0', 16) % 60); const pct = Math.min(100, age / releaseAfter * 100);
+                      const releaseAfter = 15 + (parseInt(t.addr?.slice(-4) || '0', 16) % 45); const pct = Math.min(100, age / releaseAfter * 100);
                       return (
                         <div key={t.id} title={`${t.name} — ${age}s`}
                           style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1,minWidth:22}}>
@@ -7650,40 +7663,61 @@ export default function DegenCommandCenter(){
                 )}
               </div>
 
-              {/* ── FLASH MONITOR ── */}
-              <div style={{
-                flex:1,
-                background:"rgba(10,3,18,0.96)",
-                border:"1px solid rgba(255,7,58,0.22)",
-                borderRadius:6, padding:"5px 8px",
-                display:"flex", flexDirection:"column", gap:3, overflow:"hidden",
-              }}>
-                <div style={{fontSize:7,color:"#ff073a",letterSpacing:2,fontFamily:"'Orbitron'",fontWeight:700,flexShrink:0}}>⚡ LIVE FLASH</div>
-                <div style={{display:"flex",gap:8,overflow:"hidden",flex:1}}>
-                  {[
-                    {entry:top30, label:"30s", col:"#ff073a"},
-                    {entry:top1m, label:"1m",  col:"#ff6600"},
-                    {entry:top5m, label:"5m",  col:"#ffe600"},
-                  ].map(({entry,label,col}) => entry ? (
-                    <div key={label} onClick={()=>{const t=tokens.find(tk=>tk.addr===entry.addr);if(t)selectToken(t);}}
-                      style={{display:"flex",alignItems:"center",gap:4,cursor:"pointer",
-                        padding:"2px 6px",borderRadius:4,background:`rgba(255,7,58,0.04)`,
-                        border:`1px solid ${col}18`,flex:1,overflow:"hidden",minWidth:0}}>
-                      <span style={{fontSize:7,color:col,fontFamily:"'Orbitron'",flexShrink:0,fontWeight:700}}>{label}</span>
-                      <span style={{fontSize:11,fontWeight:900,color:"rgba(224,224,255,0.9)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{entry.name}</span>
-                      <span style={{fontSize:11,fontWeight:900,color:entry.gain>0?NEON.green:"#ff073a",fontFamily:"'Orbitron'",flexShrink:0}}>
-                        {entry.gain>0?"+":""}{entry.gain?.toFixed(1)}%
-                      </span>
-                      {entry.hasSmartMoney && <span style={{fontSize:9,flexShrink:0}}>🧠</span>}
+              {/* ── DEGEN DANGER — tabbed flash boards ── */}
+              {(()=>{
+                const dangerFrames = [
+                  {key:"30s", label:"30s", col:"#ff073a", board: live.flashBoard30s||[]},
+                  {key:"1m",  label:"1m",  col:"#ff6600", board: live.flashBoard1m||[]},
+                  {key:"5m",  label:"5m",  col:"#ffe600", board: live.flashBoard5m||[]},
+                ];
+                const activeDanger = dangerFrames.find(f=>f.key===dangerTab) || dangerFrames[0];
+                return (
+                <div style={{
+                  flex:1,
+                  background:"rgba(10,3,18,0.96)",
+                  border:"1px solid rgba(255,7,58,0.22)",
+                  borderRadius:6, overflow:"hidden",
+                  display:"flex", flexDirection:"column",
+                }}>
+                  {/* Header + tabs */}
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"4px 8px 2px",borderBottom:"1px solid rgba(255,7,58,0.12)"}}>
+                    <div style={{fontSize:7,color:"#ff073a",letterSpacing:2,fontFamily:"'Orbitron'",fontWeight:700}}>⚡ DEGEN DANGER</div>
+                    <div style={{display:"flex",gap:2}}>
+                      {dangerFrames.map(f=>(
+                        <div key={f.key} onClick={()=>setDangerTab(f.key)}
+                          style={{fontSize:7,fontFamily:"'Orbitron'",fontWeight:700,padding:"1px 6px",borderRadius:3,cursor:"pointer",
+                            color: dangerTab===f.key ? "#111" : f.col,
+                            background: dangerTab===f.key ? f.col : "transparent",
+                            border:`1px solid ${f.col}${dangerTab===f.key?"ff":"40"}`,
+                            transition:"all 0.15s",
+                          }}>{f.label}</div>
+                      ))}
                     </div>
-                  ) : (
-                    <div key={label} style={{flex:1,display:"flex",alignItems:"center",gap:3,opacity:0.25,padding:"2px 6px"}}>
-                      <span style={{fontSize:7,color:col,fontFamily:"'Orbitron'",fontWeight:700}}>{label}</span>
-                      <span style={{fontSize:9,color:"rgba(255,255,255,0.2)"}}>—</span>
-                    </div>
-                  ))}
+                  </div>
+                  {/* Active board entries */}
+                  <div style={{flex:1,display:"flex",alignItems:"center",gap:6,padding:"3px 8px",overflow:"hidden"}}>
+                    {activeDanger.board.length === 0 ? (
+                      <span style={{fontSize:9,color:"rgba(255,255,255,0.15)",fontFamily:"'Orbitron'"}}>— NO DATA —</span>
+                    ) : activeDanger.board.slice(0,5).map((entry,i)=>(
+                      <div key={entry.addr||i} onClick={()=>{const tk=tokens.find(t=>t.addr===entry.addr);if(tk)selectToken(tk);}}
+                        style={{display:"flex",alignItems:"center",gap:4,cursor:"pointer",
+                          padding:"2px 7px",borderRadius:4,flex:"0 0 auto",
+                          background:`${activeDanger.col}08`,
+                          border:`1px solid ${activeDanger.col}${i===0?"60":"22"}`,
+                          opacity: 0.5+0.5*(1-i*0.1),
+                        }}>
+                        {i===0 && <span style={{fontSize:9,flexShrink:0}}>🔥</span>}
+                        <span style={{fontSize:10,fontWeight:900,color:"rgba(224,224,255,0.92)",maxWidth:70,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{entry.name}</span>
+                        <span style={{fontSize:11,fontWeight:900,color:entry.gain>0?NEON.green:"#ff073a",fontFamily:"'Orbitron'",flexShrink:0}}>
+                          {entry.gain>0?"+":""}{entry.gain?.toFixed(1)}%
+                        </span>
+                        {entry.hasSmartMoney && <span style={{fontSize:9,flexShrink:0}}>🧠</span>}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
+                );
+              })()}
 
               {/* ── BUILDING SLOT — future expansion ── */}
               <div style={{
