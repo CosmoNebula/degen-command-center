@@ -355,7 +355,6 @@ export default function ClaudeRoom({
   const feedEndRef        = useRef(null);
   const snapshotCountRef  = useRef(0);
 
-  const isLive = !IS_MOCK_MODE && !offlineStatus;
 
   useEffect(() => { autoWatchRef.current = autoWatch; }, [autoWatch]);
   useEffect(() => { feedEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [observations]);
@@ -630,7 +629,7 @@ export default function ClaudeRoom({
     } finally {
       setIsLoading(false);
     }
-  }, [IS_MOCK_MODE, offlineStatus, isLive]);
+  }, [IS_MOCK_MODE, offlineStatus]);
 
   // ─── AUTO-WATCH TICK ─────────────────────
   const runWatch = useCallback(() => {
