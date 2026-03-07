@@ -7541,8 +7541,6 @@ export default function DegenCommandCenter(){
                   extras.push({l:"◈ SIGNAL",v:`${totalSignal}/100${totalSignal>=88?' ★':''}`,c:sigColor});
                 }
                 if(intel?.hotClusterTokens?.has(token.addr)) extras.push({l:"🔗 CLUSTER",v:"ACTIVE",c:"#bf00ff"});
-                const boostReasons = intel?.signalBoost?.[token.addr]?.reasons;
-                if(boostReasons?.length) extras.push({l:"🧠 BOOST",v:`+${Math.round(intelB)}`,c:"#bf00ff"});
                 return extras;
               })(),
             ];

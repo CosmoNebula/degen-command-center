@@ -171,24 +171,19 @@ export async function fetchHolderCount(mintAddress) {
 export async function fetchHolderCountPublic(mintAddress) {
   if (!HELIUS_KEY) return 0;
   try {
-    // Try getTokenAccounts with higher page limit to get accurate total
-    // Sometimes page:1 limit:1 is stale — try limit:1000 to force a real count
+    // getTokenAccounts — limit:1 is enough, `total` is the real full count
     const res = await fetch(`https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         jsonrpc: "2.0", id: 1,
         method: "getTokenAccounts",
-        params: { mint: mintAddress, limit: 1000, page: 1 },
+        params: { mint: mintAddress, limit: 1, page: 1 },
       }),
     });
     const data = await res.json();
     const total = data?.result?.total || 0;
-    const tokenAccounts = data?.result?.token_accounts || [];
-    // Use total if available, otherwise count non-zero balance accounts
-    const nonZero = tokenAccounts.filter(a => (a.amount || 0) > 0).length;
-    const best = total > 1 ? total : nonZero > 1 ? nonZero : 0;
-    if (best > 1) { console.log(`[HELIUS-ACCTS] ${mintAddress.slice(0,8)}: ${best} holders`); return best; }
+    if (total > 1) { console.log(`[HELIUS-ACCTS] ${mintAddress.slice(0,8)}: ${total}`); return total; }
     return 0;
   } catch(e) {
     return 0;
