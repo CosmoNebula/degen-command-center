@@ -438,34 +438,57 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         ctx.font=z.bold?"bold 14px 'Orbitron'":"bold 11px 'Orbitron'";ctx.fillStyle=z.c;ctx.shadowColor=z.sc;ctx.shadowBlur=12;
         ctx.fillText(z.l,8,z.y*H-4);ctx.shadowBlur=0});
 
-      // ── SPACE BUNKER — top-right corner ─────────────────────────────────────
+      // ── HOLDING BAY — bottom-right, pixel style ─────────────────────────────
       const bunkerCount=tokensRef.current.filter(t=>t.parked&&t.alive).length;
-      if(bunkerCount>0){
-        const bkX=W*0.82,bkY=0,bkW=W*0.18,bkH=H*0.13;
-        // Background
-        ctx.fillStyle="rgba(10,5,25,0.75)";
+      {
+        const bkW=Math.floor(W*0.16),bkH=36;
+        const bkX=W-bkW-2,bkY=H-bkH-2;
+        const pulse=0.4+Math.sin(f*0.05)*0.2;
+        const holderColor=bunkerCount>0?`rgba(120,60,255,${pulse})`:`rgba(60,40,100,0.25)`;
+        // Pixel bg — chunky 2px blocks
+        ctx.imageSmoothingEnabled=false;
+        ctx.fillStyle="rgba(8,4,20,0.88)";
         ctx.fillRect(bkX,bkY,bkW,bkH);
-        // Border — pulsing purple
-        const bkPulse=0.35+Math.sin(f*0.04)*0.15;
-        ctx.strokeStyle=`rgba(140,80,255,${bkPulse})`;ctx.lineWidth=1;
-        ctx.strokeRect(bkX,bkY,bkW,bkH);
-        // Scan lines
-        for(let sl=6;sl<bkH;sl+=6){
-          ctx.fillStyle="rgba(140,80,255,0.025)";
-          ctx.fillRect(bkX,bkY+sl,bkW,2);
+        // Pixel border — 2px thick
+        ctx.strokeStyle=holderColor;ctx.lineWidth=2;
+        ctx.strokeRect(bkX+1,bkY+1,bkW-2,bkH-2);
+        // Inner accent line
+        ctx.strokeStyle=`rgba(120,60,255,0.15)`;ctx.lineWidth=1;
+        ctx.strokeRect(bkX+4,bkY+4,bkW-8,bkH-8);
+        // Pixel corner decorations
+        const corners=[[bkX+2,bkY+2,4,2],[bkX+bkW-6,bkY+2,4,2],[bkX+2,bkY+bkH-4,4,2],[bkX+bkW-6,bkY+bkH-4,4,2]];
+        corners.forEach(([cx2,cy2,cw,ch])=>{ctx.fillStyle=holderColor;ctx.fillRect(cx2,cy2,cw,ch);});
+        // Horizontal pixel stripes inside
+        for(let py2=bkY+6;py2<bkY+bkH-6;py2+=4){
+          ctx.fillStyle=`rgba(120,60,255,0.04)`;
+          ctx.fillRect(bkX+3,py2,bkW-6,2);
         }
-        // Label
-        ctx.font="bold 7px 'Orbitron',sans-serif";
-        ctx.fillStyle=`rgba(180,120,255,${0.7+Math.sin(f*0.06)*0.2})`;
-        ctx.shadowColor="#8840ff";ctx.shadowBlur=8;
-        ctx.fillText(`🅿 SPACE BUNKER`,bkX+5,bkY+10);
-        ctx.fillStyle="rgba(140,80,255,0.5)";ctx.shadowBlur=0;
-        ctx.fillText(`${bunkerCount} PARKED`,bkX+5,bkY+20);
+        // Label — pixel font style
+        ctx.font="bold 7px 'Share Tech Mono',monospace";
+        ctx.textAlign="left";
+        ctx.fillStyle=bunkerCount>0?`rgba(160,100,255,${0.8+Math.sin(f*0.06)*0.15})`:`rgba(80,50,120,0.5)`;
+        ctx.shadowColor="#7840ff";ctx.shadowBlur=bunkerCount>0?6:0;
+        ctx.fillText("▣ HOLDING BAY",bkX+6,bkY+14);
         ctx.shadowBlur=0;
-        // Corner rivets
-        [[bkX+2,bkY+2],[bkX+bkW-4,bkY+2],[bkX+2,bkY+bkH-4],[bkX+bkW-4,bkY+bkH-4]].forEach(([rx,ry])=>{
-          ctx.fillStyle="rgba(140,80,255,0.4)";ctx.beginPath();ctx.arc(rx,ry,2,0,Math.PI*2);ctx.fill();
-        });
+        // Count + status
+        if(bunkerCount>0){
+          ctx.font="bold 9px 'Orbitron',sans-serif";
+          ctx.fillStyle=`rgba(180,130,255,${pulse})`;
+          ctx.shadowColor="#9050ff";ctx.shadowBlur=8;
+          ctx.fillText(`${bunkerCount} DOCKED`,bkX+6,bkY+27);
+          ctx.shadowBlur=0;
+          // Blinking indicator dots
+          for(let di=0;di<Math.min(bunkerCount,8);di++){
+            const dotOn=(f+di*7)%20<12;
+            ctx.fillStyle=dotOn?`rgba(160,100,255,0.8)`:`rgba(60,30,100,0.3)`;
+            ctx.fillRect(bkX+bkW-12-(di*6),bkY+bkH-10,4,4);
+          }
+        } else {
+          ctx.font="7px 'Share Tech Mono',monospace";
+          ctx.fillStyle="rgba(60,40,100,0.35)";
+          ctx.fillText("EMPTY",bkX+6,bkY+27);
+        }
+        ctx.textAlign="left";
       }
 
       // War fog
@@ -539,18 +562,21 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         const dbGrace = t.fromDB && sessionAge < 180000;
         const staleHigh=(t.mcap||0)>=40000&&silentMs>150000; // >=$40K, silent 2.5min
         const staleMid=(t.mcap||0)<40000&&silentMs>60000&&!t.fromDB; // <$40K, 1min — live tokens only
-        const shouldPark=(staleHigh||staleMid)&&!isLocked&&!t.laserIn&&!t.accelerating&&!dbGrace;
+        const preMigration=(t.bondingPct||0)>80&&!t.migrated; // close to migration — park to bay
+        const shouldPark=(staleHigh||staleMid||preMigration)&&!isLocked&&!t.laserIn&&!t.accelerating&&!dbGrace;
+        if(preMigration&&!t.parked) t._preMig=true; // tag so audit knows why it's parked
         if(shouldPark&&!t.parked){
           t.parked=true;
           t.parkedAt=t.parkedAt||now_vs; // stamp when first parked for bunker decay timer
           // Assign a stable bunker slot so they don't all stack on same pixel
-          if(!t.bunkerX){ t.bunkerX=0.87+Math.random()*0.10; t.bunkerY=-0.06+Math.random()*0.10; }
+          if(!t.bunkerX){ t.bunkerX=0.84+Math.random()*0.12; t.bunkerY=0.90+Math.random()*0.07; }
           console.log(`[FIELD] 🅿 ${t.name} parked — $${((t.mcap||0)/1000).toFixed(0)}K, ${Math.floor(silentMs/60000)}min silent`);
         }
         // Un-park if new activity arrives (trade within last 30s)
         if(t.parked&&silentMs<30000){
           t.parked=false;
           t.parkedAt=null;t.bunkerX=null;t.bunkerY=null;
+          t._preMig=false;t._bayScans=0; // clear bay tracking on return
           t.by=0.95;t.bx=rand(0.08,0.92); // re-enter at pit
           console.log(`[FIELD] 🔄 ${t.name} un-parked — new activity`);
         }
@@ -780,7 +806,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         const canMove=t.migrated||(t.buys>=1&&t.vol>50);
         if(t.parked){
           // Fly to bunker — top-right corner above battlefield
-          const bx3=t.bunkerX||0.92,by3=t.bunkerY||-0.02;
+          const bx3=t.bunkerX||0.90,by3=t.bunkerY||0.92;
           t.bx+=(bx3-t.bx)*0.04; t.by+=(by3-t.by)*0.04; // smooth glide in
           t.vx=0; // no horizontal drift in bunker
         } else {
@@ -2626,25 +2652,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         }
       }
 
-      // ═══ MARKET TIDE — wave at bottom ═══
-      const tide=marketTideRef.current;
-      const aliveTokens=tokensRef.current.filter(t=>t.alive);
-      const avgHealth=aliveTokens.length>0?aliveTokens.reduce((s,t)=>s+t.health,0)/aliveTokens.length:50;
-      tide.target=avgHealth/100;
-      tide.level+=(tide.target-tide.level)*0.02;
-      const tideH=H*0.04; // max tide height
-      const tideY=H-tideH*tide.level;
-      const tideColor=tide.level>0.6?"rgba(57,255,20,":"rgba(255,7,58,";
-      for(let wx=0;wx<W;wx+=3){
-        const waveOff=Math.sin(wx*0.015+Date.now()*0.002)*tideH*0.3+Math.sin(wx*0.03+Date.now()*0.003)*tideH*0.15;
-        const wy=tideY+waveOff;
-        const a2=0.08+tide.level*0.12;
-        ctx.fillStyle=tideColor+a2+")";
-        ctx.fillRect(wx,wy,3,H-wy);
-      }
-      // Tide label
-      ctx.font="bold 7px 'Orbitron'";ctx.fillStyle=tide.level>0.6?"rgba(57,255,20,0.5)":"rgba(255,7,58,0.5)";
-      ctx.textAlign="right";ctx.fillText(tide.level>0.6?"BULL TIDE":"BEAR TIDE",W-8,H-4);ctx.textAlign="left";
+      // Tide wave removed
 
       // ═══ MULTI-CREATURE SYSTEM: Dolphins, Tiered Whales, Golden Whales ═══
       const WHALE_TIER_COLORS=["#6cb4ee","#00ccff","#39ff14","#aaff00","#ffd740","#ff9500","#ff4444","#ff00ff"];
@@ -6149,61 +6157,34 @@ export default function DegenCommandCenter(){
           <h1 style={{fontFamily:"'Orbitron',sans-serif",fontSize:16,fontWeight:900,lineHeight:1.2,
             background:`linear-gradient(90deg,${NEON.magenta},${NEON.pink},${NEON.cyan})`,
             WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",letterSpacing:3}}>◈ DEGEN COMMAND CENTER</h1>
-          <div style={{fontSize:11,color:NEON.dimText,letterSpacing:2,marginTop:1,display:"flex",alignItems:"center",gap:8}}>
-            🌸 SOLANA BATTLEFIELD v7.0 🌸
-            {hunterKills>0&&<span style={{fontSize:9,color:hunterRank.color,fontFamily:"'Share Tech Mono'",
-              background:`${hunterRank.color}15`,padding:"1px 6px",borderRadius:3,border:`1px solid ${hunterRank.color}30`}}>
-              {hunterRank.icon} {hunterRank.label} · {hunterXP}XP · {hunterKills}💀{killStreak>=3?` 🔥x${killStreak}`:""}
-            </span>}
-          </div>
+          {(()=>{
+            const rankIdx=HUNTER_RANKS.indexOf(hunterRank);
+            const nextRank=HUNTER_RANKS[rankIdx+1];
+            const xpInRank=hunterXP-(hunterRank.min||0);
+            const xpNeeded=nextRank?(nextRank.min-hunterRank.min):xpInRank||1;
+            const rankPct=Math.min(100,Math.round((xpInRank/xpNeeded)*100));
+            return(
+            <div style={{display:"flex",alignItems:"center",gap:6,marginTop:2,width:"100%",minWidth:220}}>
+              <span style={{fontSize:13,flexShrink:0}}>{hunterRank.icon}</span>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:1}}>
+                  <span style={{fontSize:9,fontWeight:900,color:hunterRank.color,fontFamily:"'Orbitron',sans-serif",letterSpacing:1}}>{hunterRank.label}</span>
+                  <span style={{fontSize:8,color:NEON.dimText,fontFamily:"'Share Tech Mono'"}}>{hunterXP}XP · {hunterKills}💀{killStreak>=3?` 🔥×${killStreak}`:""}</span>
+                  {nextRank&&<span style={{fontSize:7,color:NEON.dimText,marginLeft:"auto",fontFamily:"'Share Tech Mono'"}}>{nextRank.icon}{nextRank.label} {rankPct}%</span>}
+                </div>
+                <div style={{width:"100%",height:3,background:"rgba(255,255,255,0.06)",borderRadius:2,overflow:"hidden"}}>
+                  <div style={{width:`${rankPct}%`,height:"100%",background:`linear-gradient(90deg,${hunterRank.color}80,${hunterRank.color})`,
+                    borderRadius:2,transition:"width 0.5s ease",boxShadow:`0 0 4px ${hunterRank.color}`}}/>
+                </div>
+              </div>
+            </div>);
+          })()}
         </div>
-        {/* ═══ CORRESPONDENT MARQUEE — expands when active ═══ */}
-        <div style={{flex:1,margin:"0 14px",height:corrDisplay.visible?52:32,overflow:"hidden",position:"relative",
-          background:corrDisplay.visible?"rgba(14,6,0,0.97)":"rgba(20,8,0,0.7)",
-          border:`1px solid ${corrDisplay.visible?(corrDisplay.mood==="alarm"?"rgba(255,50,50,0.5)":corrDisplay.mood==="hype"?"rgba(57,255,20,0.4)":corrDisplay.mood==="sus"?"rgba(255,215,0,0.35)":"rgba(255,106,0,0.4)"):"rgba(255,106,0,0.15)"}`,
-          borderRadius:4,transition:"height 0.3s ease, background 0.3s ease, border-color 0.3s ease",
-          boxShadow:corrDisplay.visible?`0 0 20px ${corrDisplay.mood==="alarm"?"rgba(255,50,50,0.15)":corrDisplay.mood==="hype"?"rgba(57,255,20,0.1)":"rgba(255,106,0,0.12)"}`:undefined}}>
-          {/* Scan lines */}
-          <div style={{position:"absolute",inset:0,
-            background:"repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(255,106,0,0.015) 2px,rgba(255,106,0,0.015) 4px)",
-            pointerEvents:"none",zIndex:2}}/>
-          {/* Claude ◈ icon left */}
-          <div style={{position:"absolute",left:0,top:0,bottom:0,width:corrDisplay.visible?44:32,
-            background:"linear-gradient(180deg,rgba(255,100,0,0.08),rgba(40,10,0,0.2))",
-            borderRight:"1px solid rgba(255,100,0,0.15)",
-            display:"flex",alignItems:"center",justifyContent:"center",zIndex:3,transition:"width 0.3s"}}>
-            <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1}}>
-              <div style={{fontSize:corrDisplay.visible?20:15,lineHeight:1,transition:"font-size 0.3s",
-                color:corrDisplay.visible?(corrDisplay.mood==="hype"?"#39ff14":corrDisplay.mood==="alarm"?"#ff4040":corrDisplay.mood==="sus"?"#ffd740":"#ff6a00"):"rgba(255,106,0,0.5)",
-                textShadow:corrDisplay.visible?`0 0 12px currentColor`:undefined,
-                fontWeight:900}}>◈</div>
-              <div style={{fontSize:6,letterSpacing:1,fontFamily:"'Orbitron',sans-serif",
-                color:corrDisplay.visible?"rgba(255,106,0,0.7)":"rgba(255,106,0,0.25)",
-                transition:"all 0.3s"}}>CLAUDE</div>
-            </div>
-          </div>
-          {/* Message area */}
-          <div style={{position:"absolute",left:corrDisplay.visible?46:34,right:4,top:0,bottom:0,display:"flex",flexDirection:"column",justifyContent:"center",
-            padding:"3px 6px",overflow:"hidden"}}>
-            {corrDisplay.visible?<>
-              <div style={{fontSize:9,color:"#ff6a00",fontWeight:700,letterSpacing:2,fontFamily:"'Orbitron',sans-serif",lineHeight:1,marginBottom:3}}>
-                {corrDisplay.mood==="alarm"?"⚠ ALERT":corrDisplay.mood==="sus"?"◉ INTEL":corrDisplay.mood==="rip"?"☠ REPORT":corrDisplay.mood==="hype"?"◈ SIGNAL":"◈ CLAUDE"}</div>
-              <div style={{fontSize:13,color:"#e0e0ff",lineHeight:1.3,fontFamily:"'Share Tech Mono',monospace",
-                overflow:"hidden",whiteSpace:"nowrap",fontWeight:600,letterSpacing:0.5,
-                animation:"marqueeScroll 40s linear"}}>{corrDisplay.msg}</div>
-            </>:<>
-              <div style={{fontSize:7,color:"rgba(255,106,0,0.3)",fontWeight:700,letterSpacing:2,fontFamily:"'Orbitron',sans-serif",lineHeight:1}}>◈ STANDBY</div>
-              <div style={{fontSize:10,color:"rgba(255,106,0,0.12)",fontFamily:"'Share Tech Mono',monospace",lineHeight:1.2,
-                letterSpacing:1,overflow:"hidden",whiteSpace:"nowrap"}}>
-                {"░▒▓█▓▒░".repeat(8).split("").map((c,i)=><span key={i} style={{opacity:0.2+Math.random()*0.3}}>{c}</span>)}</div>
-            </>}
-          </div>
-        </div>
-        <div style={{display:"flex",gap:14,alignItems:"center",flexShrink:0}}>
+                <div style={{display:"flex",gap:14,alignItems:"center",flexShrink:0}}>
           {[{l:"SCANNED",v:totalScanned,c:NEON.cyan},{l:"DEPLOYED",v:deployed,c:NEON.green},
             {l:"REJECTED",v:rejected,c:NEON.red},{l:"QUAL%",v:qualRate+"%",c:parseInt(qualRate)>40?NEON.green:NEON.orange},
             {l:"LOCKED",v:lockedTokens.length,c:NEON.yellow},
-            {l:"PARKED",v:tokens.filter(t=>t.alive&&t.parked).length,c:NEON.dimText}].map(s=>(
+            {l:"PARKED",v:tokensRef.current.filter(t=>t.alive&&t.parked).length,c:NEON.dimText}].map(s=>(
             <StatChip key={s.l} label={s.l} value={s.v} color={s.c}/>))}
           {/* ── MARKET TEMPERATURE GAUGE ── */}
           {intel && intel.marketTemp && (() => {

@@ -1344,7 +1344,36 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
           const dex = results[t.addr];
           const liveMcap = dex?.mcap || 0;
           const peakMcap = t.peakMcap || t.mcap || 0;
+          const platform = dex?.platform || 'unknown';
 
+          // ── PRE-MIGRATION tokens get special treatment ──
+          if (t._preMig) {
+            // Did it actually migrate? DexScreener will show raydium/meteora/orca etc
+            const hasMigrated = dex && platform !== 'pump.fun' && platform !== 'unknown' && liveMcap > 0;
+            // Increment scan counter
+            const scanCount = (t._bayScans || 0) + 1;
+
+            if (hasMigrated) {
+              // Token graduated — remove from our tracker (it's now a proper DEX coin, not our game)
+              console.log(`[BUNKER] 🎓 ${t.name} MIGRATED to ${platform} — removing from bay ($${(liveMcap/1000).toFixed(1)}K)`);
+              setTokens(prev => prev.map(tok => tok.addr === t.addr ? { ...tok, alive: false, health: 0, deathTime: now, _migratedOut: true } : tok));
+              if (onUpsertTokenRef.current) sbUpsertToken({ ...t, alive: false, mcap: liveMcap, peakMcap });
+            } else if (scanCount >= 2) {
+              // 2 scans and still stuck on bonding curve — assume bugged, nuke it
+              console.log(`[BUNKER] 🪲 ${t.name} stuck bug after ${scanCount} bay scans — purging`);
+              setTokens(prev => prev.map(tok => tok.addr === t.addr ? { ...tok, alive: false, health: 0, deathTime: now } : tok));
+            } else {
+              // 1st scan — still waiting, update scan counter and mcap
+              console.log(`[BUNKER] ⏳ ${t.name} pre-mig scan ${scanCount} — still on bonding curve ($${(liveMcap/1000).toFixed(1)}K)`);
+              setTokens(prev => prev.map(tok => tok.addr === t.addr ? { ...tok, mcap: liveMcap || tok.mcap, _bayScans: scanCount } : tok));
+              // Also update the ref directly so next loop sees updated count
+              const tRef = tokensRef.current.find(r => r.addr === t.addr);
+              if (tRef) tRef._bayScans = scanCount;
+            }
+            continue; // skip normal audit logic
+          }
+
+          // ── NORMAL parked / stale token audit ──
           // Dead criteria: no dex data, mcap < $800, OR fell >92% from peak
           const isDead = !dex || liveMcap < 800 || (peakMcap > 3000 && liveMcap < peakMcap * 0.08);
           // Extra: parked token that's been parked 10+ min and mcap fell >75% from peak
@@ -1365,7 +1394,6 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
             setTokens(prev => prev.map(tok => tok.addr === t.addr ? {
               ...tok, mcap: liveMcap, targetY,
               peakMcap: Math.max(tok.peakMcap || 0, liveMcap),
-              // Un-park if pumping from bunker
               ...(pumpingAgain ? { parked: false, bunkerX: null, bunkerY: null, by: 0.95 } : {}),
             } : tok));
             if (pumpingAgain) console.log(`[BUNKER] 🔄 ${t.name} PUMPING FROM BUNKER — $${(liveMcap/1000).toFixed(1)}K — returning to field`);
