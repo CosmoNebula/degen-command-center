@@ -118,7 +118,7 @@ export async function fetchTokenMeta(mintAddress) {
       supply: r.token_info?.supply || 0,
       decimals: r.token_info?.decimals || 9,
       owner: r.ownership?.owner || "",
-      holderCount: r.token_info?.holder_count || 0, // Helius DAS returns real holder count
+      holderCount: r.token_info?.holder_count || 0, // WARNING: DAS returns 1 for pumpswap tokens — unreliable
     };
   } catch (e) {
     console.error("[Helius] getAsset failed:", e);
@@ -150,8 +150,9 @@ export async function fetchHolderCount(mintAddress) {
         ],
       }),
     });
-    if (!res.ok) return 0;
+    if (!res.ok) { console.warn("[Helius] getProgramAccounts HTTP", res.status); return 0; }
     const data = await res.json();
+    if (data.error) { console.warn("[Helius] getProgramAccounts RPC error:", data.error.message || data.error.code); return 0; }
     if (!Array.isArray(data?.result)) return 0;
     // Count only accounts with non-zero balance (base64 decode 8-byte little-endian u64)
     const nonZero = data.result.filter(acct => {
@@ -170,11 +171,14 @@ export async function fetchHolderCount(mintAddress) {
   }
 }
 
-// Retry with jsonParsed encoding — different Helius path, sometimes succeeds when base64 fails
+// Fallback: public Solana RPC getProgramAccounts (no API key needed, slower but free)
 export async function fetchHolderCountPublic(mintAddress) {
-  if (!HELIUS_KEY) return 0;
   try {
-    const res = await fetch(`https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`, {
+    var rpcUrl = HELIUS_KEY
+      ? `https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`
+      : "https://api.mainnet-beta.solana.com";
+    // Use jsonParsed on a different path — sometimes succeeds when base64 dataSlice fails
+    var res = await fetch(rpcUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -192,13 +196,39 @@ export async function fetchHolderCountPublic(mintAddress) {
         ],
       }),
     });
-    if (!res.ok) return 0;
-    const data = await res.json();
+    if (!res.ok) {
+      // If Helius failed, retry on public RPC
+      if (HELIUS_KEY) {
+        res = await fetch("https://api.mainnet-beta.solana.com", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0", id: 1,
+            method: "getProgramAccounts",
+            params: [
+              "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+              {
+                encoding: "jsonParsed",
+                filters: [
+                  { dataSize: 165 },
+                  { memcmp: { offset: 0, bytes: mintAddress } }
+                ],
+              }
+            ],
+          }),
+        });
+        if (!res.ok) return 0;
+      } else {
+        return 0;
+      }
+    }
+    var data = await res.json();
+    if (data.error) { console.warn("[GPA-Public] RPC error:", data.error.message || data.error.code); return 0; }
     if (!Array.isArray(data?.result)) return 0;
-    const nonZero = data.result.filter(a =>
+    var nonZero = data.result.filter(a =>
       (a.account?.data?.parsed?.info?.tokenAmount?.uiAmount || 0) > 0
     ).length;
-    if (nonZero > 0) console.log(`[HELIUS-GPA2] ${mintAddress.slice(0,8)}: ${nonZero}`);
+    if (nonZero > 0) console.log(`[GPA-Public] ${mintAddress.slice(0,8)}: ${nonZero}`);
     return nonZero;
   } catch(e) { return 0; }
 }

@@ -1114,12 +1114,12 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
             fetchLargestHolders(mint),
             fetchHolderCount(mint),
           ]);
-          enriched[mint].heliusDone = true;
           enriched[mint].lastHelius = now;
-          // Fall back to secondary method if primary returned 0 or the suspicious default of 1
-          const realHolders = count > 1 ? count : meta?.holderCount > 1 ? meta.holderCount : (await fetchHolderCountPublic(mint)) || count || 0;
-          // Only lock out retries if we got real holder data (>1) — keep retrying if still stuck at 0/1
-          enriched[mint].heliusDone = realHolders > 1 || !!meta;
+          enriched[mint].holderRetries = (enriched[mint].holderRetries || 0) + 1;
+          // Fall back to public RPC if primary returned 0 or 1 (DAS holderCount is bugged for pumpswap — skip it)
+          var realHolders = count > 1 ? count : (await fetchHolderCountPublic(mint)) || count || 0;
+          // Only lock out retries if we got real holder data (>1), or exhausted retries
+          enriched[mint].heliusDone = realHolders > 1 || enriched[mint].holderRetries >= 5;
           if (meta || realHolders > 0) {
             setTokens(prev => prev.map(t => {
               if (t.addr !== mint) return t;
@@ -1127,7 +1127,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
                 ...t,
                 mintAuth: meta?.mintAuth || false,
                 frozen: meta?.frozen || false,
-                holders: realHolders > 0 ? realHolders : t.holders,
+                holders: realHolders > 1 ? realHolders : t.holders,
                 topHolderPct: largest?.topHolderPct > 0 ? Math.round(largest.topHolderPct) : t.topHolderPct,
                 heliusEnriched: true,
               };
@@ -1371,11 +1371,11 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
             migratedLastSeen[mt.addr + '_hf'] = now;
             try {
               // Try Helius first, fall back to public RPC if no key or returns 0
-              let holderCount = await fetchHolderCount(mt.addr);
+              var holderCount = await fetchHolderCount(mt.addr);
               if (holderCount <= 1) holderCount = (await fetchHolderCountPublic(mt.addr)) || holderCount;
               const largest = await fetchLargestHolders(mt.addr);
               const topPct = largest?.topHolderPct || 0;
-              if (holderCount > 0) {
+              if (holderCount > 1) {
                 console.log(`[HOLDERS] ✅ ${mt.addr.slice(0,8)}: ${holderCount}`);
                 setTokens(prev => prev.map(t => t.id === mt.id ? {
                   ...t, holders: holderCount, topHolderPct: topPct,
@@ -1384,7 +1384,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
                   ...m, curHolders: holderCount, lastDexUpdate: now,
                 } : m));
               } else {
-                console.warn(`[HOLDERS] ⚠ ${mt.addr.slice(0,8)}: all sources returned 0`);
+                console.warn(`[HOLDERS] ⚠ ${mt.addr.slice(0,8)}: all sources returned ${holderCount} (need >1)`);
               }
             } catch(e) {
               console.warn(`[HOLDERS] ❌ ${mt.addr.slice(0,8)}:`, e.message);
@@ -1619,12 +1619,12 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
             stVol1h: st.vol1h,
             stPriceChange5m: st.priceChange5m,
             stPriceChange1h: st.priceChange1h,
-            holders: st.holders > 0 ? st.holders : tok.holders,
+            holders: st.holders > 1 ? st.holders : tok.holders,
             stLiquidity: st.liquidityUsd,
           } : tok));
 
           // Persist real holder count to Supabase so leaderboard stays accurate
-          if (st.holders > 0 && onUpsertTokenRef.current) {
+          if (st.holders > 1 && onUpsertTokenRef.current) {
             sbUpsertToken({ addr: t.addr, name: t.name, holders: st.holders });
           }
 
