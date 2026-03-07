@@ -6489,6 +6489,7 @@ export default function DegenCommandCenter(){
         @keyframes marqueeScroll{0%{transform:translateX(100%)}15%{transform:translateX(0)}85%{transform:translateX(0)}100%{transform:translateX(-100%)}}
         @keyframes newToken{from{background:rgba(255,7,58,0.06)}to{background:transparent}}
         @keyframes promoted{from{background:rgba(57,255,20,0.1)}to{background:transparent}}
+        @keyframes neuralMarquee{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
         @keyframes marquee{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
         @keyframes kfRTL{0%{transform:translateY(-50%) translateX(80vw);opacity:0}8%{opacity:1}88%{opacity:1}100%{transform:translateY(-50%) translateX(-80vw);opacity:0}}
         @keyframes kfSlide{0%{transform:translateX(110%);opacity:0}5%{opacity:1}95%{opacity:1}100%{transform:translateX(-110%);opacity:0}}
@@ -7362,46 +7363,80 @@ export default function DegenCommandCenter(){
             signalScoresRef={live.signalScoresRef} hotClusterRef={hotClusterRef} flashSnapsRef={live.flashSnapsRef}/>
           <KillFeed events={killFeed} onSelectByName={selectByName}/>
 
-          {/* ── NEURAL SURFACE AUTO-POP — shows top signal without any click ── */}
+          {/* ── NEURAL SURFACE AUTO-POP — fires when score ≥ 88 (elite tier) ── */}
           {(()=>{
-            const recent = (live.autoSurface||[]).filter(e=>Date.now()-e.time<25000).slice(0,1);
-            if(!recent.length)return null;
-            const e = recent[0];
-            const tok = tokens.find(t=>t.addr===e.addr);
+            const sigRef = live.signalScoresRef?.current || {};
+            // Score ≥ 88 = elite popup on battlefield
+            const eliteTokens = tokens
+              .filter(t => t.alive && t.qualified && (sigRef[t.addr]||0) >= 88)
+              .map(t => ({...t, sig: sigRef[t.addr]||0}))
+              .sort((a,b) => b.sig - a.sig);
+            // Also check autoSurface for confirmed events
+            const surfaceRecent = (live.autoSurface||[]).filter(e=>Date.now()-e.time<20000);
+            // Pick the best: elite token > recent surface event
+            const eliteTok = eliteTokens[0] || null;
+            const surfaceEvent = surfaceRecent[0] || null;
+            if (!eliteTok && !surfaceEvent) return null;
+
+            // Prefer eliteTok if it has higher score than surfaceEvent
+            const useElite = eliteTok && (!surfaceEvent || eliteTok.sig >= (surfaceEvent.score||0));
+            const sig = useElite ? eliteTok.sig : (surfaceEvent?.score||0);
+            const name = useElite ? eliteTok.name : surfaceEvent?.name;
+            const mcap = useElite ? eliteTok.mcap : surfaceEvent?.mcap;
+            const tok = useElite ? eliteTok : tokens.find(t=>t.addr===surfaceEvent?.addr);
+            const reasons = !useElite ? (surfaceEvent?.reasons||[]) : [
+              eliteTok.accelerating ? "⚡ ACCELERATING" : null,
+              eliteTok.hasSmartMoney ? "🧠 SMART$" : null,
+              eliteTok.fastRunner ? "🚀 FAST RUNNER" : null,
+              eliteTok.rocketShip ? "🔥 ROCKET" : null,
+              (eliteTok.holders||0) > 100 ? `${eliteTok.holders} HODLERS` : null,
+            ].filter(Boolean);
+
+            const isElite = sig >= 92;
+            const borderCol = isElite ? "rgba(255,215,0,0.8)" : "rgba(255,7,58,0.6)";
+            const glowCol = isElite ? "rgba(255,215,0,0.3)" : "rgba(255,7,58,0.2)";
+            const textCol = isElite ? "#ffd700" : "#ff073a";
+
             return(
-              <div key={e.id} style={{position:"absolute",top:12,left:"50%",transform:"translateX(-50%)",
+              <div key={name} style={{position:"absolute",top:12,left:"50%",transform:"translateX(-50%)",
                 zIndex:55,pointerEvents:"auto",
-                background:"rgba(0,0,0,0.88)",
-                border:`1px solid rgba(255,215,0,0.6)`,
-                boxShadow:"0 0 20px rgba(255,215,0,0.3),0 0 40px rgba(255,215,0,0.1)",
+                background:"rgba(0,0,0,0.92)",
+                border:`1px solid ${borderCol}`,
+                boxShadow:`0 0 20px ${glowCol},0 0 40px ${glowCol}`,
                 borderRadius:8,padding:"8px 14px",minWidth:240,maxWidth:320,
                 animation:"neuralPop 0.3s ease-out"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
                   <div style={{display:"flex",alignItems:"center",gap:6}}>
-                    <span style={{fontSize:8,color:"#ffd700",letterSpacing:2,fontFamily:"'Orbitron'"}}>◈ NEURAL SURFACE</span>
-                    <span style={{fontSize:7,color:"rgba(255,215,0,0.5)"}}>auto-detected</span>
+                    <span style={{fontSize:8,color:textCol,letterSpacing:2,fontFamily:"'Orbitron'",fontWeight:700}}>
+                      {isElite ? "👑 ELITE SIGNAL" : "◈ NEURAL SURFACE"}
+                    </span>
                   </div>
-                  <span style={{fontSize:14,fontWeight:900,color:"#ffd700",fontFamily:"'Orbitron'",
-                    textShadow:"0 0 10px #ffd700"}}>{e.score}</span>
+                  <span style={{fontSize:16,fontWeight:900,color:textCol,fontFamily:"'Orbitron'",
+                    textShadow:`0 0 12px ${textCol}`}}>◈{sig}</span>
                 </div>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-                  <span style={{fontSize:14,fontWeight:900,color:NEON.text,fontFamily:"'Orbitron'",cursor:"pointer"}}
-                    onClick={()=>tok&&selectToken(tok)}>{e.name}</span>
-                  <span style={{fontSize:11,color:NEON.dimText}}>${(e.mcap/1000).toFixed(1)}K mcap</span>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
+                  <span style={{fontSize:15,fontWeight:900,color:NEON.text,fontFamily:"'Orbitron'",cursor:"pointer",letterSpacing:1}}
+                    onClick={()=>tok&&selectToken(tok)}>{name}</span>
+                  <span style={{fontSize:11,color:NEON.dimText}}>${((mcap||0)/1000).toFixed(1)}K</span>
                 </div>
-                <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
-                  {e.reasons.slice(0,4).map((r,i)=>(
-                    <span key={i} style={{fontSize:8,background:"rgba(255,215,0,0.08)",
-                      border:"1px solid rgba(255,215,0,0.2)",borderRadius:3,
-                      padding:"1px 5px",color:"rgba(255,215,0,0.8)"}}>{r}</span>
-                  ))}
-                </div>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:6}}>
-                  <button onClick={()=>tok&&selectToken(tok)} style={{fontSize:8,color:"#ffd700",
-                    background:"rgba(255,215,0,0.12)",border:"1px solid rgba(255,215,0,0.3)",
-                    borderRadius:4,padding:"2px 8px",cursor:"pointer",fontFamily:"'Orbitron'"}}>
+                {reasons.length > 0 && (
+                  <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:6}}>
+                    {reasons.slice(0,4).map((r,i)=>(
+                      <span key={i} style={{fontSize:8,background:`${textCol}14`,
+                        border:`1px solid ${textCol}30`,borderRadius:3,
+                        padding:"1px 5px",color:`${textCol}cc`}}>{r}</span>
+                    ))}
+                  </div>
+                )}
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <button onClick={()=>tok&&selectToken(tok)} style={{fontSize:8,color:textCol,
+                    background:`${textCol}18`,border:`1px solid ${textCol}40`,
+                    borderRadius:4,padding:"2px 10px",cursor:"pointer",fontFamily:"'Orbitron'",fontWeight:700}}>
                     → FOCUS</button>
-                  <span style={{fontSize:7,color:NEON.dimText}}>{Math.floor((Date.now()-e.time)/1000)}s ago</span>
+                  {eliteTokens.length > 1 && (
+                    <span style={{fontSize:7,color:"rgba(255,255,255,0.3)",fontFamily:"'Orbitron'"}}
+                      >+{eliteTokens.length-1} more elite</span>
+                  )}
                 </div>
               </div>
             );
@@ -7664,57 +7699,59 @@ export default function DegenCommandCenter(){
                 )}
               </div>
 
-              {/* ── DEGEN DANGER — tabbed flash boards ── */}
+              {/* ── NEURAL RADAR — scrolling marquee of coins with signal score > 75 ── */}
               {(()=>{
-                const dangerFrames = [
-                  {key:"30s", label:"30s", col:"#ff073a", board: live.flashBoard30s||[]},
-                  {key:"1m",  label:"1m",  col:"#ff6600", board: live.flashBoard1m||[]},
-                  {key:"5m",  label:"5m",  col:"#ffe600", board: live.flashBoard5m||[]},
-                ];
-                const activeDanger = dangerFrames.find(f=>f.key===dangerTab) || dangerFrames[0];
+                const sigRef = live.signalScoresRef?.current || {};
+                const hotCoins = tokens
+                  .filter(t => t.alive && t.qualified && (sigRef[t.addr]||0) >= 75)
+                  .map(t => ({...t, sig: sigRef[t.addr]||0}))
+                  .sort((a,b) => b.sig - a.sig);
+                const marqueeItems = hotCoins.length > 0 ? hotCoins : [];
                 return (
                 <div style={{
-                  flex:1,
-                  background:"rgba(10,3,18,0.96)",
-                  border:"1px solid rgba(255,7,58,0.22)",
-                  borderRadius:6, overflow:"hidden",
-                  display:"flex", flexDirection:"column",
+                  flex:1, background:"rgba(6,2,16,0.97)",
+                  border:"1px solid rgba(0,255,255,0.18)",
+                  borderRadius:6, overflow:"hidden", display:"flex", flexDirection:"column",
                 }}>
-                  {/* Header + tabs */}
-                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"4px 8px 2px",borderBottom:"1px solid rgba(255,7,58,0.12)"}}>
-                    <div style={{fontSize:7,color:"#ff073a",letterSpacing:2,fontFamily:"'Orbitron'",fontWeight:700}}>⚡ DEGEN DANGER</div>
-                    <div style={{display:"flex",gap:2}}>
-                      {dangerFrames.map(f=>(
-                        <div key={f.key} onClick={()=>setDangerTab(f.key)}
-                          style={{fontSize:7,fontFamily:"'Orbitron'",fontWeight:700,padding:"1px 6px",borderRadius:3,cursor:"pointer",
-                            color: dangerTab===f.key ? "#111" : f.col,
-                            background: dangerTab===f.key ? f.col : "transparent",
-                            border:`1px solid ${f.col}${dangerTab===f.key?"ff":"40"}`,
-                            transition:"all 0.15s",
-                          }}>{f.label}</div>
-                      ))}
-                    </div>
+                  {/* Header */}
+                  <div style={{display:"flex",alignItems:"center",gap:6,padding:"4px 10px 2px",
+                    borderBottom:"1px solid rgba(0,255,255,0.1)"}}>
+                    <span style={{fontSize:7,color:NEON.cyan,letterSpacing:2,fontFamily:"'Orbitron'",fontWeight:700,flexShrink:0}}>◈ NEURAL RADAR</span>
+                    {hotCoins.length > 0
+                      ? <span style={{fontSize:7,color:"rgba(0,255,255,0.4)",fontFamily:"'Orbitron'"}}>{hotCoins.length} HOT</span>
+                      : <span style={{fontSize:7,color:"rgba(0,255,255,0.2)",fontFamily:"'Orbitron'"}}>SCANNING...</span>}
                   </div>
-                  {/* Active board entries */}
-                  <div style={{flex:1,display:"flex",alignItems:"center",gap:6,padding:"3px 8px",overflow:"hidden"}}>
-                    {activeDanger.board.length === 0 ? (
-                      <span style={{fontSize:9,color:"rgba(255,255,255,0.15)",fontFamily:"'Orbitron'"}}>— NO DATA —</span>
-                    ) : activeDanger.board.slice(0,5).map((entry,i)=>(
-                      <div key={entry.addr||i} onClick={()=>{const tk=tokens.find(t=>t.addr===entry.addr);if(tk)selectToken(tk);}}
-                        style={{display:"flex",alignItems:"center",gap:4,cursor:"pointer",
-                          padding:"2px 7px",borderRadius:4,flex:"0 0 auto",
-                          background:`${activeDanger.col}08`,
-                          border:`1px solid ${activeDanger.col}${i===0?"60":"22"}`,
-                          opacity: 0.5+0.5*(1-i*0.1),
-                        }}>
-                        {i===0 && <span style={{fontSize:9,flexShrink:0}}>🔥</span>}
-                        <span style={{fontSize:10,fontWeight:900,color:"rgba(224,224,255,0.92)",maxWidth:70,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{entry.name}</span>
-                        <span style={{fontSize:11,fontWeight:900,color:entry.gain>0?NEON.green:"#ff073a",fontFamily:"'Orbitron'",flexShrink:0}}>
-                          {entry.gain>0?"+":""}{entry.gain?.toFixed(1)}%
-                        </span>
-                        {entry.hasSmartMoney && <span style={{fontSize:9,flexShrink:0}}>🧠</span>}
+                  {/* Scrolling ticker */}
+                  <div style={{flex:1,overflow:"hidden",display:"flex",alignItems:"center",position:"relative"}}>
+                    {marqueeItems.length === 0 ? (
+                      <span style={{fontSize:9,color:"rgba(0,255,255,0.15)",fontFamily:"'Orbitron'",paddingLeft:10}}>
+                        — NO SIGNALS ABOVE 75 —
+                      </span>
+                    ) : (
+                      <div style={{
+                        display:"flex", gap:0, alignItems:"center",
+                        animation:"neuralMarquee 20s linear infinite",
+                        whiteSpace:"nowrap",
+                      }}>
+                        {[...marqueeItems, ...marqueeItems].map((t,i) => {
+                          const isElite = t.sig >= 90;
+                          const col = t.sig >= 90 ? "#ffd700" : t.sig >= 85 ? "#ff073a" : NEON.cyan;
+                          return (
+                            <div key={`${t.id}-${i}`}
+                              onClick={()=>selectToken(t)}
+                              style={{display:"inline-flex",alignItems:"center",gap:5,cursor:"pointer",
+                                padding:"2px 10px",borderRight:"1px solid rgba(0,255,255,0.08)",
+                                flexShrink:0}}>
+                              {isElite && <span style={{fontSize:9}}>👑</span>}
+                              <span style={{fontSize:10,fontWeight:900,color:"rgba(220,220,255,0.95)",fontFamily:"'Orbitron'"}}>{t.name}</span>
+                              <span style={{fontSize:9,fontWeight:900,color:col,fontFamily:"'Orbitron'",
+                                textShadow:isElite?`0 0 8px ${col}`:"none"}}>◈{t.sig}</span>
+                              <span style={{fontSize:8,color:"rgba(255,255,255,0.3)"}}>${(t.mcap/1000).toFixed(1)}K</span>
+                            </div>
+                          );
+                        })}
                       </div>
-                    ))}
+                    )}
                   </div>
                 </div>
                 );
