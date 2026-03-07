@@ -189,6 +189,51 @@ export async function fetchHolderCount(mintAddress) {
   }
 }
 
+// Holder count via public Solana RPC — no API key needed, fallback for when Helius key is missing
+export async function fetchHolderCountPublic(mintAddress) {
+  try {
+    // Try Helius public endpoint first (no key, but rate limited)
+    const endpoints = [
+      "https://mainnet.helius-rpc.com",  // no key = public tier, lower limit
+      "https://api.mainnet-beta.solana.com",
+    ];
+    for (const rpc of endpoints) {
+      try {
+        const res = await fetch(rpc, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0", id: 1,
+            method: "getTokenAccountsByMint" in {} ? "getTokenAccountsByMint" : "getTokenAccounts",
+            // Use getProgramAccounts with mint filter — works on all public RPCs
+            method: "getProgramAccounts",
+            params: [
+              "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+              {
+                encoding: "base64",
+                filters: [
+                  { dataSize: 165 },
+                  { memcmp: { offset: 0, bytes: mintAddress } }
+                ],
+                dataSlice: { offset: 0, length: 0 },
+              }
+            ],
+          }),
+        });
+        if (!res.ok) continue;
+        const data = await res.json();
+        if (data.result && Array.isArray(data.result)) {
+          const cnt = data.result.length;
+          if (cnt > 0) { console.log(`[PublicRPC] ${mintAddress.slice(0,8)} holders: ${cnt}`); return cnt; }
+        }
+      } catch(_) { continue; }
+    }
+    return 0;
+  } catch(e) {
+    return 0;
+  }
+}
+
 export async function fetchLargestHolders(mintAddress) {
   if (!HELIUS_KEY) return { holders: [], topHolderPct: 0, holderCount: 0 };
   try {

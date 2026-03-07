@@ -4,7 +4,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { useState, useEffect, useRef } from "react";
-import { connectPumpFun, fetchTokenByAddress, fetchTokensBatch, fetchTokenMeta, fetchHolderCount, fetchLargestHolders, fetchLatestProfiles, fetchBoostedTokens, connectHeliusWS, fetchRugCheck, fetchGeckoTrending, fetchGeckoPoolByToken, fetchPumpCurveProgress, fetchDefinedTrending, fetchJupiterSlippage, fetchJupiterVerified, fetchPumpFunDirect, fetchRaydiumPool, fetchUniqueSigners } from "./api";
+import { connectPumpFun, fetchTokenByAddress, fetchTokensBatch, fetchTokenMeta, fetchHolderCount, fetchHolderCountPublic, fetchLargestHolders, fetchLatestProfiles, fetchBoostedTokens, connectHeliusWS, fetchRugCheck, fetchGeckoTrending, fetchGeckoPoolByToken, fetchPumpCurveProgress, fetchDefinedTrending, fetchJupiterSlippage, fetchJupiterVerified, fetchPumpFunDirect, fetchRaydiumPool, fetchUniqueSigners } from "./api";
 
 // ─── DIRECT SUPABASE WRITES (no callback chain needed) ───
 var SB_URL = "https://yrmjphhfgduysoftnuxv.supabase.co";
@@ -1110,7 +1110,8 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
           ]);
           enriched[mint].heliusDone = true;
           enriched[mint].lastHelius = now;
-          const realHolders = count || meta?.holderCount || 0;
+          // Fall back to public RPC if Helius key missing or returned 0
+          const realHolders = count || meta?.holderCount || (await fetchHolderCountPublic(mint)) || 0;
           if (meta || realHolders > 0) {
             setTokens(prev => prev.map(t => {
               if (t.addr !== mint) return t;
@@ -1352,24 +1353,22 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
         }
       });
 
-      // Helius holder refresh — stagger across cycles so all tokens get covered
-      // Each cycle picks the next token in round-robin order
+      // Holder refresh — round-robin ALL migrated tokens, 1 per 2s cycle, 30s cooldown per token
       migratedHolderCycle++;
       if (toPoll.length > 0) {
-        const holderIdx = migratedHolderCycle % toPoll.length; // round-robin one token per cycle
-        // Only actually fetch every 5 cycles (10s per token) to avoid rate limits
-        if (migratedHolderCycle % 5 === 0) {
-          const mt = toPoll[holderIdx % toPoll.length];
-          if (mt) {
+        const mt = toPoll[migratedHolderCycle % toPoll.length];
+        if (mt) {
+          const lastHolderFetch = migratedLastSeen[mt.addr + '_hf'] || 0;
+          if (now - lastHolderFetch >= 30000) { // max once per 30s per token
+            migratedLastSeen[mt.addr + '_hf'] = now;
             try {
-              const [count, largest] = await Promise.all([
-                fetchHolderCount(mt.addr),
-                fetchLargestHolders(mt.addr),
-              ]);
-              const holderCount = count || 0;
+              // Try Helius first, fall back to public RPC if no key or returns 0
+              let holderCount = await fetchHolderCount(mt.addr);
+              if (!holderCount) holderCount = await fetchHolderCountPublic(mt.addr);
+              const largest = await fetchLargestHolders(mt.addr);
               const topPct = largest?.topHolderPct || 0;
               if (holderCount > 0) {
-                console.log(`[MIGRATED-HOLDERS] ✅ ${mt.addr.slice(0,8)}: ${holderCount} holders`);
+                console.log(`[HOLDERS] ✅ ${mt.addr.slice(0,8)}: ${holderCount}`);
                 setTokens(prev => prev.map(t => t.id === mt.id ? {
                   ...t, holders: holderCount, topHolderPct: topPct,
                 } : t));
@@ -1377,10 +1376,10 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
                   ...m, curHolders: holderCount, lastDexUpdate: now,
                 } : m));
               } else {
-                console.warn(`[MIGRATED-HOLDERS] ⚠ ${mt.addr.slice(0,8)}: Helius returned 0 — keeping existing`);
+                console.warn(`[HOLDERS] ⚠ ${mt.addr.slice(0,8)}: all sources returned 0`);
               }
             } catch(e) {
-              console.warn(`[MIGRATED-HOLDERS] ❌ ${mt.addr.slice(0,8)}:`, e.message);
+              console.warn(`[HOLDERS] ❌ ${mt.addr.slice(0,8)}:`, e.message);
             }
           }
         }
