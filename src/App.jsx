@@ -4840,12 +4840,25 @@ export default function DegenCommandCenter(){
 
         // ── WALLET PURGE — aggressive multi-rule cleanup ─────────────────────
         // Fetch all wallets once, apply all rules in one pass
-        const allWalletsRes = await fetch(
-          `${SB_URL}/rest/v1/wallet_scores?select=addr,wins,losses,holds,total_bought,total_pnl,trades,updated_at`,
-          { headers: hdrs }
-        );
-        if (allWalletsRes.ok) {
-          const wallets = await allWalletsRes.json();
+        // Fetch ALL wallets with pagination — Supabase default limit is 1000
+        const allWallets = [];
+        let walletPage = 0;
+        const PAGE = 1000;
+        while (true) {
+          const pageRes = await fetch(
+            `${SB_URL}/rest/v1/wallet_scores?select=addr,wins,losses,holds,total_bought,total_pnl,trades,updated_at&limit=${PAGE}&offset=${walletPage * PAGE}`,
+            { headers: hdrs }
+          );
+          if (!pageRes.ok) break;
+          const page = await pageRes.json();
+          if (!Array.isArray(page) || page.length === 0) break;
+          allWallets.push(...page);
+          if (page.length < PAGE) break; // last page
+          walletPage++;
+        }
+        console.log(`[MAINT] 👛 Scanning ${allWallets.length} wallets...`);
+        const wallets = allWallets;
+        if (wallets.length > 0) {
           const now2h  = now - 7200000;   // 2 hours ago
           const now24h = now - 86400000;  // 24 hours ago
           const toPurge = new Set();
