@@ -4787,79 +4787,129 @@ export default function DegenCommandCenter(){
     const runPrune = async () => {
       try {
         const now = Date.now();
+        const m7  = now - 420000;     // 7 minutes ago
         const h24 = now - 86400000;   // 24h ago
         const d7  = now - 604800000;  // 7 days ago
         let pruned = 0;
 
-        // 1. Delete dead tokens older than 24h with low peak_mcap (< $10K — not worth keeping)
-        //    They'll re-enter naturally if they get volume again
-        const deadRes = await fetch(
-          `${SB_URL}/rest/v1/token_history?select=addr,peak_mcap,death_time&death_time=not.is.null&peak_mcap=lt.10000`,
+        // ── TOKEN PURGE ───────────────────────────────────────────────────────
+        // Fetch all tokens (alive and dead) for multi-rule pass
+        const allTokensRes = await fetch(
+          `${SB_URL}/rest/v1/token_history?select=addr,peak_mcap,death_time,first_seen`,
           { headers: hdrs }
         );
-        if (deadRes.ok) {
-          const dead = await deadRes.json();
-          const toDelete = dead.filter(r => r.death_time && r.death_time < h24);
-          for (const r of toDelete) {
-            del("token_history", `addr=eq.${encodeURIComponent(r.addr)}`);
-            pruned++;
+        if (allTokensRes.ok) {
+          const tokens = await allTokensRes.json();
+          let tokenPruned = 0;
+
+          for (const t of tokens) {
+            const peak      = t.peak_mcap   || 0;
+            const firstSeen = t.first_seen  || 0;
+            const deathTime = t.death_time  || 0;
+
+            // Rule 1: Never broke $4K and has been around 7+ minutes — never got traction
+            if (peak <= 4000 && firstSeen && firstSeen < m7) {
+              del("token_history", `addr=eq.${encodeURIComponent(t.addr)}`);
+              tokenPruned++; pruned++; continue;
+            }
+
+            // Rule 2: Dead, peak under $10K, older than 24h
+            if (deathTime && deathTime < h24 && peak < 10000) {
+              del("token_history", `addr=eq.${encodeURIComponent(t.addr)}`);
+              tokenPruned++; pruned++; continue;
+            }
+
+            // Rule 3: Dead, any peak, older than 7 days
+            if (deathTime && deathTime < d7) {
+              del("token_history", `addr=eq.${encodeURIComponent(t.addr)}`);
+              tokenPruned++; pruned++; continue;
+            }
           }
-          if (toDelete.length > 0)
-            console.log(`[MAINT] 🗑 Pruned ${toDelete.length} low-value dead tokens`);
+          if (tokenPruned > 0)
+            console.log(`[MAINT] 🗑 Pruned ${tokenPruned} tokens (never got traction / dead too long)`);
         }
 
-        // 2. Delete wallet rows with less than 0.25 SOL total bought — pure noise
-        const emptyWalletsRes = await fetch(
-          `${SB_URL}/rest/v1/wallet_scores?select=addr,total_bought,wins,losses`,
+        // ── WALLET PURGE — aggressive multi-rule cleanup ─────────────────────
+        // Fetch all wallets once, apply all rules in one pass
+        const allWalletsRes = await fetch(
+          `${SB_URL}/rest/v1/wallet_scores?select=addr,wins,losses,holds,total_bought,total_pnl,trades,updated_at`,
           { headers: hdrs }
         );
-        if (emptyWalletsRes.ok) {
-          const wallets = await emptyWalletsRes.json();
-          const toDelete = wallets.filter(w => (w.total_bought || 0) < 0.25);
-          for (const w of toDelete) {
-            del("wallet_scores", `addr=eq.${encodeURIComponent(w.addr)}`);
+        if (allWalletsRes.ok) {
+          const wallets = await allWalletsRes.json();
+          const now2h  = now - 7200000;   // 2 hours ago
+          const now24h = now - 86400000;  // 24 hours ago
+          const toPurge = new Set();
+          const reasons = {};
+
+          for (const w of wallets) {
+            const addr = w.addr;
+            const wins    = w.wins    || 0;
+            const losses  = w.losses  || 0;
+            const holds   = w.holds   || 0;
+            const bought  = w.total_bought || 0;
+            const pnl     = w.total_pnl   || 0;
+            const trades  = Array.isArray(w.trades) ? w.trades : [];
+            const total   = wins + losses;
+            const winRate = total > 0 ? wins / total : 0;
+            const updatedAt = w.updated_at ? new Date(w.updated_at).getTime() : 0;
+
+            // Rule 1: Under 0.25 SOL ever spent — dust wallets
+            if (bought < 0.25) {
+              toPurge.add(addr); reasons[addr] = "<0.25 SOL"; continue;
+            }
+
+            // Rule 2: Under 2 wins and in DB more than 2 hours
+            if (wins < 2 && updatedAt < now2h) {
+              toPurge.add(addr); reasons[addr] = "<2 wins 2h+"; continue;
+            }
+
+            // Rule 3: 7+ trades and win rate under 60% — chronic underperformer
+            if (total >= 7 && winRate < 0.60) {
+              toPurge.add(addr); reasons[addr] = `${Math.round(winRate*100)}% WR after ${total} trades`; continue;
+            }
+
+            // Rule 4: Bought once, lost, never came back — one-and-done loser
+            if (total === 1 && losses === 1 && holds === 0) {
+              toPurge.add(addr); reasons[addr] = "1 trade, 1 loss"; continue;
+            }
+
+            // Rule 5: 3+ losses, 0 wins — pure rug chaser
+            if (losses >= 3 && wins === 0) {
+              toPurge.add(addr); reasons[addr] = `0 wins, ${losses} losses`; continue;
+            }
+
+            // Rule 6: Deeply negative PNL (< -3 SOL) with under 40% win rate — chronic loser
+            if (pnl < -3 && winRate < 0.40) {
+              toPurge.add(addr); reasons[addr] = `${pnl.toFixed(1)} SOL PNL, ${Math.round(winRate*100)}% WR`; continue;
+            }
+
+            // Rule 7: No activity in 24h, 0 wins — stale ghost
+            if (wins === 0 && updatedAt < now24h) {
+              toPurge.add(addr); reasons[addr] = "0 wins, inactive 24h+"; continue;
+            }
+          }
+
+          let walletPruned = 0;
+          for (const addr of toPurge) {
+            del("wallet_scores", `addr=eq.${encodeURIComponent(addr)}`);
+            walletPruned++;
             pruned++;
           }
-          if (toDelete.length > 0)
-            console.log(`[MAINT] 🗑 Pruned ${toDelete.length} low-volume wallets (<0.25 SOL)`);
-        }
+          if (walletPruned > 0)
+            console.log(`[MAINT] 🗑 Purged ${walletPruned} wallets — breakdown by rule logged above`);
 
-        // 2b. Delete wallets with < 2 wins that entered DB more than 2 hours ago
-        //     Retroactive — catches existing rows too. They'll re-enter if they ever go on a run.
-        const h2 = new Date(now - 7200000).toISOString(); // 2 hours ago
-        const weakWalletsRes = await fetch(
-          `${SB_URL}/rest/v1/wallet_scores?select=addr,wins,first_seen&wins=lt.2&first_seen=lt.${h2}`,
-          { headers: hdrs }
-        );
-        if (weakWalletsRes.ok) {
-          const weak = await weakWalletsRes.json();
-          for (const w of weak) {
-            del("wallet_scores", `addr=eq.${encodeURIComponent(w.addr)}`);
-            pruned++;
+          // Log rule breakdown
+          const ruleCounts = {};
+          for (const r of Object.values(reasons)) {
+            const key = r.replace(/\d+(\.\d+)?/g, "N");
+            ruleCounts[key] = (ruleCounts[key] || 0) + 1;
           }
-          if (weak.length > 0)
-            console.log(`[MAINT] 🗑 Pruned ${weak.length} underperforming wallets (<2 wins, 2h+ old)`);
+          if (walletPruned > 0) console.log("[MAINT] 📊 Purge breakdown:", ruleCounts);
         }
 
-        // 3. Delete smart_alerts older than 7 days
-        const alertCutoff = new Date(d7).toISOString();
-        del("smart_alerts", `created_at=lt.${alertCutoff}`);
-
-        // 4. Delete dead high-value tokens older than 7 days (mcap >= $10K but dead > 7d)
-        const oldHighRes = await fetch(
-          `${SB_URL}/rest/v1/token_history?select=addr,death_time&death_time=not.is.null&peak_mcap=gte.10000`,
-          { headers: hdrs }
-        );
-        if (oldHighRes.ok) {
-          const old = await oldHighRes.json();
-          const toDelete = old.filter(r => r.death_time && r.death_time < d7);
-          for (const r of toDelete) {
-            del("token_history", `addr=eq.${encodeURIComponent(r.addr)}`);
-            pruned++;
-          }
-          if (toDelete.length > 0)
-            console.log(`[MAINT] 🗑 Pruned ${toDelete.length} old high-value dead tokens (7d+)`);
-        }
+        // Delete smart_alerts older than 7 days
+        del("smart_alerts", `created_at=lt.${new Date(d7).toISOString()}`);
 
         if (pruned > 0) console.log(`[MAINT] 🧹 Prune pass complete — ${pruned} rows removed`);
       } catch(e) { console.warn("[MAINT] Prune failed:", e.message); }
