@@ -699,229 +699,471 @@ Rules:
     ? Math.min(100, (spentDollars / BUDGET_USD) * 100)           // fills up in mock
     : Math.max(0, ((BUDGET_USD - spentDollars) / BUDGET_USD) * 100); // depletes in live
 
+  // ─── TELEMETRY DERIVED VALUES ──────────────
+  const tokens       = tokensRef?.current || [];
+  const locked       = lockedTokens || [];
+  const sigScores    = signalScoresRef?.current || {};
+  const parked       = tokens.filter(t => t.isParked).length;
+  const field        = tokens.filter(t => !t.isParked && !locked.find(l => l.mint === t.mint)).length;
+  const fromDB       = tokens.filter(t => t.fromDB).length;
+  const sessionMin   = Math.round((Date.now() - sessionStartRef.current) / 60000);
+  const topCyclers   = Object.entries(parkCycleRef.current).sort(([,a],[,b]) => b.count - a.count).slice(0, 8);
+  const recentLocks  = Object.values(lockHistoryRef.current).sort((a,b) => (b.lockedAt||0)-(a.lockedAt||0)).slice(0, 10);
+  const spentDollars = spendCents / 100;
+  const budgetColor  = IS_MOCK_MODE
+    ? (spentDollars < 5 ? "#39ff14" : spentDollars < 20 ? "#ffd700" : "#ff073a")
+    : (spendCents < BUDGET_USD * 50 ? "#39ff14" : spendCents < BUDGET_USD * 80 ? "#ffd700" : "#ff073a");
+  const budgetPct    = IS_MOCK_MODE
+    ? Math.min(100, (spentDollars / BUDGET_USD) * 100)
+    : Math.max(0, ((BUDGET_USD - spentDollars) / BUDGET_USD) * 100);
+
+  // signal score distribution
+  const sigBuckets = [0,0,0,0,0]; // <25, 25-50, 50-70, 70-88, 88+
+  tokens.forEach(t => {
+    const s = sigScores[t.mint] || 0;
+    if (s >= 88) sigBuckets[4]++;
+    else if (s >= 70) sigBuckets[3]++;
+    else if (s >= 50) sigBuckets[2]++;
+    else if (s >= 25) sigBuckets[1]++;
+    else sigBuckets[0]++;
+  });
+  const sigMax = Math.max(1, ...sigBuckets);
+  const sigAvg  = tokens.length ? Math.round(tokens.reduce((a,t) => a + (sigScores[t.mint]||0), 0) / tokens.length) : 0;
+
+  // lock outcomes
+  const lockVals  = Object.values(lockHistoryRef.current);
+  const lockWins  = lockVals.filter(h => h.status==="WIN").length;
+  const lockCrash = lockVals.filter(h => h.status==="CRASHED").length;
+  const lockFlat  = lockVals.filter(h => h.status==="FLAT").length;
+  const lockActive= lockVals.filter(h => h.status==="ACTIVE").length;
+
+  // market temp
+  const bull  = Math.round(marketTemp?.bullPressure || 0);
+  const bear  = Math.round(marketTemp?.bearPressure || 0);
+  const tempScore = marketTemp?.score ?? 50;
+  const tempLabel = marketTemp?.label || "—";
+  const tempHistory = tempHistoryRef.current;
+  const sigHistory  = sigHistoryRef.current;
+
   return (
     <div style={{ height:"100%", display:"flex", flexDirection:"column", background:"#040412", color:"#8888aa", fontFamily:"'Share Tech Mono',monospace", fontSize:"11px", position:"relative" }}>
 
       {/* ── HEADER ── */}
-      <div style={{ display:"flex", alignItems:"center", gap:"10px", padding:"7px 12px", borderBottom:"1px solid rgba(0,255,255,0.08)", background:"rgba(0,255,255,0.02)", flexShrink:0, flexWrap:"wrap" }}>
+      <div style={{ display:"flex", alignItems:"center", gap:"8px", padding:"6px 12px", borderBottom:"1px solid rgba(0,255,255,0.08)", background:"rgba(0,255,255,0.015)", flexShrink:0, flexWrap:"wrap" }}>
+        <div style={{ fontFamily:"Orbitron,sans-serif", fontSize:"10px", color:"#00ffff", letterSpacing:"3px", fontWeight:900, whiteSpace:"nowrap" }}>◈ INTELLIGENCE OFFICE</div>
+        <div style={{ fontSize:"9px", color:"#1e1e3a", letterSpacing:"1px", whiteSpace:"nowrap" }}>{sessionMin}m · {sessionStats.snapshots} snaps · {sessionStats.flags} flags</div>
 
-        {/* title */}
-        <div style={{ fontFamily:"Orbitron,sans-serif", fontSize:"10px", color:"#00ffff", letterSpacing:"3px", fontWeight:900, whiteSpace:"nowrap" }}>
-          ◈ INTELLIGENCE OFFICE
-        </div>
-
-        {/* session stats */}
-        <div style={{ fontSize:"9px", color:"#222240", letterSpacing:"1px", whiteSpace:"nowrap" }}>
-          {sessionMin}m · {sessionStats.snapshots} snaps · {sessionStats.flags} flags
-        </div>
-
-        {/* ── BUDGET BAR ── */}
-        <div style={{ display:"flex", alignItems:"center", gap:"8px", flex:"1 1 200px", minWidth:0 }}>
-          <div style={{ flex:1, height:"6px", background:"rgba(255,255,255,0.04)", borderRadius:"3px", overflow:"hidden", minWidth:60, position:"relative" }}>
-            <div style={{
-              position:"absolute", left:0, top:0, bottom:0,
-              width:`${budgetBarPct}%`,
-              background:`linear-gradient(90deg,${budgetBarColor}88,${budgetBarColor})`,
-              borderRadius:"3px",
-              transition:"width 1s ease, background 1s ease",
-              boxShadow:budgetBarPct > 2 ? `0 0 6px ${budgetBarColor}60` : "none",
-            }} />
-            {[25,50,75].map(t => (
-              <div key={t} style={{ position:"absolute", left:`${t}%`, top:0, bottom:0, width:1, background:"rgba(0,0,0,0.4)" }} />
-            ))}
+        <div style={{ display:"flex", alignItems:"center", gap:"6px", flex:"1 1 140px", minWidth:0 }}>
+          <div style={{ flex:1, height:"5px", background:"rgba(255,255,255,0.03)", borderRadius:"3px", overflow:"hidden", minWidth:50, position:"relative" }}>
+            <div style={{ position:"absolute", left:0, top:0, bottom:0, width:`${budgetPct}%`, background:`linear-gradient(90deg,${budgetColor}88,${budgetColor})`, borderRadius:"3px", transition:"width 1s ease", boxShadow:budgetPct > 2 ? `0 0 5px ${budgetColor}50` : "none" }} />
           </div>
-          <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", flexShrink:0, lineHeight:1.2 }}>
-            {IS_MOCK_MODE ? <>
-              <span style={{ fontFamily:"Orbitron,sans-serif", fontSize:"9px", fontWeight:700, color:budgetBarColor, whiteSpace:"nowrap" }}>
-                ~${spentDollars.toFixed(2)} est.
-              </span>
-              <span style={{ fontSize:"8px", color:"#333355", whiteSpace:"nowrap" }}>would cost</span>
-            </> : <>
-              <span style={{ fontFamily:"Orbitron,sans-serif", fontSize:"9px", fontWeight:700, color:budgetBarColor, whiteSpace:"nowrap" }}>
-                ${Math.max(0, BUDGET_USD - spentDollars).toFixed(2)} left
-              </span>
-              <span style={{ fontSize:"8px", color:"#333355", whiteSpace:"nowrap" }}>
-                ~{Math.round(Math.max(0, BUDGET_USD - spentDollars) / 0.04)}h remain
-              </span>
-            </>}
-          </div>
-          <button
-            onClick={() => { spendRef.current = 0; claudeSaveSpend(0, IS_MOCK_MODE); setSpendCents(0); if(offlineStatus==="out_of_credits") setOfflineStatus(null); }}
-            title={IS_MOCK_MODE ? "Reset mock cost estimate" : "Reset budget counter after topping up"}
-            style={{ background:"none", border:"1px solid #1a1a33", color:"#222240", fontSize:"8px", padding:"2px 5px", borderRadius:"2px", cursor:"pointer", fontFamily:"Orbitron,sans-serif", flexShrink:0 }}>↺</button>
+          <span style={{ fontFamily:"Orbitron,sans-serif", fontSize:"8px", fontWeight:700, color:budgetColor, whiteSpace:"nowrap" }}>
+            {IS_MOCK_MODE ? `~$${spentDollars.toFixed(2)} est.` : `$${Math.max(0,BUDGET_USD-spentDollars).toFixed(2)} left`}
+          </span>
+          <button onClick={() => { spendRef.current=0; claudeSaveSpend(0,IS_MOCK_MODE); setSpendCents(0); if(offlineStatus==="out_of_credits") setOfflineStatus(null); }}
+            style={{ background:"none", border:"1px solid #1a1a33", color:"#222240", fontSize:"8px", padding:"2px 4px", borderRadius:"2px", cursor:"pointer", fontFamily:"Orbitron,sans-serif", flexShrink:0 }}>↺</button>
         </div>
 
-        {/* ── CONTROLS ── */}
-        <div style={{ display:"flex", gap:"6px", alignItems:"center", flexWrap:"wrap" }}>
+        <div style={{ display:"flex", gap:"5px", alignItems:"center", flexWrap:"wrap" }}>
           <select value={snapshotSecs} onChange={e => setSnapshotSecs(Number(e.target.value))}
-            style={{ background:"#0a0a1a", border:"1px solid rgba(0,255,255,0.15)", color:"#00ffff", fontSize:"9px", padding:"2px 5px", borderRadius:"3px", cursor:"pointer", fontFamily:"'Share Tech Mono',monospace" }}>
+            style={{ background:"#0a0a1a", border:"1px solid rgba(0,255,255,0.12)", color:"#00ffff", fontSize:"9px", padding:"2px 4px", borderRadius:"3px", cursor:"pointer", fontFamily:"'Share Tech Mono',monospace" }}>
             <option value={15}>15s</option><option value={30}>30s</option><option value={60}>60s</option><option value={120}>2m</option>
           </select>
-          <button onClick={() => setAutoWatch(v => !v)}
-            style={{ background:autoWatch ? "rgba(57,255,20,0.08)" : "rgba(255,255,255,0.02)", border:`1px solid ${autoWatch ? "#39ff14" : "rgba(255,255,255,0.08)"}`, color:autoWatch ? "#39ff14" : "#444466", fontSize:"9px", padding:"3px 9px", borderRadius:"3px", cursor:"pointer", fontFamily:"Orbitron,sans-serif", fontWeight:700, letterSpacing:"1px" }}>
-            {autoWatch ? "● WATCHING" : "○ AUTO-WATCH"}
-          </button>
-          <button onClick={snapNow} disabled={isLoading}
-            style={{ background:"rgba(0,255,255,0.04)", border:"1px solid rgba(0,255,255,0.18)", color:"#00ffff", fontSize:"9px", padding:"3px 9px", borderRadius:"3px", cursor:isLoading ? "default" : "pointer", fontFamily:"Orbitron,sans-serif", fontWeight:700, letterSpacing:"1px", opacity:isLoading ? 0.4 : 1 }}>
-            SNAP NOW
-          </button>
-          <button onClick={exportDebrief}
-            style={{ background:"rgba(191,0,255,0.04)", border:"1px solid rgba(191,0,255,0.25)", color:"#bf00ff", fontSize:"9px", padding:"3px 9px", borderRadius:"3px", cursor:"pointer", fontFamily:"Orbitron,sans-serif", fontWeight:700, letterSpacing:"1px" }}>
-            DEBRIEF
-          </button>
-          <button onClick={() => { setObservations([]); conversationRef.current = []; }}
-            style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.06)", color:"#333355", fontSize:"9px", padding:"3px 9px", borderRadius:"3px", cursor:"pointer", fontFamily:"Orbitron,sans-serif", fontWeight:700, letterSpacing:"1px" }}>
-            CLEAR
-          </button>
-
-          {/* ── LIVE / MOCK INDICATOR ── */}
-          <div style={{ display:"flex", alignItems:"center", gap:"5px", padding:"3px 8px", background:IS_MOCK_MODE ? "rgba(255,7,58,0.06)" : "rgba(57,255,20,0.06)", border:`1px solid ${IS_MOCK_MODE ? "rgba(255,7,58,0.25)" : "rgba(57,255,20,0.25)"}`, borderRadius:"3px" }}>
-            <div style={{
-              width:6, height:6, borderRadius:"50%",
-              background:IS_MOCK_MODE ? "#ff073a" : "#39ff14",
-              boxShadow:`0 0 6px ${IS_MOCK_MODE ? "#ff073a" : "#39ff14"}`,
-              animation:"pulse 1.8s ease-in-out infinite",
-            }} />
-            <span style={{ fontFamily:"Orbitron,sans-serif", fontSize:"8px", fontWeight:700, letterSpacing:"1px", color:IS_MOCK_MODE ? "#ff073a" : "#39ff14" }}>
-              {IS_MOCK_MODE ? "MOCK" : "LIVE"}
-            </span>
+          <button onClick={() => setAutoWatch(v => !v)} style={{ background:autoWatch?"rgba(57,255,20,0.08)":"rgba(255,255,255,0.02)", border:`1px solid ${autoWatch?"#39ff14":"rgba(255,255,255,0.06)"}`, color:autoWatch?"#39ff14":"#333355", fontSize:"9px", padding:"3px 8px", borderRadius:"3px", cursor:"pointer", fontFamily:"Orbitron,sans-serif", fontWeight:700, letterSpacing:"1px" }}>{autoWatch?"● WATCHING":"○ AUTO-WATCH"}</button>
+          <button onClick={snapNow} disabled={isLoading} style={{ background:"rgba(0,255,255,0.04)", border:"1px solid rgba(0,255,255,0.15)", color:"#00ffff", fontSize:"9px", padding:"3px 8px", borderRadius:"3px", cursor:isLoading?"default":"pointer", fontFamily:"Orbitron,sans-serif", fontWeight:700, letterSpacing:"1px", opacity:isLoading?0.4:1 }}>SNAP NOW</button>
+          <button onClick={exportDebrief} style={{ background:"rgba(191,0,255,0.04)", border:"1px solid rgba(191,0,255,0.2)", color:"#bf00ff", fontSize:"9px", padding:"3px 8px", borderRadius:"3px", cursor:"pointer", fontFamily:"Orbitron,sans-serif", fontWeight:700, letterSpacing:"1px" }}>DEBRIEF</button>
+          <button onClick={() => { setObservations([]); conversationRef.current=[]; }} style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.05)", color:"#2a2a44", fontSize:"9px", padding:"3px 8px", borderRadius:"3px", cursor:"pointer", fontFamily:"Orbitron,sans-serif", fontWeight:700, letterSpacing:"1px" }}>CLEAR</button>
+          <div style={{ display:"flex", alignItems:"center", gap:"4px", padding:"3px 7px", background:IS_MOCK_MODE?"rgba(255,7,58,0.06)":"rgba(57,255,20,0.06)", border:`1px solid ${IS_MOCK_MODE?"rgba(255,7,58,0.2)":"rgba(57,255,20,0.2)"}`, borderRadius:"3px" }}>
+            <div style={{ width:5, height:5, borderRadius:"50%", background:IS_MOCK_MODE?"#ff073a":"#39ff14", boxShadow:`0 0 5px ${IS_MOCK_MODE?"#ff073a":"#39ff14"}`, animation:"pulse 1.8s ease-in-out infinite" }} />
+            <span style={{ fontFamily:"Orbitron,sans-serif", fontSize:"8px", fontWeight:700, letterSpacing:"1px", color:IS_MOCK_MODE?"#ff073a":"#39ff14" }}>{IS_MOCK_MODE?"MOCK":"LIVE"}</span>
           </div>
         </div>
       </div>
 
-      {/* ── MAIN BODY ── */}
+      {/* ── MAIN 3-COLUMN BODY ── */}
       <div style={{ flex:1, display:"flex", overflow:"hidden", minHeight:0 }}>
 
-        {/* ── FEED ── */}
-        <div style={{ flex:1, overflow:"auto", padding:"10px", display:"flex", flexDirection:"column", gap:"8px" }}>
-          {observations.length === 0 && (
-            <div style={{ color:"#1a1a33", textAlign:"center", paddingTop:"50px", lineHeight:"2.2" }}>
-              <div style={{ fontFamily:"Orbitron,sans-serif", color:IS_MOCK_MODE?"#ff073a":"#00ffff", opacity:0.15, fontSize:"22px", marginBottom:"12px" }}>◈</div>
-              <div style={{ color:"#1a1a2a" }}>{IS_MOCK_MODE ? "MOCK MODE ACTIVE — full simulation, zero API cost" : "Intelligence office online."}</div>
-              <div>Hit AUTO-WATCH to start monitoring on a timer.</div>
-              <div>SNAP NOW for an immediate full system read.</div>
-              <div>Or ask anything in the input below.</div>
-              {IS_MOCK_MODE && <div style={{ marginTop:"16px", fontSize:"10px", color:"#1a1a2a" }}>Cost meter shows estimated spend if running on live API.</div>}
-            </div>
-          )}
-          {observations.map(obs => (
-            <div key={obs.id} style={{
-              background: obs.isMock ? "rgba(255,7,58,0.03)" : obs.type==="error" ? "rgba(255,7,58,0.04)" : obs.type==="system" ? "rgba(191,0,255,0.04)" : "rgba(255,255,255,0.015)",
-              border:`1px solid ${obs.isMock ? "rgba(255,7,58,0.12)" : obs.type==="error" ? "rgba(255,7,58,0.18)" : obs.type==="system" ? "rgba(191,0,255,0.18)" : obs.type==="watch" ? "rgba(0,255,255,0.08)" : "rgba(255,215,0,0.1)"}`,
-              borderLeft:`2px solid ${obs.isMock ? "#ff073a" : obs.type==="watch" ? "#00ffff" : obs.type==="chat" ? "#ffd700" : obs.type==="system" ? "#bf00ff" : "#ff2244"}`,
-              borderRadius:"4px", padding:"9px 11px",
-            }}>
-              <div style={{ display:"flex", gap:"8px", marginBottom:"7px", alignItems:"center" }}>
-                <span style={{ fontFamily:"Orbitron,sans-serif", fontSize:"8px", color:obs.isMock?"#ff073a":obs.type==="watch"?"#00ffff":obs.type==="chat"?"#ffd700":"#bf00ff", letterSpacing:"1px", flexShrink:0 }}>{obs.time}</span>
-                {obs.isMock && <span style={{ fontSize:"8px", background:"rgba(255,7,58,0.1)", border:"1px solid rgba(255,7,58,0.25)", color:"#ff073a", padding:"1px 5px", borderRadius:"2px", fontFamily:"Orbitron,sans-serif", letterSpacing:"1px", flexShrink:0 }}>MOCK</span>}
-                {obs.snap && <span style={{ fontSize:"9px", color:"#222240" }}>SNAP#{obs.snap}</span>}
-                {obs.query && <span style={{ fontSize:"10px", color:"#555577", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{obs.query.length>80?obs.query.slice(0,80)+"…":obs.query}</span>}
-                {obs.flags > 0 && <span style={{ marginLeft:"auto", fontSize:"9px", color:"#444466", flexShrink:0 }}>{obs.flags} flags</span>}
-                {obs.costCents > 0 && <span style={{ fontSize:"8px", color:"#222240", flexShrink:0, marginLeft:obs.flags>0?"4px":"auto" }}>{obs.isMock?"~":""}${(obs.costCents/100).toFixed(3)}</span>}
+        {/* ══ COL 1: AI FEED (280px) ══ */}
+        <div style={{ width:280, flexShrink:0, display:"flex", flexDirection:"column", borderRight:"1px solid rgba(0,255,255,0.06)", overflow:"hidden" }}>
+          <div style={{ flex:1, overflow:"auto", padding:"8px", display:"flex", flexDirection:"column", gap:"6px" }}>
+            {observations.length === 0 && (
+              <div style={{ color:"#1a1a2a", textAlign:"center", paddingTop:"40px", lineHeight:"2.2", fontSize:"10px" }}>
+                <div style={{ fontFamily:"Orbitron,sans-serif", color:IS_MOCK_MODE?"#ff073a":"#00ffff", opacity:0.12, fontSize:"20px", marginBottom:"10px" }}>◈</div>
+                <div>{IS_MOCK_MODE?"MOCK MODE — zero API cost":"Intelligence office online."}</div>
+                <div>AUTO-WATCH or SNAP NOW to begin.</div>
               </div>
-              <div>{renderReply(obs.reply)}</div>
-            </div>
-          ))}
-          {isLoading && (
-            <div style={{ background:"rgba(0,255,255,0.02)", border:"1px solid rgba(0,255,255,0.08)", borderLeft:`2px solid ${IS_MOCK_MODE?"#ff073a":"#00ffff"}`, borderRadius:"4px", padding:"9px 11px", color:IS_MOCK_MODE?"#ff073a":"#00ffff", fontFamily:"Orbitron,sans-serif", fontSize:"9px", letterSpacing:"2px" }}>
-              ◈ {IS_MOCK_MODE ? "SIMULATING ANALYSIS..." : "ANALYZING SYSTEM STATE..."}
-            </div>
-          )}
-          <div ref={feedEndRef} />
+            )}
+            {observations.map(obs => (
+              <div key={obs.id} style={{ background:obs.isMock?"rgba(255,7,58,0.025)":obs.type==="error"?"rgba(255,7,58,0.04)":obs.type==="system"?"rgba(191,0,255,0.04)":"rgba(255,255,255,0.012)", border:`1px solid ${obs.isMock?"rgba(255,7,58,0.1)":obs.type==="error"?"rgba(255,7,58,0.15)":obs.type==="system"?"rgba(191,0,255,0.15)":obs.type==="watch"?"rgba(0,255,255,0.07)":"rgba(255,215,0,0.08)"}`, borderLeft:`2px solid ${obs.isMock?"#ff073a":obs.type==="watch"?"#00ffff":obs.type==="chat"?"#ffd700":obs.type==="system"?"#bf00ff":"#ff2244"}`, borderRadius:"3px", padding:"7px 9px" }}>
+                <div style={{ display:"flex", gap:"6px", marginBottom:"5px", alignItems:"center", flexWrap:"wrap" }}>
+                  <span style={{ fontFamily:"Orbitron,sans-serif", fontSize:"8px", color:obs.isMock?"#ff073a":obs.type==="watch"?"#00ffff":obs.type==="chat"?"#ffd700":"#bf00ff", letterSpacing:"1px", flexShrink:0 }}>{obs.time}</span>
+                  {obs.isMock&&<span style={{ fontSize:"7px", background:"rgba(255,7,58,0.1)", border:"1px solid rgba(255,7,58,0.2)", color:"#ff073a", padding:"1px 4px", borderRadius:"2px", fontFamily:"Orbitron,sans-serif" }}>MOCK</span>}
+                  {obs.snap&&<span style={{ fontSize:"8px", color:"#1e1e3a" }}>#{obs.snap}</span>}
+                  {obs.query&&<span style={{ fontSize:"9px", color:"#444466", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:"100%" }}>{obs.query.length>60?obs.query.slice(0,60)+"…":obs.query}</span>}
+                  {obs.costCents>0&&<span style={{ marginLeft:"auto", fontSize:"7px", color:"#1e1e3a", flexShrink:0 }}>{obs.isMock?"~":""}${(obs.costCents/100).toFixed(3)}</span>}
+                </div>
+                <div>{renderReply(obs.reply)}</div>
+              </div>
+            ))}
+            {isLoading&&<div style={{ border:`1px solid rgba(${IS_MOCK_MODE?"255,7,58":"0,255,255"},0.1)`, borderLeft:`2px solid ${IS_MOCK_MODE?"#ff073a":"#00ffff"}`, borderRadius:"3px", padding:"8px 10px", color:IS_MOCK_MODE?"#ff073a":"#00ffff", fontFamily:"Orbitron,sans-serif", fontSize:"9px", letterSpacing:"2px" }}>◈ {IS_MOCK_MODE?"SIMULATING...":"ANALYZING..."}</div>}
+            <div ref={feedEndRef} />
+          </div>
+
+          {/* chat input — bottom of col 1 */}
+          <div style={{ borderTop:"1px solid rgba(0,255,255,0.06)", padding:"6px 8px", display:"flex", gap:"6px", background:"rgba(0,0,0,0.25)", flexShrink:0 }}>
+            <input value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleSend()}
+              placeholder="ask anything..." style={{ flex:1, background:"rgba(255,255,255,0.02)", border:`1px solid rgba(${IS_MOCK_MODE?"255,7,58":"0,255,255"},0.1)`, borderRadius:"3px", padding:"5px 8px", color:"#c0c0e0", fontSize:"10px", fontFamily:"'Share Tech Mono',monospace", outline:"none" }} />
+            <button onClick={handleSend} disabled={isLoading||!chatInput.trim()}
+              style={{ background:IS_MOCK_MODE?"rgba(255,7,58,0.06)":"rgba(0,255,255,0.06)", border:`1px solid ${IS_MOCK_MODE?"rgba(255,7,58,0.2)":"rgba(0,255,255,0.18)"}`, color:IS_MOCK_MODE?"#ff073a":"#00ffff", fontSize:"9px", padding:"5px 10px", borderRadius:"3px", cursor:isLoading||!chatInput.trim()?"default":"pointer", fontFamily:"Orbitron,sans-serif", fontWeight:700, letterSpacing:"1px", opacity:isLoading||!chatInput.trim()?0.3:1, flexShrink:0 }}>ASK</button>
+          </div>
         </div>
 
-        {/* ── SIDEBAR ── */}
-        <div style={{ width:"168px", borderLeft:"1px solid rgba(0,255,255,0.06)", padding:"10px 8px", overflow:"auto", flexShrink:0, display:"flex", flexDirection:"column", gap:"14px" }}>
-          <SideBlock title="FIELD STATE" color="#00ffff">
-            <SideRow label="TOKENS"  value={tokens.length}                               color="#c0c0e0" />
-            <SideRow label="FIELD"   value={field}                                        color="#8888aa" />
-            <SideRow label="LOCKED"  value={locked.length}                               color="#39ff14" />
-            <SideRow label="PARKED"  value={parked}                                       color="#333355" />
-            <SideRow label="DB"      value={tokens.filter(t=>t.fromDB).length}           color="#444466" />
-          </SideBlock>
-          <SideBlock title="MARKET" color="#ffd700">
-            <SideRow label="TEMP"    value={marketTemp?.temp||"—"}                       color="#ffd700" />
-            <SideRow label="BULL"    value={`${Math.round(marketTemp?.bullPressure||0)}%`} color="#39ff14" />
-            <SideRow label="BEAR"    value={`${Math.round(marketTemp?.bearPressure||0)}%`} color="#ff073a" />
-          </SideBlock>
-          <SideBlock title="INTELLIGENCE" color="#bf00ff">
-            <SideRow label="CLUSTERS"  value={intel?.clusters?.length||0}                  color="#bf00ff" />
-            <SideRow label="HOT"       value={intel?.hotClusterTokens?.size||0}            color="#ff00ff" />
-            <SideRow label="FLAGS"     value={intel?.devFlags?Object.keys(intel.devFlags).length:0} color="#ff073a" />
-            <SideRow label="PRINTS"    value={intel?.tokenDNA?.winnerFingerprints?.length||0} color="#666688" />
-          </SideBlock>
-          <SideBlock title="FLASH 30s" color="#ff073a">
-            {(flashBoard30s||[]).slice(0,5).map((t,i) => (
-              <div key={i} style={{ display:"flex", justifyContent:"space-between", padding:"1px 0" }}>
-                <span style={{ color:"#666688", overflow:"hidden", maxWidth:"90px", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{t.name}</span>
-                <span style={{ color:"#39ff14", fontSize:"10px", flexShrink:0 }}>+{Math.round(t.change30s||0)}%</span>
+        {/* ══ COL 2: TELEMETRY DASHBOARD (flex: 1) ══ */}
+        <div style={{ flex:1, overflow:"auto", padding:"10px", display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gridTemplateRows:"auto auto auto auto", gap:"8px", alignContent:"start", minWidth:0 }}>
+
+          {/* ── MARKET THERMOMETER ── */}
+          <TileBlock title="MARKET TEMP" color="#ffd700">
+            <div style={{ display:"flex", alignItems:"flex-end", justifyContent:"center", gap:"12px", padding:"4px 0" }}>
+              {/* Bull thermometer */}
+              <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:"3px" }}>
+                <span style={{ fontFamily:"Orbitron,sans-serif", fontSize:"8px", color:"#39ff14", fontWeight:700 }}>{bull}%</span>
+                <div style={{ width:18, height:80, background:"rgba(57,255,20,0.06)", border:"1px solid rgba(57,255,20,0.15)", borderRadius:"9px 9px 4px 4px", overflow:"hidden", position:"relative", display:"flex", flexDirection:"column", justifyContent:"flex-end" }}>
+                  <div style={{ width:"100%", height:`${bull}%`, background:"linear-gradient(0deg,#39ff14,#39ff1480)", transition:"height 1s ease", boxShadow:"0 0 6px #39ff1440", borderRadius:"0 0 3px 3px" }} />
+                </div>
+                <span style={{ fontSize:"8px", color:"#2a4a2a" }}>BULL</span>
               </div>
-            ))}
-            {!(flashBoard30s?.length) && <div style={{ color:"#1a1a33" }}>no movers</div>}
-          </SideBlock>
-          <SideBlock title={IS_MOCK_MODE ? "EST. COST" : "BUDGET"} color={IS_MOCK_MODE ? "#ff073a" : "#ffd700"}>
-            {IS_MOCK_MODE ? <>
-              <SideRow label="THIS SESSION" value={`~$${spentDollars.toFixed(2)}`} color="#ff073a" />
-              <SideRow label="PER SNAP"     value={`~$${(MOCK_CALL_COST_CENTS/100).toFixed(3)}`} color="#666688" />
-              <SideRow label="30s/HR"       value={`~$${(MOCK_CALL_COST_CENTS*120/100).toFixed(2)}`} color="#444466" />
-              <div style={{ marginTop:4, height:4, background:"rgba(255,255,255,0.04)", borderRadius:2, overflow:"hidden" }}>
-                <div style={{ width:`${Math.min(100,(spentDollars/BUDGET_USD)*100)}%`, height:"100%", background:"#ff073a", borderRadius:2, transition:"width 1s ease", boxShadow:"0 0 4px #ff073a60" }} />
+              {/* Temp arc gauge center */}
+              <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:"4px" }}>
+                <svg width="72" height="44" viewBox="0 0 72 44">
+                  {/* bg arc */}
+                  <path d="M 8 40 A 28 28 0 0 1 64 40" fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="6" strokeLinecap="round"/>
+                  {/* value arc */}
+                  <path d={`M 8 40 A 28 28 0 0 1 ${8 + (56 * Math.min(tempScore,100)/100 * Math.cos(Math.PI - Math.PI * Math.min(tempScore,100)/100))} ${40 - 28 * Math.sin(Math.PI * Math.min(tempScore,100)/100)}`}
+                    fill="none"
+                    stroke={tempScore>65?"#ff073a":tempScore>40?"#ffd700":"#00aaff"}
+                    strokeWidth="6" strokeLinecap="round"/>
+                  {/* simplified: use dasharray trick */}
+                  <text x="36" y="38" textAnchor="middle" fontFamily="Orbitron,sans-serif" fontSize="13" fontWeight="900"
+                    fill={tempScore>65?"#ff073a":tempScore>40?"#ffd700":"#00aaff"}>{tempScore}</text>
+                </svg>
+                <div style={{ fontFamily:"Orbitron,sans-serif", fontSize:"9px", fontWeight:700, color:tempScore>65?"#ff073a":tempScore>40?"#ffd700":"#4488ff", letterSpacing:"1px", marginTop:-4 }}>{tempLabel}</div>
               </div>
-              <div style={{ fontSize:9, color:"#222240", marginTop:2 }}>of $50 est. baseline</div>
-            </> : <>
-              <SideRow label="SPENT"  value={`$${spentDollars.toFixed(2)}`}                          color="#666688" />
-              <SideRow label="LEFT"   value={`$${Math.max(0,BUDGET_USD-spentDollars).toFixed(2)}`}   color={budgetBarColor} />
-              <div style={{ marginTop:4, height:4, background:"rgba(255,255,255,0.04)", borderRadius:2, overflow:"hidden" }}>
-                <div style={{ width:`${budgetBarPct}%`, height:"100%", background:budgetBarColor, borderRadius:2, transition:"width 1s ease", boxShadow:`0 0 4px ${budgetBarColor}60` }} />
+              {/* Bear thermometer */}
+              <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:"3px" }}>
+                <span style={{ fontFamily:"Orbitron,sans-serif", fontSize:"8px", color:"#ff073a", fontWeight:700 }}>{bear}%</span>
+                <div style={{ width:18, height:80, background:"rgba(255,7,58,0.06)", border:"1px solid rgba(255,7,58,0.15)", borderRadius:"9px 9px 4px 4px", overflow:"hidden", position:"relative", display:"flex", flexDirection:"column", justifyContent:"flex-end" }}>
+                  <div style={{ width:"100%", height:`${bear}%`, background:"linear-gradient(0deg,#ff073a,#ff073a80)", transition:"height 1s ease", boxShadow:"0 0 6px #ff073a40", borderRadius:"0 0 3px 3px" }} />
+                </div>
+                <span style={{ fontSize:"8px", color:"#4a2a2a" }}>BEAR</span>
               </div>
-              <div style={{ fontSize:9, color:"#222240", marginTop:2, textAlign:"right" }}>of ${BUDGET_USD} budget</div>
-            </>}
-          </SideBlock>
+            </div>
+            {/* sparkline */}
+            {tempHistory.length > 2 && (
+              <div style={{ marginTop:4 }}>
+                <div style={{ fontSize:"8px", color:"#1e1e3a", marginBottom:2 }}>TEMP HISTORY</div>
+                <svg width="100%" height="28" viewBox={`0 0 ${tempHistory.length} 28`} preserveAspectRatio="none">
+                  <polyline
+                    points={tempHistory.map((p,i) => `${i},${28 - (p.score/100)*26}`).join(" ")}
+                    fill="none" stroke="#ffd700" strokeWidth="0.8" opacity="0.7"/>
+                </svg>
+              </div>
+            )}
+          </TileBlock>
+
+          {/* ── TOKEN FLOW ── */}
+          <TileBlock title="TOKEN FLOW" color="#00ffff">
+            <div style={{ display:"flex", flexDirection:"column", gap:"6px", padding:"4px 0" }}>
+              {[
+                { label:"FIELD",  val:field,           max:tokens.length||1, color:"#00ffff" },
+                { label:"LOCKED", val:locked.length,   max:tokens.length||1, color:"#39ff14" },
+                { label:"PARKED", val:parked,           max:tokens.length||1, color:"#ffd700" },
+                { label:"DB",     val:fromDB,           max:tokens.length||1, color:"#444466" },
+              ].map(({label,val,max,color}) => (
+                <div key={label}>
+                  <div style={{ display:"flex", justifyContent:"space-between", marginBottom:2 }}>
+                    <span style={{ fontSize:"9px", color:"#333355" }}>{label}</span>
+                    <span style={{ fontFamily:"Orbitron,sans-serif", fontSize:"9px", color, fontWeight:700 }}>{val}</span>
+                  </div>
+                  <div style={{ height:6, background:"rgba(255,255,255,0.03)", borderRadius:3, overflow:"hidden" }}>
+                    <div style={{ width:`${Math.min(100,(val/max)*100)}%`, height:"100%", background:`linear-gradient(90deg,${color}60,${color})`, borderRadius:3, transition:"width 0.8s ease", boxShadow:`0 0 4px ${color}40` }} />
+                  </div>
+                </div>
+              ))}
+              <div style={{ marginTop:4, padding:"4px 6px", background:"rgba(255,255,255,0.02)", borderRadius:3, display:"flex", justifyContent:"space-between" }}>
+                <span style={{ fontSize:"9px", color:"#1e1e3a" }}>TOTAL</span>
+                <span style={{ fontFamily:"Orbitron,sans-serif", fontSize:"11px", color:"#c0c0e0", fontWeight:900 }}>{tokens.length}</span>
+              </div>
+            </div>
+          </TileBlock>
+
+          {/* ── SIGNAL DISTRIBUTION ── */}
+          <TileBlock title="SIGNAL DISTRIBUTION" color="#bf00ff">
+            <div style={{ display:"flex", alignItems:"flex-end", gap:"4px", height:64, padding:"4px 0 0 0" }}>
+              {[
+                { label:"0-24",  val:sigBuckets[0], color:"#333355" },
+                { label:"25-49", val:sigBuckets[1], color:"#555577" },
+                { label:"50-69", val:sigBuckets[2], color:"#7744aa" },
+                { label:"70-87", val:sigBuckets[3], color:"#00ffff" },
+                { label:"88+",   val:sigBuckets[4], color:"#ffd700" },
+              ].map(({label,val,color}) => (
+                <div key={label} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:2 }}>
+                  <span style={{ fontFamily:"Orbitron,sans-serif", fontSize:"8px", color, fontWeight:700 }}>{val}</span>
+                  <div style={{ width:"100%", height:`${Math.max(3,(val/sigMax)*50)}px`, background:`linear-gradient(0deg,${color}60,${color})`, borderRadius:"2px 2px 0 0", transition:"height 0.8s ease", boxShadow:`0 0 4px ${color}40`, minHeight:3 }} />
+                </div>
+              ))}
+            </div>
+            <div style={{ display:"flex", justifyContent:"space-between", marginTop:2 }}>
+              {["0","25","50","70","88+"].map(l => <span key={l} style={{ fontSize:"7px", color:"#1e1e3a" }}>{l}</span>)}
+            </div>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:6, padding:"4px 6px", background:"rgba(191,0,255,0.04)", borderRadius:3 }}>
+              <span style={{ fontSize:"9px", color:"#333355" }}>AVG SIGNAL</span>
+              <span style={{ fontFamily:"Orbitron,sans-serif", fontSize:"13px", color:sigAvg>=70?"#ffd700":sigAvg>=50?"#00ffff":"#444466", fontWeight:900 }}>{sigAvg}</span>
+            </div>
+            {sigHistory.length > 2 && (
+              <div style={{ marginTop:4 }}>
+                <svg width="100%" height="22" viewBox={`0 0 ${sigHistory.length} 22`} preserveAspectRatio="none">
+                  <polyline points={sigHistory.map((p,i) => `${i},${22-(p.avg/100)*20}`).join(" ")} fill="none" stroke="#bf00ff" strokeWidth="0.8" opacity="0.6"/>
+                </svg>
+              </div>
+            )}
+          </TileBlock>
+
+          {/* ── LOCK OUTCOMES ── */}
+          <TileBlock title="LOCK OUTCOMES" color="#39ff14">
+            <div style={{ display:"flex", gap:"10px", alignItems:"center", padding:"4px 0" }}>
+              {/* Donut SVG */}
+              <DonutChart
+                slices={[
+                  { val:lockWins,   color:"#39ff14", label:"WIN" },
+                  { val:lockCrash,  color:"#ff073a", label:"CRASH" },
+                  { val:lockFlat,   color:"#555577", label:"FLAT" },
+                  { val:lockActive, color:"#00ffff", label:"LIVE" },
+                ]}
+                total={lockVals.length}
+                size={68}
+              />
+              {/* legend */}
+              <div style={{ flex:1, display:"flex", flexDirection:"column", gap:"5px" }}>
+                {[
+                  { label:"WIN",   val:lockWins,   color:"#39ff14" },
+                  { label:"CRASH", val:lockCrash,  color:"#ff073a" },
+                  { label:"FLAT",  val:lockFlat,   color:"#555577" },
+                  { label:"LIVE",  val:lockActive, color:"#00ffff" },
+                ].map(({label,val,color}) => (
+                  <div key={label} style={{ display:"flex", gap:5, alignItems:"center" }}>
+                    <div style={{ width:8, height:8, borderRadius:2, background:color, flexShrink:0, boxShadow:`0 0 4px ${color}60` }} />
+                    <span style={{ fontSize:"9px", color:"#333355", flex:1 }}>{label}</span>
+                    <span style={{ fontFamily:"Orbitron,sans-serif", fontSize:"10px", color, fontWeight:700 }}>{val}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            {lockVals.length === 0 && <div style={{ fontSize:"9px", color:"#1e1e3a", textAlign:"center", padding:"8px 0" }}>no locks this session</div>}
+          </TileBlock>
+
+          {/* ── FLASH MOVERS ── */}
+          <TileBlock title="FLASH 30s MOVERS" color="#ff073a" style={{ gridColumn:"2 / 4" }}>
+            <div style={{ display:"flex", flexDirection:"column", gap:"4px", padding:"2px 0" }}>
+              {(flashBoard30s||[]).slice(0,6).map((t,i) => {
+                const pct = Math.round(t.change30s||0);
+                const maxPct = Math.max(1, ...(flashBoard30s||[]).slice(0,6).map(x => Math.abs(x.change30s||0)));
+                const barW = Math.min(100, (Math.abs(pct)/maxPct)*100);
+                const col = pct > 20 ? "#39ff14" : pct > 5 ? "#ffd700" : pct < -10 ? "#ff073a" : "#555577";
+                return (
+                  <div key={i} style={{ display:"flex", alignItems:"center", gap:"8px" }}>
+                    <span style={{ fontSize:"10px", color:"#666688", width:80, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", flexShrink:0 }}>{t.name}</span>
+                    <div style={{ flex:1, height:10, background:"rgba(255,255,255,0.03)", borderRadius:3, overflow:"hidden" }}>
+                      <div style={{ width:`${barW}%`, height:"100%", background:`linear-gradient(90deg,${col}60,${col})`, borderRadius:3, transition:"width 0.8s ease", boxShadow:`0 0 4px ${col}40` }} />
+                    </div>
+                    <span style={{ fontFamily:"Orbitron,sans-serif", fontSize:"9px", color:col, fontWeight:700, width:44, textAlign:"right", flexShrink:0 }}>{pct>0?"+":""}{pct}%</span>
+                  </div>
+                );
+              })}
+              {!(flashBoard30s?.length) && <div style={{ fontSize:"9px", color:"#1e1e3a", textAlign:"center", padding:"8px 0" }}>no flash movers yet</div>}
+            </div>
+          </TileBlock>
+
+          {/* ── INTELLIGENCE GAUGES ── */}
+          <TileBlock title="INTELLIGENCE" color="#bf00ff">
+            <div style={{ display:"flex", flexDirection:"column", gap:"7px", padding:"4px 0" }}>
+              {[
+                { label:"CLUSTERS",  val:intel?.clusters?.length||0,                         max:10,  color:"#bf00ff" },
+                { label:"HOT TOKENS",val:intel?.hotClusterTokens?.size||0,                    max:20,  color:"#ff00ff" },
+                { label:"DEV FLAGS", val:intel?.devFlags?Object.keys(intel.devFlags).length:0,max:20,  color:"#ff073a" },
+                { label:"PRINTS",    val:intel?.tokenDNA?.winnerFingerprints?.length||0,       max:50,  color:"#ffd700" },
+              ].map(({label,val,max,color}) => (
+                <div key={label}>
+                  <div style={{ display:"flex", justifyContent:"space-between", marginBottom:2 }}>
+                    <span style={{ fontSize:"9px", color:"#2a2a44" }}>{label}</span>
+                    <span style={{ fontFamily:"Orbitron,sans-serif", fontSize:"9px", color, fontWeight:700 }}>{val}</span>
+                  </div>
+                  <div style={{ height:5, background:"rgba(255,255,255,0.03)", borderRadius:3, overflow:"hidden" }}>
+                    <div style={{ width:`${Math.min(100,(val/max)*100)}%`, height:"100%", background:`linear-gradient(90deg,${color}50,${color})`, borderRadius:3, transition:"width 0.8s ease", boxShadow:`0 0 3px ${color}40` }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </TileBlock>
+        </div>
+
+        {/* ══ COL 3: INTEL SIDEBAR (300px) ══ */}
+        <div style={{ width:300, flexShrink:0, borderLeft:"1px solid rgba(0,255,255,0.06)", overflow:"auto", padding:"10px", display:"flex", flexDirection:"column", gap:"14px" }}>
+
+          {/* PARK CYCLERS */}
           <SideBlock title="PARK CYCLERS" color="#ffd700">
-            {topCyclers.map(([mint,v]) => (
-              <div key={mint} style={{ display:"flex", justifyContent:"space-between", padding:"1px 0" }}>
-                <span style={{ color:"#666688", overflow:"hidden", maxWidth:"90px", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{v.name}</span>
-                <span style={{ color:v.count>=10?"#ff2244":v.count>=5?"#ffd700":"#555577", fontSize:"10px", flexShrink:0, fontFamily:"Orbitron,sans-serif", fontWeight:700 }}>{v.count}×</span>
-              </div>
-            ))}
-            {topCyclers.length===0 && <div style={{ color:"#1a1a33" }}>none yet</div>}
-          </SideBlock>
-          <SideBlock title="LOCK LOG" color="#39ff14">
-            {recentLocks.slice(0,7).map((h,i) => {
-              const pct = h.mcapAtLock > 0 ? Math.round(((h.peakMcap-h.mcapAtLock)/h.mcapAtLock)*100) : 0;
+            {topCyclers.length===0 && <div style={{ fontSize:"10px", color:"#1a1a33" }}>none yet</div>}
+            {topCyclers.map(([mint,v]) => {
+              const sev = v.count>=10?"#ff2244":v.count>=6?"#ffd700":v.count>=3?"#888855":"#444455";
               return (
-                <div key={i} style={{ display:"flex", justifyContent:"space-between", padding:"1px 0" }}>
-                  <span style={{ color:"#666688", overflow:"hidden", maxWidth:"86px", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{h.name}</span>
-                  <span style={{ color:h.status==="WIN"?"#39ff14":h.status==="CRASHED"?"#ff2244":"#555577", fontSize:"10px", flexShrink:0 }}>
-                    {h.status==="ACTIVE" ? "●" : `${pct>0?"+":""}${pct}%`}
-                  </span>
+                <div key={mint} style={{ display:"flex", alignItems:"center", gap:"6px", padding:"3px 0", borderBottom:"1px solid rgba(255,255,255,0.03)" }}>
+                  <span style={{ fontFamily:"Orbitron,sans-serif", fontSize:"11px", color:sev, fontWeight:900, width:28, flexShrink:0 }}>{v.count}×</span>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:"10px", color:"#8888aa", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{v.name}</div>
+                    {v.mcap>0 && <div style={{ fontSize:"8px", color:"#333355" }}>${v.mcap>=1000?`${(v.mcap/1000).toFixed(1)}K`:v.mcap}</div>}
+                  </div>
+                  <div style={{ width:36, height:5, background:"rgba(255,255,255,0.03)", borderRadius:2, overflow:"hidden", flexShrink:0 }}>
+                    <div style={{ width:`${Math.min(100,(v.count/15)*100)}%`, height:"100%", background:sev, borderRadius:2 }} />
+                  </div>
                 </div>
               );
             })}
-            {recentLocks.length===0 && <div style={{ color:"#1a1a33" }}>no locks yet</div>}
           </SideBlock>
+
+          {/* LOCK LOG */}
+          <SideBlock title="LOCK HISTORY" color="#39ff14">
+            {recentLocks.length===0 && <div style={{ fontSize:"10px", color:"#1a1a33" }}>no locks yet</div>}
+            {recentLocks.map((h,i) => {
+              const entryPct = h.mcapAtLock>0 ? Math.round(((h.peakMcap-h.mcapAtLock)/h.mcapAtLock)*100) : 0;
+              const exitPct  = h.exitPct ?? entryPct;
+              const col = h.status==="WIN"?"#39ff14":h.status==="CRASHED"?"#ff073a":h.status==="ACTIVE"?"#00ffff":"#555577";
+              return (
+                <div key={i} style={{ padding:"5px 0", borderBottom:"1px solid rgba(255,255,255,0.03)" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                    <span style={{ fontSize:"10px", color:"#8888aa", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:130 }}>{h.name}</span>
+                    <span style={{ fontFamily:"Orbitron,sans-serif", fontSize:"10px", color:col, fontWeight:700, flexShrink:0 }}>
+                      {h.status==="ACTIVE"?"● LIVE":`${exitPct>0?"+":""}${exitPct}%`}
+                    </span>
+                  </div>
+                  <div style={{ display:"flex", justifyContent:"space-between", marginTop:2 }}>
+                    <span style={{ fontSize:"8px", color:"#1e1e3a" }}>entry ${h.mcapAtLock>=1000?`${(h.mcapAtLock/1000).toFixed(1)}K`:Math.round(h.mcapAtLock)}</span>
+                    <span style={{ fontSize:"8px", color:"#1e1e3a" }}>peak ${h.peakMcap>=1000?`${(h.peakMcap/1000).toFixed(1)}K`:Math.round(h.peakMcap)}</span>
+                  </div>
+                  <div style={{ marginTop:3, height:3, background:"rgba(255,255,255,0.03)", borderRadius:2, overflow:"hidden" }}>
+                    <div style={{ width:`${Math.min(100,Math.max(0,(entryPct+40)/(120)*100))}%`, height:"100%", background:col, borderRadius:2, transition:"width 0.8s ease" }} />
+                  </div>
+                </div>
+              );
+            })}
+          </SideBlock>
+
+          {/* CLUSTERS */}
+          <SideBlock title="CLUSTER ACTIVITY" color="#bf00ff">
+            <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
+              <span style={{ fontSize:"10px", color:"#333355" }}>active clusters</span>
+              <span style={{ fontFamily:"Orbitron,sans-serif", fontSize:"14px", color:"#bf00ff", fontWeight:900 }}>{intel?.clusters?.length||0}</span>
+            </div>
+            {(intel?.clusters||[]).slice(0,4).map((c,i) => (
+              <div key={i} style={{ padding:"4px 6px", background:"rgba(191,0,255,0.04)", borderRadius:3, marginBottom:4, border:"1px solid rgba(191,0,255,0.08)" }}>
+                <div style={{ fontSize:"9px", color:"#8888aa" }}>{c.wallets?.length||0}w · str:{Math.round(c.strength||0)}</div>
+              </div>
+            ))}
+            {!(intel?.clusters?.length) && <div style={{ fontSize:"10px", color:"#1a1a33" }}>no clusters detected</div>}
+          </SideBlock>
+
+          {/* SNIPE WINDOW */}
+          {intel?.snipeWindow && (
+            <SideBlock title="SNIPE WINDOW" color="#ffd700">
+              <div style={{ padding:"4px 0" }}>
+                {intel.snipeWindow.optimalMcap && (
+                  <div style={{ textAlign:"center", marginBottom:6 }}>
+                    <div style={{ fontFamily:"Orbitron,sans-serif", fontSize:"16px", color:"#ffd700", fontWeight:900 }}>
+                      ${Math.round(intel.snipeWindow.optimalMcap/1000)}K
+                    </div>
+                    <div style={{ fontSize:"8px", color:"#333355" }}>optimal entry mcap</div>
+                  </div>
+                )}
+                {intel.snipeWindow.rangeMin && intel.snipeWindow.rangeMax && (
+                  <div style={{ fontSize:"9px", color:"#555566", textAlign:"center" }}>
+                    ${Math.round(intel.snipeWindow.rangeMin/1000)}K – ${Math.round(intel.snipeWindow.rangeMax/1000)}K range
+                  </div>
+                )}
+              </div>
+            </SideBlock>
+          )}
+
+          {/* HOT CLUSTER TOKENS */}
+          <SideBlock title="HOT CLUSTER TOKENS" color="#ff00ff">
+            {intel?.hotClusterTokens?.size > 0
+              ? [...intel.hotClusterTokens].slice(0,6).map((mint,i) => {
+                  const tok = tokens.find(t => t.mint===mint);
+                  return tok ? (
+                    <div key={i} style={{ display:"flex", justifyContent:"space-between", padding:"2px 0", fontSize:"10px" }}>
+                      <span style={{ color:"#8888aa", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:140 }}>{tok.name||mint.slice(0,8)}</span>
+                      <span style={{ color:"#ff00ff", fontFamily:"Orbitron,sans-serif", fontSize:"9px", fontWeight:700 }}>${tok.mcap>=1000?`${(tok.mcap/1000).toFixed(1)}K`:Math.round(tok.mcap||0)}</span>
+                    </div>
+                  ) : null;
+                })
+              : <div style={{ fontSize:"10px", color:"#1a1a33" }}>none active</div>
+            }
+          </SideBlock>
+
         </div>
       </div>
 
-      {/* ── CHAT INPUT ── */}
-      <div style={{ borderTop:"1px solid rgba(0,255,255,0.07)", padding:"7px 10px", display:"flex", gap:"7px", background:"rgba(0,0,0,0.3)", flexShrink:0 }}>
-        <input
-          value={chatInput}
-          onChange={e => setChatInput(e.target.value)}
-          onKeyDown={e => e.key==="Enter" && handleSend()}
-          placeholder={IS_MOCK_MODE ? "ask anything — mock mode answers from real session data..." : "ask anything — why did X park? is the lock score firing correctly?..."}
-          style={{ flex:1, background:"rgba(255,255,255,0.02)", border:`1px solid rgba(${IS_MOCK_MODE?"255,7,58":"0,255,255"},0.12)`, borderRadius:"3px", padding:"6px 9px", color:"#c0c0e0", fontSize:"11px", fontFamily:"'Share Tech Mono',monospace", outline:"none" }}
-        />
-        <button onClick={handleSend} disabled={isLoading || !chatInput.trim()}
-          style={{ background:IS_MOCK_MODE?"rgba(255,7,58,0.06)":"rgba(0,255,255,0.06)", border:`1px solid ${IS_MOCK_MODE?"rgba(255,7,58,0.2)":"rgba(0,255,255,0.2)"}`, color:IS_MOCK_MODE?"#ff073a":"#00ffff", fontSize:"9px", padding:"6px 13px", borderRadius:"3px", cursor:isLoading||!chatInput.trim()?"default":"pointer", fontFamily:"Orbitron,sans-serif", fontWeight:700, letterSpacing:"1px", opacity:isLoading||!chatInput.trim()?0.35:1, flexShrink:0 }}>
-          ASK
-        </button>
-      </div>
-
-      <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }`}</style>
+      <style>{`
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Share+Tech+Mono&display=swap');
+      `}</style>
     </div>
   );
 }
+
+// ─────────────────────────────────────────────
+// CHART & TILE HELPERS
+// ─────────────────────────────────────────────
+function TileBlock({ title, color, children, style }) {
+  return (
+    <div style={{ background:"rgba(255,255,255,0.01)", border:`1px solid ${color}14`, borderTop:`2px solid ${color}30`, borderRadius:4, padding:"8px 10px", ...style }}>
+      <div style={{ fontFamily:"Orbitron,sans-serif", fontSize:"8px", letterSpacing:"2px", color, marginBottom:6, fontWeight:700, opacity:0.8 }}>{title}</div>
+      {children}
+    </div>
+  );
+}
+
+function DonutChart({ slices, total, size = 64 }) {
+  const r = size * 0.38;
+  const cx = size / 2;
+  const cy = size / 2;
+  const circumference = 2 * Math.PI * r;
+  const tot = total || slices.reduce((a,s) => a+s.val, 0) || 1;
+
+  let offset = 0;
+  const paths = slices.map((s, i) => {
+    const dash = (s.val / tot) * circumference;
+    const gap  = circumference - dash;
+    const path = (
+      <circle key={i} cx={cx} cy={cy} r={r}
+        fill="none" stroke={s.val>0?s.color:"transparent"}
+        strokeWidth={size*0.14}
+        strokeDasharray={`${dash} ${gap}`}
+        strokeDashoffset={-offset}
+        style={{ transition:"stroke-dasharray 1s ease" }}
+        transform={`rotate(-90 ${cx} ${cy})`}
+      />
+    );
+    offset += dash;
+    return path;
+  });
+
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ flexShrink:0 }}>
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth={size*0.14}/>
+      {paths}
+      <text x={cx} y={cy+4} textAnchor="middle" fontFamily="Orbitron,sans-serif" fontSize={size*0.18} fontWeight="900" fill="#c0c0e0">{tot}</text>
+    </svg>
+  );
+}
+
 
 // ─────────────────────────────────────────────
 // SIDEBAR HELPERS
