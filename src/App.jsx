@@ -580,7 +580,8 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
       parkedTokens.forEach(t=>visualSet.add(t.id));
 
       tokensRef.current.forEach(t=>{
-        if(!t.alive)return;t.age++;
+        if(!t.alive)return;if(t.inHoldingBay)return; // held for audit
+        t.age++;
         const isVisual=visualSet.has(t.id);
         if(t.warpIn){t.warpIn=false;t.by=0.95;t.bx=rand(0.08,0.92);}
 
@@ -4131,7 +4132,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
       // ██ HOLDING BAY — pixel city building, drawn LAST so it covers docked coins
       // ═══════════════════════════════════════════════════════════════
       {
-        const bunkerCount=tokensRef.current.filter(t=>t.parked&&t.alive).length;
+        const bunkerCount=tokensRef.current.filter(t=>t.parked&&t.alive&&!t.inHoldingBay).length;
         const BW=Math.floor(W*0.22);   // building width
         const BH=Math.floor(H*0.22);   // building height from bottom
         const BX=W-BW-2;               // right edge flush
@@ -5373,6 +5374,7 @@ export default function DegenCommandCenter(){
   const viewWalletDetail=(walletAddr)=>{setLeftTab("REPORT");setSelectedWallet(walletAddr);setReportView("detail");};
   const [leftTab,setLeftTab]=useState("SCANNER");
   const [showMenu,setShowMenu]=useState(false);
+  const [bayExpanded,setBayExpanded]=useState(false);
   const [intelEvents,setIntelEvents]=useState([]);
   const [migrations,setMigrations]=useState([]);
   const [rightTab,setRightTab]=useState("LOCKS");
@@ -5612,6 +5614,7 @@ export default function DegenCommandCenter(){
             coinColor:pick(CC), timestamp:row.first_seen||Date.now(),
             deployer:"", imageUri:"", migrated:row.graduated||false,
             fromDB:true, peakMcap:row.peak_mcap||liveMcap, sessionLoadTime:Date.now(),
+            inHoldingBay:true, holdingMcap:liveMcap, holdingEnteredAt:Date.now(),
           });
         } catch(e) { /* skip */ }
       }
@@ -5627,6 +5630,42 @@ export default function DegenCommandCenter(){
     };
     setTimeout(hydrate, 3000);
   }, []);
+
+  // ── HOLDING BAY AUDIT — DB tokens must show life before entering battlefield ──
+  useEffect(() => {
+    const iv = setInterval(() => {
+      const now = Date.now();
+      const td = live.tradeDataRef?.current || {};
+      setTokens(prev => {
+        let changed = false;
+        const next = prev.map(t => {
+          if (!t.inHoldingBay) return t;
+          const age = now - (t.holdingEnteredAt || now);
+          const trd = td[t.addr];
+          const recentTrade = trd?.lastTradeTime && (now - trd.lastTradeTime) < 45000;
+          const mcapMoved = Math.abs((t.mcap||0) - (t.holdingMcap||0)) / Math.max(1, t.holdingMcap||1) > 0.08;
+          const hasSmarts = (t.smartWalletCount||0) >= 1;
+          const showsLife = recentTrade || mcapMoved || hasSmarts || (t.buys||0) > 2;
+
+          if (showsLife) {
+            // Graduate — release to battlefield
+            changed = true;
+            addKillFeed({type:"system", text:`🔓 ${t.name} cleared holding bay audit → BATTLEFIELD`});
+            return {...t, inHoldingBay:false, warpIn:true,
+              bx:0.2+Math.random()*0.6, by:0.95};
+          } else if (age > 120000) {
+            // 2 min no activity — incinerate
+            changed = true;
+            addKillFeed({type:"system", text:`🔥 ${t.name} incinerated — no activity in holding bay`});
+            return {...t, alive:false, inHoldingBay:false};
+          }
+          return t;
+        });
+        return changed ? next : prev;
+      });
+    }, 5000);
+    return () => clearInterval(iv);
+  }, [live.tradeDataRef]);
 
   useEffect(() => {
     if (live.whaleAlerts.length > 0) {
@@ -7321,8 +7360,9 @@ export default function DegenCommandCenter(){
           </div>
         </GlassPanel>
 
-        {/* CENTER: BATTLEFIELD */}
-        <GlassPanel accent={NEON.cyan} style={{position:"relative",overflow:"hidden"}}>
+        {/* CENTER: BATTLEFIELD + FOOTER BAR */}
+        <div style={{display:"flex",flexDirection:"column",gap:4,overflow:"hidden"}}>
+        <GlassPanel accent={NEON.cyan} style={{position:"relative",overflow:"hidden",flex:1}}>
           <BattlefieldMap tokens={tokens} lockedTokens={lockedTokens} onSelect={selectToken} tradeDataRef={live.tradeDataRef}
             selectedId={selectedToken?.id} onKillFeed={addKillFeed} onAlienUpdate={setAlienStats}
             onMenuToggle={()=>setShowMenu(p=>!p)} whaleTrigger={whaleTriggerRef} dolphinTrigger={dolphinTriggerRef}
@@ -7373,59 +7413,7 @@ export default function DegenCommandCenter(){
               </div>
             );
           })()}
-          {/* ── LIVE FLASH — bottom-left of battlefield ── */}
-          {(()=>{
-            const top30 = live.flashBoard30s?.[0];
-            const top1m = live.flashBoard1m?.[0];
-            const top5m = live.flashBoard5m?.[0];
-            const topSig = (() => {
-              const flashAddrs = new Set([top30?.addr, top1m?.addr, top5m?.addr].filter(Boolean));
-              return tokens.filter(t=>t.alive&&t.qualified)
-                .map(t=>({t, sig: (live.signalScoresRef?.current?.[t.addr]||0) + (intel?.signalBoost?.[t.addr]?.boost||0)}))
-                .filter(x => x.sig >= 80 && !flashAddrs.has(x.t.addr))
-                .sort((a,b)=>b.sig-a.sig)[0];
-            })();
-            const hasAny = top30 || top1m || top5m || topSig;
-            if (!hasAny) return null;
-            return (
-              <div style={{
-                position:"absolute", bottom:14, left:14,
-                zIndex:40, pointerEvents:"auto",
-                display:"flex", flexDirection:"column", gap:2,
-                padding:"5px 8px",
-                background:"rgba(4,2,14,0.88)",
-                border:"1px solid rgba(255,7,58,0.25)",
-                borderRadius:6, minWidth:148,
-                backdropFilter:"blur(4px)",
-                boxShadow:"0 0 14px rgba(255,7,58,0.12)",
-              }}>
-                <div style={{fontSize:7,color:"#ff073a",letterSpacing:2,fontFamily:"'Orbitron'",marginBottom:1,fontWeight:700}}>⚡ LIVE FLASH</div>
-                {top30&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:4,cursor:"pointer"}} onClick={()=>{const t=tokens.find(tk=>tk.addr===top30.addr);if(t)selectToken(t);}}>
-                  <span style={{fontSize:7,color:"#ff073a",fontFamily:"'Orbitron'",width:16,flexShrink:0}}>30s</span>
-                  <span style={{fontSize:10,fontWeight:900,color:NEON.text,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{top30.name}</span>
-                  <span style={{fontSize:10,fontWeight:900,color:top30.gain>0?NEON.green:"#ff073a",fontFamily:"'Orbitron'",flexShrink:0}}>{top30.gain>0?"+":""}{top30.gain.toFixed(1)}%</span>
-                  {top30.hasSmartMoney&&<span style={{fontSize:8,flexShrink:0}}>🧠</span>}
-                </div>}
-                {top1m&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:4,cursor:"pointer"}} onClick={()=>{const t=tokens.find(tk=>tk.addr===top1m.addr);if(t)selectToken(t);}}>
-                  <span style={{fontSize:7,color:"#ff6600",fontFamily:"'Orbitron'",width:16,flexShrink:0}}>1m</span>
-                  <span style={{fontSize:10,fontWeight:900,color:NEON.text,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{top1m.name}</span>
-                  <span style={{fontSize:10,fontWeight:900,color:top1m.gain>0?"#ff6600":"#ff073a",fontFamily:"'Orbitron'",flexShrink:0}}>{top1m.gain>0?"+":""}{top1m.gain.toFixed(1)}%</span>
-                  {top1m.isCluster&&<span style={{fontSize:8,flexShrink:0}}>🔗</span>}
-                </div>}
-                {top5m&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:4,cursor:"pointer"}} onClick={()=>{const t=tokens.find(tk=>tk.addr===top5m.addr);if(t)selectToken(t);}}>
-                  <span style={{fontSize:7,color:"#ffe600",fontFamily:"'Orbitron'",width:16,flexShrink:0}}>5m</span>
-                  <span style={{fontSize:10,fontWeight:900,color:NEON.text,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{top5m.name}</span>
-                  <span style={{fontSize:10,fontWeight:900,color:top5m.gain>0?"#ffe600":"#ff073a",fontFamily:"'Orbitron'",flexShrink:0}}>{top5m.gain>0?"+":""}{top5m.gain.toFixed(1)}%</span>
-                </div>}
-                {topSig&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:4,
-                  borderTop:"1px solid rgba(0,255,255,0.08)",paddingTop:2,cursor:"pointer"}} onClick={()=>selectToken(topSig.t)}>
-                  <span style={{fontSize:7,color:NEON.cyan,fontFamily:"'Orbitron'",width:16,flexShrink:0}}>◈</span>
-                  <span style={{fontSize:10,fontWeight:900,color:NEON.text,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{topSig.t.name}</span>
-                  <span style={{fontSize:10,fontWeight:900,color:"#ffd700",fontFamily:"'Orbitron'",textShadow:"0 0 6px #ffd700",flexShrink:0}}>{Math.round(topSig.sig)}</span>
-                </div>}
-              </div>
-            );
-          })()}
+          {/* LIVE FLASH now in footer command strip */}
 
           {/* ── HUNTER KILL POPUPS ── */}
           {killPopups.map(k=>(
@@ -7589,7 +7577,152 @@ export default function DegenCommandCenter(){
           {/* ═══ MENU OVERLAY — removed, moon reserved for future interaction ═══ */}
         </GlassPanel>
 
-        {/* RIGHT COLUMN — 6-TAB INTEL SYSTEM */}
+        {/* ── COMMAND STRIP — footer bar ── */}
+        {(()=>{
+          const holdingTokens = tokens.filter(t => t.inHoldingBay && t.alive);
+          const top30 = live.flashBoard30s?.[0];
+          const top1m = live.flashBoard1m?.[0];
+          const top5m = live.flashBoard5m?.[0];
+          return (
+            <div style={{
+              height: bayExpanded ? 148 : 54, flexShrink:0,
+              display:"flex", gap:4, overflow:"hidden",
+              transition:"height 0.25s ease",
+            }}>
+
+              {/* ── HOLDING BAY BUILDING ── */}
+              <div style={{
+                width:220, flexShrink:0,
+                background:"rgba(12,6,28,0.96)",
+                border:"1px solid rgba(130,60,255,0.35)",
+                borderRadius:6, overflow:"hidden",
+                display:"flex", flexDirection:"column",
+              }}>
+                {/* Header row */}
+                <div onClick={()=>setBayExpanded(p=>!p)} style={{
+                  display:"flex", alignItems:"center", justifyContent:"space-between",
+                  padding:"5px 8px", cursor:"pointer",
+                  borderBottom: bayExpanded ? "1px solid rgba(130,60,255,0.2)" : "none",
+                  background:"rgba(90,40,200,0.08)",
+                }}>
+                  <div style={{display:"flex", alignItems:"center", gap:6}}>
+                    <span style={{fontSize:10}}>▣</span>
+                    <span style={{fontSize:9,fontFamily:"'Orbitron'",letterSpacing:2,color:"rgba(200,140,255,0.9)",fontWeight:700}}>HOLDING BAY</span>
+                    {holdingTokens.length > 0 && (
+                      <span style={{fontSize:8,background:"rgba(130,60,255,0.25)",border:"1px solid rgba(130,60,255,0.4)",
+                        borderRadius:3,padding:"0 4px",color:"rgba(210,160,255,0.9)",fontFamily:"'Orbitron'"}}>
+                        {holdingTokens.length}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    {holdingTokens.length === 0 && <span style={{fontSize:8,color:"rgba(60,30,100,0.6)"}}>— EMPTY —</span>}
+                    <span style={{fontSize:8,color:"rgba(130,60,255,0.5)",transform:bayExpanded?"rotate(180deg)":"none",display:"inline-block",transition:"transform 0.2s"}}>▾</span>
+                  </div>
+                </div>
+                {/* Token list when expanded */}
+                {bayExpanded && (
+                  <div style={{flex:1,overflow:"auto",padding:"4px 6px",display:"flex",flexDirection:"column",gap:2}}>
+                    {holdingTokens.length === 0 ? (
+                      <div style={{fontSize:9,color:"rgba(80,40,160,0.5)",textAlign:"center",paddingTop:8}}>No tokens in audit queue</div>
+                    ) : holdingTokens.map(t => {
+                      const age = Math.round((Date.now() - (t.holdingEnteredAt||Date.now())) / 1000);
+                      const pct = Math.min(100, age / 120 * 100);
+                      const col = pct > 75 ? "#ff073a" : pct > 40 ? "#ffd700" : "rgba(130,60,255,0.8)";
+                      return (
+                        <div key={t.id} style={{display:"flex",alignItems:"center",gap:6,padding:"2px 0",
+                          borderBottom:"1px solid rgba(130,60,255,0.08)"}}>
+                          <div style={{width:16,height:16,borderRadius:"50%",flexShrink:0,
+                            background:`radial-gradient(circle at 35% 30%,${t.coinColor?.bg},${t.coinColor?.rim})`,
+                            border:`1px solid ${t.coinColor?.rim}`,display:"flex",alignItems:"center",
+                            justifyContent:"center",fontSize:8,fontWeight:900,color:t.coinColor?.fg}}>
+                            {t.initials?.charAt(0)}
+                          </div>
+                          <span style={{fontSize:9,fontWeight:700,color:"rgba(200,160,255,0.85)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.name}</span>
+                          <span style={{fontSize:8,color:"rgba(140,100,200,0.6)"}}>${(t.mcap/1000).toFixed(1)}K</span>
+                          {/* Audit timer bar */}
+                          <div style={{width:36,height:3,background:"rgba(60,20,120,0.4)",borderRadius:2,flexShrink:0}}>
+                            <div style={{width:pct+"%",height:"100%",background:col,borderRadius:2,transition:"width 1s"}}/>
+                          </div>
+                          <span style={{fontSize:7,color:col,width:18,textAlign:"right",flexShrink:0}}>{age}s</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {/* Bottom micro-status when collapsed */}
+                {!bayExpanded && holdingTokens.length > 0 && (
+                  <div style={{padding:"0 8px 3px",display:"flex",gap:3,overflow:"hidden"}}>
+                    {holdingTokens.slice(0,6).map(t => {
+                      const age = Math.round((Date.now() - (t.holdingEnteredAt||Date.now())) / 1000);
+                      const pct = Math.min(100, age/120*100);
+                      return (
+                        <div key={t.id} title={`${t.name} — ${age}s`}
+                          style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1,minWidth:22}}>
+                          <div style={{width:4,height:14,background:"rgba(60,20,120,0.4)",borderRadius:2,overflow:"hidden",display:"flex",flexDirection:"column",justifyContent:"flex-end"}}>
+                            <div style={{width:"100%",height:pct+"%",background:pct>75?"#ff073a":pct>40?"#ffd700":"rgba(130,60,255,0.8)",transition:"height 1s"}}/>
+                          </div>
+                          <span style={{fontSize:6,color:"rgba(160,100,255,0.6)",whiteSpace:"nowrap",overflow:"hidden",maxWidth:20,textOverflow:"ellipsis"}}>{t.name.slice(0,3)}</span>
+                        </div>
+                      );
+                    })}
+                    {holdingTokens.length > 6 && <span style={{fontSize:7,color:"rgba(100,60,200,0.5)",alignSelf:"center"}}>+{holdingTokens.length-6}</span>}
+                  </div>
+                )}
+              </div>
+
+              {/* ── FLASH MONITOR ── */}
+              <div style={{
+                flex:1,
+                background:"rgba(10,3,18,0.96)",
+                border:"1px solid rgba(255,7,58,0.22)",
+                borderRadius:6, padding:"5px 8px",
+                display:"flex", flexDirection:"column", gap:3, overflow:"hidden",
+              }}>
+                <div style={{fontSize:7,color:"#ff073a",letterSpacing:2,fontFamily:"'Orbitron'",fontWeight:700,flexShrink:0}}>⚡ LIVE FLASH</div>
+                <div style={{display:"flex",gap:8,overflow:"hidden",flex:1}}>
+                  {[
+                    {entry:top30, label:"30s", col:"#ff073a"},
+                    {entry:top1m, label:"1m",  col:"#ff6600"},
+                    {entry:top5m, label:"5m",  col:"#ffe600"},
+                  ].map(({entry,label,col}) => entry ? (
+                    <div key={label} onClick={()=>{const t=tokens.find(tk=>tk.addr===entry.addr);if(t)selectToken(t);}}
+                      style={{display:"flex",alignItems:"center",gap:4,cursor:"pointer",
+                        padding:"2px 6px",borderRadius:4,background:`rgba(255,7,58,0.04)`,
+                        border:`1px solid ${col}18`,flex:1,overflow:"hidden",minWidth:0}}>
+                      <span style={{fontSize:7,color:col,fontFamily:"'Orbitron'",flexShrink:0,fontWeight:700}}>{label}</span>
+                      <span style={{fontSize:11,fontWeight:900,color:"rgba(224,224,255,0.9)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{entry.name}</span>
+                      <span style={{fontSize:11,fontWeight:900,color:entry.gain>0?NEON.green:"#ff073a",fontFamily:"'Orbitron'",flexShrink:0}}>
+                        {entry.gain>0?"+":""}{entry.gain?.toFixed(1)}%
+                      </span>
+                      {entry.hasSmartMoney && <span style={{fontSize:9,flexShrink:0}}>🧠</span>}
+                    </div>
+                  ) : (
+                    <div key={label} style={{flex:1,display:"flex",alignItems:"center",gap:3,opacity:0.25,padding:"2px 6px"}}>
+                      <span style={{fontSize:7,color:col,fontFamily:"'Orbitron'",fontWeight:700}}>{label}</span>
+                      <span style={{fontSize:9,color:"rgba(255,255,255,0.2)"}}>—</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* ── BUILDING SLOT — future expansion ── */}
+              <div style={{
+                width:80, flexShrink:0,
+                background:"rgba(5,2,14,0.85)",
+                border:"1px dashed rgba(255,255,255,0.06)",
+                borderRadius:6, display:"flex",flexDirection:"column",
+                alignItems:"center", justifyContent:"center", gap:3,
+                cursor:"pointer", opacity:0.35,
+              }}>
+                <span style={{fontSize:16}}>🏗</span>
+                <span style={{fontSize:7,color:"rgba(255,255,255,0.3)",fontFamily:"'Orbitron'",letterSpacing:1}}>SOON</span>
+              </div>
+
+            </div>
+          );
+        })()}
+        </div>{/* end center flex-column */}
         <div style={{display:"flex",flexDirection:"column",gap:6,overflow:"hidden"}}>
           {/* RADAR + FLEET tabs */}
           <GlassPanel accent={radarTab==="FLEET"?"#ff00ff":radarTab==="CHARACTER"?"#ffd740":NEON.cyan} style={{flexShrink:0}}>
