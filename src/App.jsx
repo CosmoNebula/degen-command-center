@@ -4,6 +4,7 @@ import { useSupabase } from "./useSupabase";
 import { fetchTokenByAddress, fetchTokensBatch, proxyUrl } from "./api";
 import { HunterPanel, TreasureChestOverlay, useChestSystem, HunterLeaderboard } from "./HunterSystem";
 import { RARITIES } from "./HunterData.js";
+import { useIntelligence, ARCHETYPES } from "./useIntelligence";
 
 const NEON = {
   magenta:"#ff00ff",cyan:"#00ffff",green:"#39ff14",red:"#ff073a",
@@ -4139,11 +4140,24 @@ function TargetLockList({lockedTokens,onRemove,onSelect}){
 }
 
 // ═══════════════ WAR LOG ═══════════════
-function WarLog({events}){
+function WarLog({events, clusterAlerts=[]}){
   function timeAgo(ts){const s=Math.floor((Date.now()-ts)/1000);if(s<60)return`${s}s ago`;return`${Math.floor(s/60)}m ago`}
   return(
     <div style={{display:"flex",flexDirection:"column",gap:1,padding:"4px 6px"}}>
-      {events.length===0&&<div style={{color:NEON.dimText,fontSize:12,textAlign:"center",padding:20,fontStyle:"italic"}}>MONITORING...</div>}
+      {clusterAlerts.length > 0 && <div style={{marginBottom:6}}>
+        <div style={{fontSize:9,color:"#bf00ff",letterSpacing:2,fontFamily:"'Orbitron'",marginBottom:4,paddingBottom:3,borderBottom:"1px solid rgba(191,0,255,0.15)"}}>🕸 COORDINATED CLUSTERS</div>
+        {clusterAlerts.slice(0,5).map((ca,i) => (
+          <div key={ca.id} style={{padding:"5px 8px",borderRadius:4,fontSize:11,lineHeight:1.4,
+            background:"rgba(191,0,255,0.06)",borderLeft:"2px solid rgba(191,0,255,0.4)",marginBottom:3}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span style={{color:"#bf00ff",fontWeight:700}}>🕸 {ca.walletCount}w CLUSTER — {ca.cobuys} co-buys</span>
+              <span style={{fontSize:10,color:"#5a5a7a"}}>{Math.floor((Date.now()-ca.time)/1000)}s ago</span>
+            </div>
+            <div style={{color:"#e0e0ff",fontSize:10,opacity:0.7}}>{ca.tokens.slice(0,3).map(t=>t.slice(0,8)).join(', ')}</div>
+          </div>
+        ))}
+      </div>}
+      {events.length===0&&clusterAlerts.length===0&&<div style={{color:NEON.dimText,fontSize:12,textAlign:"center",padding:20,fontStyle:"italic"}}>MONITORING...</div>}
       {events.map((e,i)=>(
         <div key={e.id} style={{padding:"8px 10px",borderRadius:5,fontSize:12,lineHeight:1.4,
           background:e.priority==="HIGH"?`${e.color}08`:"transparent",
@@ -5108,6 +5122,14 @@ export default function DegenCommandCenter(){
     onMarkDirty: (addr) => supabase.markDirty(addr),
     onSmartAlert: (alert) => supabase.logSmartAlert(alert),
     onUpsertToken: (token) => supabase.upsertToken(token),
+  });
+
+  // ── INTELLIGENCE ENGINE ─────────────────────────────────────────────────────
+  const intel = useIntelligence({
+    walletScoresRef: live.walletScoresRef,
+    tokens: live.tokens,
+    tradeDataRef: live.tradeDataRef,
+    deployerHistoryRef: live.deployerHistoryRef,
   });
 
   // Once live is ready, expose its walletScoresRef to supabase
@@ -6094,6 +6116,23 @@ export default function DegenCommandCenter(){
             {l:"REJECTED",v:rejected,c:NEON.red},{l:"QUAL%",v:qualRate+"%",c:parseInt(qualRate)>40?NEON.green:NEON.orange},
             {l:"LOCKED",v:lockedTokens.length,c:NEON.yellow}].map(s=>(
             <StatChip key={s.l} label={s.l} value={s.v} color={s.c}/>))}
+          {/* ── MARKET TEMPERATURE GAUGE ── */}
+          {intel && intel.marketTemp && (() => {
+            const mt = intel.marketTemp;
+            return (
+              <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1,
+                background:`${mt.color}10`,border:`1px solid ${mt.color}30`,
+                borderRadius:6,padding:"3px 8px",minWidth:72,cursor:"default"}}
+                title={`Market Temp: ${mt.score}/100 | Migrations: ${mt.factors.migrations} | Smart Wallets: ${mt.factors.smartWallets} | Bundles: ${mt.factors.bundleRate}`}>
+                <div style={{fontSize:8,color:NEON.dimText,letterSpacing:1.5,fontFamily:"'Orbitron'"}}>MKT TEMP</div>
+                <div style={{fontSize:12,color:mt.color,fontWeight:900,letterSpacing:1,fontFamily:"'Orbitron'"}}>{mt.emoji} {mt.label}</div>
+                <div style={{width:"100%",height:3,background:"rgba(255,255,255,0.06)",borderRadius:2,overflow:"hidden"}}>
+                  <div style={{width:`${mt.score}%`,height:"100%",background:`linear-gradient(90deg,${mt.color}88,${mt.color})`,
+                    borderRadius:2,transition:"width 1s ease"}}/>
+                </div>
+              </div>
+            );
+          })()}
           <div style={{display:"flex",alignItems:"center",gap:5,marginLeft:6}}>
             <div style={{width:6,height:6,borderRadius:"50%",background:NEON.green,
               boxShadow:`0 0 8px ${NEON.green}`,animation:"blink 1s infinite"}}/>
@@ -6232,7 +6271,7 @@ export default function DegenCommandCenter(){
           </>}
 
           {/* WAR LOG */}
-          {leftTab==="WARLOG"&&<WarLog events={intelEvents}/>}
+          {leftTab==="WARLOG"&&<WarLog events={intelEvents} clusterAlerts={intel?.clusterAlerts||[]}/>}
 
           {/* LEADERBOARD */}
           {leftTab==="LEADERS"&&<LeaderboardPanel
@@ -6490,8 +6529,14 @@ export default function DegenCommandCenter(){
                         background:"rgba(255,255,255,0.02)",border:`1px solid ${w2.isElite?"rgba(0,255,136,0.15)":"rgba(255,255,255,0.05)"}`,
                         transition:"background 0.2s"}}>
                       <div>
-                        <div style={{fontSize:10,fontWeight:900,color:NEON.text,fontFamily:"monospace"}}>{w2.addr.slice(0,4)}...{w2.addr.slice(-4)}</div>
-                        <div style={{fontSize:9,color:NEON.dimText}}>{w2.wins}W / {w2.losses}L / {w2.holds}H</div>
+                        <div style={{display:"flex",alignItems:"center",gap:4}}>
+                          <div style={{fontSize:10,fontWeight:900,color:NEON.text,fontFamily:"monospace"}}>{w2.addr.slice(0,4)}...{w2.addr.slice(-4)}</div>
+                          {intel?.walletDNA?.[w2.addr] && <span style={{fontSize:9,background:`${intel.walletDNA[w2.addr].meta.color}18`,color:intel.walletDNA[w2.addr].meta.color,border:`1px solid ${intel.walletDNA[w2.addr].meta.color}30`,borderRadius:3,padding:"0px 4px"}}>{intel.walletDNA[w2.addr].meta.icon} {intel.walletDNA[w2.addr].archetype}</span>}
+                        </div>
+                        <div style={{display:"flex",alignItems:"center",gap:4}}>
+                          <div style={{fontSize:9,color:NEON.dimText}}>{w2.wins}W / {w2.losses}L / {w2.holds}H</div>
+                          {intel?.persistenceScores?.[w2.addr] && <span style={{fontSize:8,color:intel.persistenceScores[w2.addr].tierColor,fontWeight:700}}>{intel.persistenceScores[w2.addr].tier}</span>}
+                        </div>
                       </div>
                       <div style={{textAlign:"right"}}>
                         <div style={{fontSize:14,fontWeight:900,color:tc,fontFamily:"Orbitron"}}>{w2.rate}%</div>
@@ -6513,10 +6558,15 @@ export default function DegenCommandCenter(){
                 return(<div>
                   {subNav}
                   <div style={{background:"rgba(255,215,64,0.04)",border:"1px solid rgba(255,215,64,0.12)",borderRadius:6,padding:8,marginBottom:8}}>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-                      <div style={{fontSize:10,fontWeight:900,color:tierColor,fontFamily:"Orbitron",letterSpacing:1}}>{tierLabel}</div>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                      <div style={{display:"flex",alignItems:"center",gap:6}}>
+                        <div style={{fontSize:10,fontWeight:900,color:tierColor,fontFamily:"Orbitron",letterSpacing:1}}>{tierLabel}</div>
+                        {intel?.walletDNA?.[w.addr] && <span style={{fontSize:10,background:`${intel.walletDNA[w.addr].meta.color}18`,color:intel.walletDNA[w.addr].meta.color,border:`1px solid ${intel.walletDNA[w.addr].meta.color}30`,borderRadius:4,padding:"1px 6px",fontWeight:700}}>{intel.walletDNA[w.addr].meta.icon} {intel.walletDNA[w.addr].archetype}<span style={{opacity:0.7,fontSize:8,marginLeft:3}}>{intel.walletDNA[w.addr].confidence}%</span></span>}
+                        {intel?.persistenceScores?.[w.addr] && <span style={{fontSize:9,color:intel.persistenceScores[w.addr].tierColor,fontWeight:700,background:`${intel.persistenceScores[w.addr].tierColor}15`,border:`1px solid ${intel.persistenceScores[w.addr].tierColor}25`,borderRadius:4,padding:"1px 5px"}}>{intel.persistenceScores[w.addr].tier} {intel.persistenceScores[w.addr].score}pts</span>}
+                      </div>
                       <div style={{fontSize:22,fontWeight:900,color:tierColor,fontFamily:"Orbitron"}}>{w.rate}%</div>
                     </div>
+                    {intel?.walletDNA?.[w.addr] && <div style={{fontSize:8,color:NEON.dimText,marginBottom:4,fontStyle:"italic"}}>{intel.walletDNA[w.addr].meta.desc} · avg buy {intel.walletDNA[w.addr].stats.avgBuy.toFixed(2)} SOL · hold {intel.walletDNA[w.addr].stats.avgHoldMs>0?Math.round(intel.walletDNA[w.addr].stats.avgHoldMs/1000)+'s':'?'}</div>}
                     <div style={{fontSize:9,color:NEON.dimText,wordBreak:"break-all",marginBottom:6,fontFamily:"monospace"}}>{w.addr}</div>
                     <div onClick={()=>{navigator.clipboard.writeText(w.addr);}}
                       style={{cursor:"pointer",fontSize:10,fontWeight:700,color:"#111",background:tierColor,
@@ -6949,6 +6999,22 @@ export default function DegenCommandCenter(){
               ...(token.activityLevel?[{l:"🔥 ACT",v:token.activityLevel,c:token.activityLevel==="BLAZING"?"#ffd740":token.activityLevel==="HOT"?NEON.green:token.activityLevel==="ACTIVE"?NEON.cyan:NEON.dimText}]:[]),
               ...(token.rayBurnPct>0?[{l:"🔥 BURN",v:token.rayBurnPct.toFixed(0)+"%LP",c:token.rayBurnPct>90?NEON.green:token.rayBurnPct>50?NEON.cyan:NEON.orange}]:[]),
               ...(token.rayTvl>0?[{l:"💎 TVL",v:"$"+formatNum(token.rayTvl),c:NEON.cyan}]:[]),
+              // ── INTEL LAYER ──
+              ...(()=>{
+                const dna = intel?.tokenDNA?.[token.addr];
+                const dev = intel?.devFlags?.[token.deployer];
+                const sw = intel?.snipeWindow;
+                const extras = [];
+                if (dna && dna.score > 0) extras.push({l:"🧬 DNA",v:`${dna.score}% ${dna.label}`,c:dna.labelColor});
+                if (dev && dev.flagged) extras.push({l:"🚩 DEV",v:dev.tier.replace(/_/g,' '),c:dev.tier.includes('SERIAL')?'#ff073a':'#ff6600'});
+                if (dev && !dev.flagged && dev.tier) extras.push({l:"✅ DEV",v:dev.tier,c:NEON.green});
+                if (sw && token.mcap > 0) {
+                  const inWindow = token.mcap >= sw.low && token.mcap <= sw.high;
+                  const belowWindow = token.mcap < sw.low;
+                  extras.push({l:"🎯 SNIPE",v:inWindow?"IN ZONE":belowWindow?`↑$${(sw.low/1000).toFixed(0)}K`:`↓$${(sw.high/1000).toFixed(0)}K`,c:inWindow?NEON.green:belowWindow?NEON.yellow:NEON.dimText});
+                }
+                return extras;
+              })(),
             ];
             return(<div style={{position:"absolute",bottom:0,left:0,right:0,zIndex:20,
               background:"rgba(5,3,14,0.94)",backdropFilter:"blur(10px)",
@@ -7077,6 +7143,7 @@ export default function DegenCommandCenter(){
               ],[
                 {id:"BUNDLES",icon:"🔗",label:"BUNDLES",color:NEON.red,count:live.bundleAlerts?.length||0},
                 {id:"TRENDS",icon:"🔥",label:"TRENDS",color:NEON.pink,count:live.narratives?.length||0},
+                {id:"INTEL",icon:"🧬",label:"INTEL",color:"#bf00ff",count:intel?.clusters?.filter(c=>c.isHot)?.length||0},
                 {id:"STATS",icon:"📊",label:"STATS",color:NEON.cyan,count:null},
               ]].map((row,ri)=>(
                 <div key={ri} style={{display:"flex"}}>
@@ -7207,6 +7274,96 @@ export default function DegenCommandCenter(){
               </>}
 
               {/* 📊 STATS TAB */}
+              {rightTab==="INTEL"&&<div style={{padding:"2px 0"}}>
+                {/* ── SNIPE WINDOW ── */}
+                {intel?.snipeWindow && <div style={{background:"rgba(191,0,255,0.06)",border:"1px solid rgba(191,0,255,0.2)",borderRadius:6,padding:"8px 10px",marginBottom:8}}>
+                  <div style={{fontSize:9,color:"#bf00ff",letterSpacing:2,fontFamily:"'Orbitron'",marginBottom:6}}>🎯 SNIPE WINDOW</div>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                    <div style={{textAlign:"center"}}>
+                      <div style={{fontSize:7,color:NEON.dimText}}>LOW</div>
+                      <div style={{fontSize:14,color:NEON.green,fontWeight:900,fontFamily:"Orbitron"}}>${(intel.snipeWindow.low/1000).toFixed(1)}K</div>
+                    </div>
+                    <div style={{flex:1,margin:"0 8px",position:"relative",height:6}}>
+                      <div style={{position:"absolute",inset:0,background:"rgba(255,255,255,0.06)",borderRadius:3}}/>
+                      <div style={{position:"absolute",left:"10%",right:"10%",top:0,bottom:0,background:"linear-gradient(90deg,#39ff14,#ffe600)",borderRadius:3,opacity:0.7}}/>
+                    </div>
+                    <div style={{textAlign:"center"}}>
+                      <div style={{fontSize:7,color:NEON.dimText}}>HIGH</div>
+                      <div style={{fontSize:14,color:NEON.yellow,fontWeight:900,fontFamily:"Orbitron"}}>${(intel.snipeWindow.high/1000).toFixed(1)}K</div>
+                    </div>
+                  </div>
+                  <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:NEON.dimText}}>
+                    <span>📈 {intel.snipeWindow.avgMultiple}x avg</span>
+                    <span>✅ {intel.snipeWindow.successRate}% 3x rate</span>
+                    <span>📊 {intel.snipeWindow.sampleSize} winners</span>
+                  </div>
+                </div>}
+
+                {/* ── MARKET TEMP DETAIL ── */}
+                {intel?.marketTemp && <div style={{background:`${intel.marketTemp.color}08`,border:`1px solid ${intel.marketTemp.color}25`,borderRadius:6,padding:"8px 10px",marginBottom:8}}>
+                  <div style={{fontSize:9,color:NEON.dimText,letterSpacing:2,fontFamily:"'Orbitron'",marginBottom:4}}>🌡 MARKET TEMPERATURE</div>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+                    <div style={{fontSize:18,color:intel.marketTemp.color,fontWeight:900,fontFamily:"'Orbitron'"}}>{intel.marketTemp.emoji} {intel.marketTemp.label}</div>
+                    <div style={{fontSize:24,color:intel.marketTemp.color,fontWeight:900}}>{intel.marketTemp.score}</div>
+                  </div>
+                  <div style={{width:"100%",height:4,background:"rgba(255,255,255,0.05)",borderRadius:2,marginBottom:6,overflow:"hidden"}}>
+                    <div style={{width:`${intel.marketTemp.score}%`,height:"100%",background:`linear-gradient(90deg,${intel.marketTemp.color}60,${intel.marketTemp.color})`,borderRadius:2,transition:"width 2s ease"}}/>
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:3,fontSize:9,color:NEON.dimText}}>
+                    <span>🌉 {intel.marketTemp.factors.migrations} migrations/hr</span>
+                    <span>✅ {intel.marketTemp.factors.qualRate}% qual rate</span>
+                    <span>🧠 {intel.marketTemp.factors.smartWallets} smart wallets</span>
+                    <span>🔗 {intel.marketTemp.factors.bundleRate} bundles</span>
+                  </div>
+                </div>}
+
+                {/* ── WALLET CLUSTERS ── */}
+                <div style={{marginBottom:8}}>
+                  <div style={{fontSize:9,color:"#bf00ff",letterSpacing:2,fontFamily:"'Orbitron'",marginBottom:4,display:"flex",justifyContent:"space-between"}}>
+                    <span>🕸 WALLET CLUSTERS</span>
+                    <span style={{color:NEON.dimText}}>{intel?.clusters?.length||0} detected</span>
+                  </div>
+                  {(!intel?.clusters?.length) && <div style={{color:NEON.dimText,fontSize:11,textAlign:"center",padding:"10px 0",fontStyle:"italic"}}>Accumulating co-buy data...</div>}
+                  {intel?.clusters?.slice(0,8).map((cl,i) => (
+                    <div key={cl.id} style={{background:cl.isHot?"rgba(191,0,255,0.08)":"rgba(255,255,255,0.02)",
+                      border:`1px solid ${cl.isHot?"rgba(191,0,255,0.4)":"rgba(255,255,255,0.06)"}`,
+                      borderRadius:4,padding:"6px 8px",marginBottom:3}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:5}}>
+                          {cl.isHot && <div style={{width:6,height:6,borderRadius:"50%",background:"#bf00ff",boxShadow:"0 0 6px #bf00ff",animation:"blink 1s infinite"}}/>}
+                          <span style={{fontSize:10,fontWeight:900,color:cl.isHot?"#bf00ff":NEON.dimText}}>{cl.walletCount}w cluster</span>
+                          <span style={{fontSize:8,color:NEON.dimText}}>{cl.cobuys} co-buys · {cl.tokenCount} tokens</span>
+                        </div>
+                        <div style={{fontSize:9,fontWeight:700,color:cl.strength>=60?"#bf00ff":cl.strength>=30?NEON.yellow:NEON.dimText}}>
+                          {cl.strength}%
+                        </div>
+                      </div>
+                      {cl.isHot && <div style={{fontSize:8,color:"rgba(191,0,255,0.6)",marginTop:2}}>
+                        {cl.wallets.slice(0,3).map(w=>w.slice(0,6)).join(', ')}...
+                      </div>}
+                    </div>
+                  ))}
+                </div>
+
+                {/* ── TOP DNA MATCHES ── */}
+                <div>
+                  <div style={{fontSize:9,color:"#00ffff",letterSpacing:2,fontFamily:"'Orbitron'",marginBottom:4}}>🧬 TOP TOKEN DNA MATCHES</div>
+                  {Object.entries(intel?.tokenDNA||{}).filter(([,d])=>d.score>=50).sort((a,b)=>b[1].score-a[1].score).slice(0,5).map(([addr,dna])=>{
+                    const tok = tokens.find(t=>t.addr===addr);
+                    if(!tok) return null;
+                    return(<div key={addr} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 6px",
+                      background:"rgba(0,255,255,0.04)",border:"1px solid rgba(0,255,255,0.08)",borderRadius:4,marginBottom:3,cursor:"pointer"}}
+                      onClick={()=>selectToken(tok)}>
+                      <span style={{fontSize:10,fontWeight:700,color:NEON.text}}>{tok.name}</span>
+                      <div style={{display:"flex",alignItems:"center",gap:6}}>
+                        <span style={{fontSize:9,color:NEON.dimText}}>${(tok.mcap/1000).toFixed(1)}K</span>
+                        <span style={{fontSize:10,fontWeight:900,color:dna.labelColor}}>{dna.score}%</span>
+                      </div>
+                    </div>);
+                  })}
+                </div>
+              </div>}
+
               {rightTab==="STATS"&&<>
                 {(()=>{
                   const ss=live.sessionStats||{};

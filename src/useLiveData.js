@@ -2100,5 +2100,6 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
   }, []);
 
   return { tokens, whaleAlerts, intelEvents, migrations, stats,
-    smartMoneyAlerts, bundleAlerts, narratives, sessionStats, walletScoresRef: walletScores };
+    smartMoneyAlerts, bundleAlerts, narratives, sessionStats, walletScoresRef: walletScores,
+    tradeDataRef: tradeData, deployerHistoryRef: deployerHistory };
 }
