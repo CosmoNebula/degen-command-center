@@ -7,11 +7,11 @@
 //   Jupiter      — no key
 // ═══════════════════════════════════════════════════════════════
 
-const HELIUS_KEY = import.meta.env.VITE_HELIUS_KEY || "";
-const HELIUS_RPC = `https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`;
-const HELIUS_WS = `wss://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`;
+var HELIUS_KEY = import.meta.env.VITE_HELIUS_KEY || "";
+var HELIUS_RPC = `https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`;
+var HELIUS_WS = `wss://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`;
 
-const IS_DEPLOYED=typeof window!=="undefined"&&!window.location.hostname.match(/^(localhost|127\.|0\.0)/);
+var IS_DEPLOYED=typeof window!=="undefined"&&!window.location.hostname.match(/^(localhost|127\.|0\.0)/);
 export function proxyUrl(u){return IS_DEPLOYED?"/api/proxy?url="+encodeURIComponent(u):u;}
 export function proxyFetch(u,o){return IS_DEPLOYED?fetch("/api/proxy?url="+encodeURIComponent(u),o||{}):fetch(u,o||{});}
 

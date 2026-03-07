@@ -1,11 +1,11 @@
 import { useState, useRef, useEffect } from 'react';
 
-const SB_URL = "https://yrmjphhfgduysoftnuxv.supabase.co";
-const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlybWpwaGhmZ2R1eXNvZnRudXh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3MzI5MzAsImV4cCI6MjA4ODMwODkzMH0.scHhvTGiABJDybgbjgjilw8XuxOfmWPsqo4iytMZmio";
-const hdrs = { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` };
+var SB_URL = "https://yrmjphhfgduysoftnuxv.supabase.co";
+var SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlybWpwaGhmZ2R1eXNvZnRudXh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3MzI5MzAsImV4cCI6MjA4ODMwODkzMH0.scHhvTGiABJDybgbjgjilw8XuxOfmWPsqo4iytMZmio";
+var hdrs = { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` };
 
 // ── 1. WALLET DNA ARCHETYPES ──────────────────────────────────────────────────
-const ARCHETYPES = {
+var ARCHETYPES = {
   SNIPER:  { icon: '🎯', color: '#ff073a', desc: 'Fast entry, quick flip' },
   HOLDER:  { icon: '💎', color: '#00ffff', desc: 'Patient, waits for big moves' },
   WHALE:   { icon: '🐋', color: '#7c4dff', desc: 'Large position sizes' },
@@ -123,7 +123,7 @@ function extractFingerprint(token, td) {
   };
 }
 
-const FP_WEIGHTS = {
+var FP_WEIGHTS = {
   velocity: 1.5,
   holderDensity: 1.3,
   retention: 1.2,
@@ -256,6 +256,10 @@ export function useIntelligence({ walletScoresRef, tokens, tradeDataRef, deploye
   const [marketTemp, setMarketTemp] = useState({ score: 50, label: 'NEUTRAL', color: '#ffe600', emoji: '📊', factors: {} });
   const [persistenceScores, setPersistenceScores] = useState({});
   const [clusterAlerts, setClusterAlerts] = useState([]);
+  const [signalBoost, setSignalBoost] = useState({});        // addr -> {boost:0-100, reasons[], tier}
+  const [hotClusterTokens, setHotClusterTokens] = useState(new Set()); // addrs being cluster-bought now
+  const [signalBoost, setSignalBoost] = useState({});        // addr -> {boost, reasons[]}
+  const [hotClusterTokens, setHotClusterTokens] = useState(new Set()); // addrs in active clusters
 
   const winnerFPs = useRef([]);
   const coBuyMatrix = useRef({});      // "addrA|addrB" -> {count, lastSeen, tokens:Set}
@@ -265,27 +269,42 @@ export function useIntelligence({ walletScoresRef, tokens, tradeDataRef, deploye
   useEffect(() => {
     const boot = async () => {
       try {
-        // Load winners for fingerprints
+        // Load winners for fingerprints — upgrade to 500 rows with better query
         const r1 = await fetch(
-          `${SB_URL}/rest/v1/token_history?select=entry_mcap,peak_mcap,holders,volume,graduated&peak_mcap=gte.15000&entry_mcap=gt.0&limit=300&order=peak_mcap.desc`,
+          `${SB_URL}/rest/v1/token_history?select=entry_mcap,peak_mcap,holders,volume,graduated&peak_mcap=gte.15000&entry_mcap=gt.0&limit=500&order=peak_mcap.desc`,
           { headers: hdrs }
         );
         if (r1.ok) {
           const rows = await r1.json();
-          // Build approximate fingerprints from available columns
-          winnerFPs.current = rows.filter(r => r.peak_mcap > 15000).map(r => ({
-            velocity: Math.min(1, (r.volume || 0) / 8000 / 15),
-            avgBuy: 0.3,
-            sellPressure: 0.4,
-            devPct: 0.05,
-            holderDensity: Math.min(1, (r.holders || 0) / 80),
-            earlyQuality: 0.5,
-            retention: 0.6,
-            mcapTraj: Math.min(1, (r.entry_mcap || 5000) / 35000),
-            freshness: 0.5,
-            bundled: r.graduated ? 1 : 0.7,
-            peakMcap: r.peak_mcap,
-          }));
+          // Build real fingerprints using proxy math from available DB columns
+          winnerFPs.current = rows.filter(r => r.peak_mcap > 15000 && r.entry_mcap > 0).map(r => {
+            const multiple = r.peak_mcap / r.entry_mcap;
+            const volToMcap = r.volume > 0 ? r.volume / r.peak_mcap : 0;
+            // velocity proxy: high vol relative to peak = lots of early trading = fast mover
+            const velocity = Math.min(1, volToMcap * 2.5);
+            // retention: big multiple + graduated = holders never sold through pump
+            const retention = r.graduated
+              ? Math.min(0.95, 0.55 + Math.min(0.4, (multiple / 20) * 0.4))
+              : Math.min(0.85, 0.35 + Math.min(0.4, (multiple / 15) * 0.4));
+            // earlyQuality: tokens with big multiples had quality early buyers
+            const earlyQuality = Math.min(0.95, Math.max(0.2, (multiple - 1) / 15));
+            // holderDensity from actual count (proxy: bigger multiples attract more holders)
+            const holderDensity = Math.min(1, Math.max(
+              (r.holders || 0) / 120,
+              multiple > 5 ? 0.4 : 0.2
+            ));
+            return {
+              velocity,
+              avgBuy: Math.min(1, (r.peak_mcap / 40000) * 0.5),
+              sellPressure: Math.min(0.8, Math.max(0.1, 1 - retention)),
+              devPct: 0.06,
+              holderDensity, earlyQuality, retention,
+              mcapTraj: Math.min(1, r.entry_mcap / 35000),
+              freshness: 0.45,
+              bundled: r.graduated ? 1 : 0.75,
+              peakMcap: r.peak_mcap, multiple,
+            };
+          });
           console.log(`[INTEL] 📊 ${winnerFPs.current.length} winner fingerprints loaded`);
         }
 
@@ -510,6 +529,63 @@ export function useIntelligence({ walletScoresRef, tokens, tradeDataRef, deploye
 
       setClusters(clusterList);
 
+      // ── NEURAL BOOST: compute per-token signal boost from clusters + DNA ──
+      const hotTokens = new Set();
+      const boosts = {};
+
+      // Cluster boost: weight by wallet persistence — LEGENDARY/ELITE clusters hit harder
+      for (const cl of clusterList) {
+        // Compute persistence multiplier from wallets in this cluster
+        const ws = walletScoresRef?.current || {};
+        const ps = {}; // persistence scores (computed inline for speed)
+        let bestPersistTier = 'NONE';
+        for (const wAddr of cl.wallets) {
+          const w = ws[wAddr];
+          if (!w?.trades?.length) continue;
+          let pScore = 0;
+          const now2 = Date.now();
+          for (const trade of w.trades) {
+            if (trade.type !== 'WIN') continue;
+            const daysAgo = Math.max(0, (now2 - (trade.exitTime || trade.time || now2)) / 86400000);
+            const decay = Math.exp(-0.693 * daysAgo / 5);
+            const sizeM = (trade.pnl || 0) > 3 ? 2.5 : (trade.pnl || 0) > 1 ? 1.7 : 1.2;
+            pScore += decay * sizeM;
+          }
+          const tier = pScore >= 8 ? 'LEGENDARY' : pScore >= 4 ? 'ELITE' : pScore >= 1.5 ? 'PROVEN' : 'EMERGING';
+          if (['LEGENDARY','ELITE','PROVEN'].indexOf(tier) > ['LEGENDARY','ELITE','PROVEN'].indexOf(bestPersistTier)) {
+            bestPersistTier = tier;
+          }
+        }
+        const persistMult = bestPersistTier === 'LEGENDARY' ? 2.8
+          : bestPersistTier === 'ELITE' ? 2.0
+          : bestPersistTier === 'PROVEN' ? 1.5 : 1.0;
+
+        const boostAmount = cl.isHot
+          ? Math.min(35, (cl.strength / 3.5) * persistMult)
+          : Math.min(12, (cl.strength / 8) * persistMult);
+
+        for (const mint of cl.tokens) {
+          if (cl.isHot) hotTokens.add(mint);
+          if (!boosts[mint]) boosts[mint] = { boost: 0, reasons: [] };
+          boosts[mint].boost += boostAmount;
+          const label = persistMult >= 2 ? `🔗🔥 ${cl.walletCount}w ELITE cluster` : `🔗${cl.isHot ? '🔥' : ''} ${cl.walletCount}w/${cl.cobuys}x`;
+          if (!boosts[mint].reasons.includes(label)) boosts[mint].reasons.push(label);
+        }
+      }
+
+      // DNA boost: tokens matching winner fingerprint pattern
+      for (const [addr, dna] of Object.entries(tokenDNA)) {
+        if (dna.score >= 55) {
+          if (!boosts[addr]) boosts[addr] = { boost: 0, reasons: [] };
+          const dnaBoost = Math.min(18, (dna.score - 50) * 0.36);
+          boosts[addr].boost += dnaBoost;
+          boosts[addr].reasons.push(`🧬 DNA:${dna.score}%`);
+        }
+      }
+
+      setHotClusterTokens(hotTokens);
+      setSignalBoost(boosts);
+
       // Fire alerts for new hot clusters
       const newAlerts = [];
       for (const cl of clusterList) {
@@ -534,7 +610,90 @@ export function useIntelligence({ walletScoresRef, tokens, tradeDataRef, deploye
     return () => clearInterval(iv);
   }, [tradeDataRef]);
 
-  // ── Enrich dev flags with live deployer history from useLiveData ────────────
+  // ── NEURAL SIGNAL BOOST: fuse all intelligence into per-token signal — every 3s ──────
+  useEffect(() => {
+    const iv = setInterval(() => {
+      const now = Date.now();
+      const newBoost = {};
+      const newHot = new Set();
+
+      // Pre-build: which clusters are hot + what tokens they're targeting
+      const hotClusters = clusters.filter(cl => cl.isHot); // active in last 2min
+      const clusterTargets = new Map(); // addr -> {strength, walletCount, cobuys}
+      for (const cl of hotClusters) {
+        for (const addr of cl.tokens) {
+          const existing = clusterTargets.get(addr);
+          if (!existing || cl.strength > existing.strength) {
+            clusterTargets.set(addr, { strength: cl.strength, walletCount: cl.walletCount, cobuys: cl.cobuys });
+          }
+          newHot.add(addr);
+        }
+      }
+
+      // Get all token addresses from tokenDNA (already filtered to alive tokens)
+      const allAddrs = new Set([...Object.keys(tokenDNA), ...clusterTargets.keys()]);
+
+      for (const addr of allAddrs) {
+        let boost = 0;
+        const reasons = [];
+
+        // ── 1. CLUSTER SIGNAL (most powerful — coordinated whales) ──────────
+        const clData = clusterTargets.get(addr);
+        if (clData) {
+          const clBoost = Math.min(45, clData.strength * 0.45 + clData.walletCount * 3);
+          boost += clBoost;
+          reasons.push(`🔗 CLUSTER ${clData.walletCount}w (${clBoost.toFixed(0)}pts)`);
+        }
+
+        // ── 2. TOKEN DNA vs WINNERS ──────────────────────────────────────────
+        const dna = tokenDNA[addr];
+        if (dna && dna.score > 0) {
+          const dnaBoost = dna.score >= 75 ? 20 : dna.score >= 55 ? 12 : dna.score >= 40 ? 6 : 0;
+          if (dnaBoost > 0) {
+            boost += dnaBoost;
+            reasons.push(`🧬 DNA ${dna.score}% (${dnaBoost}pts)`);
+          }
+        }
+
+        // ── 3. SNIPE WINDOW alignment ────────────────────────────────────────
+        // (snipeWindow is global — we'd need token mcap here, skip for now)
+
+        // ── 4. SMART WALLET ARCHETYPES buying this token ─────────────────────
+        // We detect this by checking walletDNA for wallets that have trades on this addr
+        let eliteCount = 0, whaleCount = 0, sniperCount = 0;
+        const ps = persistenceScores;
+        for (const [waddr, dnaW] of Object.entries(walletDNA)) {
+          // Check if this wallet has traded this token (approximate via trades array)
+          const wScore = walletScoresRef?.current?.[waddr];
+          const hasTrade = wScore?.trades?.some(t => t.addr === addr);
+          if (!hasTrade) continue;
+          if (dnaW.archetype === 'ELITE') eliteCount++;
+          else if (dnaW.archetype === 'WHALE') whaleCount++;
+          else if (dnaW.archetype === 'SNIPER') sniperCount++;
+          // Persistence bonus
+          const pScore = ps[waddr];
+          if (pScore?.tier === 'LEGENDARY') boost += 8;
+          else if (pScore?.tier === 'ELITE') boost += 5;
+          else if (pScore?.tier === 'PROVEN') boost += 3;
+        }
+        if (eliteCount > 0) { boost += eliteCount * 12; reasons.push(`👑 ELITE×${eliteCount}`); }
+        if (whaleCount > 0) { boost += whaleCount * 7; reasons.push(`🐋 WHALE×${whaleCount}`); }
+        if (sniperCount > 0) { boost += sniperCount * 5; reasons.push(`🎯 SNIPER×${sniperCount}`); }
+
+        if (boost <= 0) continue;
+        boost = Math.min(100, Math.round(boost));
+        const tier = boost >= 70 ? 'ELITE' : boost >= 45 ? 'HOT' : boost >= 20 ? 'WARM' : 'WEAK';
+        const tierColor = { ELITE: '#ffd700', HOT: '#ff6600', WARM: '#00ccff', WEAK: '#5a5a7a' }[tier];
+        newBoost[addr] = { boost, reasons, tier, tierColor, ts: now };
+      }
+
+      setSignalBoost(newBoost);
+      setHotClusterTokens(newHot);
+    }, 3000);
+    return () => clearInterval(iv);
+  }, [clusters, tokenDNA, walletDNA, persistenceScores, walletScoresRef]);
+
+
   useEffect(() => {
     const iv = setInterval(() => {
       const depHistory = deployerHistoryRef?.current;
@@ -565,6 +724,8 @@ export function useIntelligence({ walletScoresRef, tokens, tradeDataRef, deploye
     snipeWindow,     // {low, high, avgMultiple, successRate, sampleSize} | null
     marketTemp,      // {score, label, color, emoji, factors}
     persistenceScores, // { addr -> {score, tier, tierColor} }
+    signalBoost,     // { addr -> {boost, reasons[]} } — cluster + DNA composite boost
+    hotClusterTokens, // Set of mint addrs currently targeted by active clusters
     // Expose helpers for UI
     ARCHETYPES,
     computePersistence,

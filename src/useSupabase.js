@@ -2,11 +2,11 @@
 // Syncs walletScores to/from Supabase every 60s
 // Merges data from all users — no duplicates, no lost wins
 
-const SUPABASE_URL = "https://yrmjphhfgduysoftnuxv.supabase.co";
-const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlybWpwaGhmZ2R1eXNvZnRudXh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3MzI5MzAsImV4cCI6MjA4ODMwODkzMH0.scHhvTGiABJDybgbjgjilw8XuxOfmWPsqo4iytMZmio";
+var SUPABASE_URL = "https://yrmjphhfgduysoftnuxv.supabase.co";
+var SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlybWpwaGhmZ2R1eXNvZnRudXh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3MzI5MzAsImV4cCI6MjA4ODMwODkzMH0.scHhvTGiABJDybgbjgjilw8XuxOfmWPsqo4iytMZmio";
 
 // ── Lightweight fetch wrapper (no SDK needed) ──
-const sb = {
+var sb = {
   async select(table, opts = {}) {
     const params = new URLSearchParams();
     if (opts.limit) params.set("limit", opts.limit);
