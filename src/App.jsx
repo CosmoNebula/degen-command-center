@@ -530,28 +530,19 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         const dbGrace = t.fromDB && sessionAge < 180000;
         const staleHigh=(t.mcap||0)>=40000&&silentMs>150000; // >=$40K, silent 2.5min
         const staleMid=(t.mcap||0)<40000&&silentMs>60000&&!t.fromDB; // <$40K live tokens only
-        const staleDB=t.fromDB&&(t.mcap||0)<40000&&silentMs>600000&&sessionAge>180000; // DB tokens under $40K silent 10min
+        const staleDB=t.fromDB&&(t.mcap||0)<40000&&silentMs>240000&&sessionAge>180000; // DB tokens under $40K silent 4min after grace
         // preMigration: either explicit bondingPct>80 OR mcap proxy ($30K-$75K non-migrated = near pump.fun ceiling)
         const mcapForPark=t.mcap||0;
         // nearMigrationMcap: in bonding ceiling range AND silent — don't park active traders
         const nearMigrationMcap=mcapForPark>=22000&&mcapForPark<=85000&&!t.migrated&&silentMs>90000;
         const preMigration=((t.bondingPct||0)>80||nearMigrationMcap)&&!t.migrated&&(!t.fromDB||sessionAge>180000);
-        const shouldPark=(staleHigh||staleMid||staleDB||preMigration)&&!isLocked&&!t.laserIn&&!t.accelerating&&!dbGrace;
-        if(preMigration&&!staleHigh&&!staleMid&&!staleDB&&!t.parked) t._preMig=true; // only tag if preMigration is sole reason
-        if(shouldPark&&!t.parked){
-          t.parked=true;
-          t.parkedAt=t.parkedAt||now_vs; // stamp when first parked for bunker decay timer
-          // Assign a stable bunker slot so they don't all stack on same pixel
-          if(!t.bunkerX){ t.bunkerX=0.79+Math.random()*0.18; t.bunkerY=0.80+Math.random()*0.14; }
-          console.log(`[FIELD] 🅿 ${t.name} parked — $${((t.mcap||0)/1000).toFixed(0)}K, ${Math.floor(silentMs/60000)}min silent`);
-        }
-        // Un-park if new activity arrives (trade within last 30s)
-        if(t.parked&&silentMs<30000){
-          t.parked=false;
-          t.parkedAt=null;t.bunkerX=null;t.bunkerY=null;
-          t._preMig=false;t._bayScans=0; // clear bay tracking on return
-          t.by=0.95;t.bx=rand(0.08,0.92); // re-enter at pit
-          console.log(`[FIELD] 🔄 ${t.name} un-parked — new activity`);
+        const shouldKillStale=(staleHigh||staleMid||staleDB||preMigration)&&!isLocked&&!t.laserIn&&!t.accelerating&&!dbGrace;
+        if(shouldKillStale){
+          // Drain ~2-4hp/frame at 30fps = ~10-20s to die visibly
+          t.health=Math.max(0,t.health-rand(2,4));
+          if(t.health<=0){ t.health=0;t.alive=false;t.deathTime=now_vs; }
+        } else {
+          t._stalePending=false;
         }
       });
 
@@ -562,7 +553,6 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         if(aLk!==bLk)return bLk-aLk;
         if(a.laserIn&&!b.laserIn)return -1;if(b.laserIn&&!a.laserIn)return 1;
         // Parked tokens go to back of queue
-        if(a.parked&&!b.parked)return 1;if(b.parked&&!a.parked)return -1;
         if(a.migrated&&!b.migrated)return -1;if(b.migrated&&!a.migrated)return 1;
         // Momentum score: recency-weighted
         const tdA=tradeData.current[a.addr];const tdB=tradeData.current[b.addr];
@@ -572,12 +562,8 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         const bScore=(b.mcap||0)*0.3+(b.vol||0)*2+(b.holders||0)*100+(b.accelerating?80000:0)+(b.qualScore||0)*5000+recB*60000;
         return bScore-aScore;
       });
-      // Active tokens fill the 80 slots — parked tokens don't count against limit
-      const activeTokens=aliveAll.filter(t=>!t.parked);
-      const parkedTokens=aliveAll.filter(t=>t.parked);
-      activeTokens.slice(0,MAX_VISUAL).forEach(t=>visualSet.add(t.id));
-      // Parked tokens are always "visible" so they can be drawn in the bunker
-      parkedTokens.forEach(t=>visualSet.add(t.id));
+      // Fill up to MAX_VISUAL slots
+      aliveAll.slice(0,MAX_VISUAL).forEach(t=>visualSet.add(t.id));
 
       tokensRef.current.forEach(t=>{
         if(!t.alive)return;if(t.inHoldingBay)return; // held for audit
@@ -778,17 +764,10 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
             targetFromMcap=zones[i][1]+(zones[i+1][1]-zones[i][1])*pct;break;}}}
         const gatedProgress=targetFromMcap+(0.95-targetFromMcap)*(1-Math.max(volGate,t.migrated?0.8:t.qualified?0.3:0));
         const canMove=t.migrated||(t.buys>=1&&t.vol>50);
-        if(t.parked){
-          // Fly to bunker — top-right corner above battlefield
-          const bx3=t.bunkerX||0.88,by3=t.bunkerY||0.87;
-          t.bx+=(bx3-t.bx)*0.04; t.by+=(by3-t.by)*0.04; // smooth glide in
-          t.vx=0; // no horizontal drift in bunker
-        } else {
-          t.targetY=Math.max(-0.1,Math.min(0.95,canMove?gatedProgress:0.95));
-          if(t.bx>0.76)t.targetY=Math.min(t.targetY,0.90); // keep tokens from bottom-right
-          const moveSpeed=t.migrated?0.015:0.005;
-          t.by+=(t.targetY-t.by)*moveSpeed;t.bx+=t.vx;
-        }
+        t.targetY=Math.max(-0.1,Math.min(0.95,canMove?gatedProgress:0.95));
+        if(t.bx>0.76)t.targetY=Math.min(t.targetY,0.90);
+        const moveSpeed=t.migrated?0.015:0.005;
+        t.by+=(t.targetY-t.by)*moveSpeed;t.bx+=t.vx;
         if(f%4===0){t.trail.push({x:t.bx,y:t.by,life:1});if(t.trail.length>20)t.trail.shift()}
         if(t.by<0.12&&!t.mooned){t.mooned=true;
           onKillFeedRef.current?.({type:"moon",name:t.name,text:`🚀 ${t.name} HIT THE MOON! 🌙`});
@@ -804,10 +783,9 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         // Skip visual rendering for non-priority tokens (data still updates above)
         if(!isVisual)return;
 
-        const px=Math.round(t.bx*W),py=Math.round(t.by*H);const isLk=locked.find(l=>l.id===t.id);const isSel=t.id===selId;const isParked=!!t.parked&&!isLk;
+        const px=Math.round(t.bx*W),py=Math.round(t.by*H);const isLk=locked.find(l=>l.id===t.id);const isSel=t.id===selId;
         const color=t.health>70?NEON.green:t.health>40?NEON.yellow:t.health>20?NEON.orange:NEON.red;
-        const bob=isParked?0:Math.round(Math.sin(f*0.03+t.bobOffset)*2);const cc=t.coinColor;const cr=isParked?8:12;
-        if(isParked)ctx.globalAlpha=0.28;
+        const bob=Math.round(Math.sin(f*0.03+t.bobOffset)*2);const cc=t.coinColor;const cr=12;
 
         // Trail - tiny dots
         t.trail.forEach(tr=>{tr.life-=0.015;if(tr.life<=0)return;
@@ -1080,16 +1058,10 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
 
         // Name — small, above
         ctx.font="10px 'Share Tech Mono'";
-        ctx.fillStyle=isParked?`rgba(180,180,200,0.35)`:isLk?NEON.yellow:isSel?NEON.cyan:`rgba(224,224,255,0.4)`;
+        ctx.fillStyle=isLk?NEON.yellow:isSel?NEON.cyan:`rgba(224,224,255,0.4)`;
         ctx.textAlign="center";ctx.textBaseline="alphabetic";
         ctx.fillText(t.name,px,py+bob-cr-3);
-        // Parked indicator
-        if(isParked){
-          ctx.font="bold 7px 'Orbitron',sans-serif";
-          ctx.fillStyle="rgba(150,150,180,0.5)";
-          ctx.fillText("P",px+cr-1,py+bob-cr);
-          ctx.globalAlpha=1.0; // restore after parked token
-        }
+
         ctx.textAlign="left";ctx.textBaseline="alphabetic";
       });
       // Clean up truly dead tokens from ref only if they've been dead 2+ min
@@ -4127,7 +4099,6 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
                   // ═══════════════════════════════════════════════════════════════
       // (holding bay building removed — now lives in footer command strip)
       if(false){
-        const bunkerCount=tokensRef.current.filter(t=>t.parked&&t.alive&&!t.inHoldingBay).length;
         const BW=Math.floor(W*0.22);   // building width
         const BH=Math.floor(H*0.22);   // building height from bottom
         const BX=W-BW-2;               // right edge flush
@@ -7616,7 +7587,7 @@ export default function DegenCommandCenter(){
                       <div style={{fontSize:9,color:"rgba(80,40,160,0.5)",textAlign:"center",paddingTop:8}}>No tokens in audit queue</div>
                     ) : holdingTokens.map(t => {
                       const age = Math.round((Date.now() - (t.holdingEnteredAt||Date.now())) / 1000);
-                      const pct = Math.min(100, age / 120 * 100);
+                      const releaseAfter = 30000 + (parseInt(t.addr?.slice(-4) || '0', 16) % 60000); const pct = Math.min(100, age / releaseAfter * 100);
                       const col = pct > 75 ? "#ff073a" : pct > 40 ? "#ffd700" : "rgba(130,60,255,0.8)";
                       return (
                         <div key={t.id} style={{display:"flex",alignItems:"center",gap:6,padding:"2px 0",
@@ -7644,7 +7615,7 @@ export default function DegenCommandCenter(){
                   <div style={{padding:"0 8px 3px",display:"flex",gap:3,overflow:"hidden"}}>
                     {holdingTokens.slice(0,6).map(t => {
                       const age = Math.round((Date.now() - (t.holdingEnteredAt||Date.now())) / 1000);
-                      const pct = Math.min(100, age/120*100);
+                      const releaseAfter = 30 + (parseInt(t.addr?.slice(-4) || '0', 16) % 60); const pct = Math.min(100, age / releaseAfter * 100);
                       return (
                         <div key={t.id} title={`${t.name} — ${age}s`}
                           style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1,minWidth:22}}>

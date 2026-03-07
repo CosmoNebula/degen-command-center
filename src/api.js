@@ -20,9 +20,18 @@ export async function fetchTokenByAddress(address) {
   try {
     const res = await proxyFetch(`https://api.dexscreener.com/tokens/v1/solana/${address}`);
     const data = await res.json();
-    // v1 endpoint returns array directly, not {pairs:[...]}
-    const pair = data?.pairs?.[0] || (Array.isArray(data) ? data[0] : null);
-    return pair ? normalizePair(pair) : null;
+    const pairs = data?.pairs || (Array.isArray(data) ? data : []);
+    if (!pairs.length) return null;
+    // Prefer non-pumpfun, then highest liquidity
+    const isPump = (d) => (d.dexId || '').toLowerCase().includes('pump');
+    const best = pairs.reduce((a, b) => {
+      if (!a) return b;
+      const aIsPump = isPump(a), bIsPump = isPump(b);
+      if (aIsPump && !bIsPump) return b;
+      if (!aIsPump && bIsPump) return a;
+      return (b.liquidity?.usd || 0) > (a.liquidity?.usd || 0) ? b : a;
+    }, null);
+    return best ? normalizePair(best) : null;
   } catch (e) {
     console.error("[DexScreener] Failed:", e);
     return null;
@@ -37,9 +46,25 @@ export async function fetchTokensBatch(addresses) {
     const res = await proxyFetch(`https://api.dexscreener.com/tokens/v1/solana/${batch}`);
     const data = await res.json();
     const pairs = data?.pairs || (Array.isArray(data) ? data : []);
-    const result = {};
+    // Group by baseToken — pick best pair: prefer non-pumpfun DEX, then highest liquidity
+    const byAddr = {};
     pairs.forEach(p => {
-      if (p?.baseToken?.address) result[p.baseToken.address] = normalizePair(p);
+      if (!p?.baseToken?.address) return;
+      const addr = p.baseToken.address;
+      const existing = byAddr[addr];
+      if (!existing) { byAddr[addr] = p; return; }
+      const isPump = (d) => (d.dexId || '').toLowerCase().includes('pump');
+      const liq = (d) => d.liquidity?.usd || 0;
+      // Prefer raydium/non-pump over pump.fun; among same type prefer higher liquidity
+      const existIsPump = isPump(existing);
+      const newIsPump = isPump(p);
+      if (existIsPump && !newIsPump) { byAddr[addr] = p; return; } // upgrade to raydium
+      if (!existIsPump && newIsPump) return; // keep existing raydium
+      if (liq(p) > liq(existing)) byAddr[addr] = p; // same type — pick higher liquidity
+    });
+    const result = {};
+    Object.values(byAddr).forEach(p => {
+      result[p.baseToken.address] = normalizePair(p);
     });
     return result;
   } catch (e) {
@@ -104,8 +129,24 @@ export async function fetchTokenMeta(mintAddress) {
 export async function fetchHolderCount(mintAddress) {
   if (!HELIUS_KEY) return 0;
   try {
-    // getTokenAccounts with limit=1 + total in response gives exact holder count
+    // Use getAsset (Helius DAS) — token_info.holder_count is the most reliable source
     const res = await fetch(`https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0", id: 1,
+        method: "getAsset",
+        params: { id: mintAddress },
+      }),
+    });
+    const data = await res.json();
+    const count = data.result?.token_info?.holder_count || 0;
+    if (count > 0) {
+      console.log(`[Helius] holder count ${mintAddress.slice(0,8)}: ${count}`);
+      return count;
+    }
+    // Fallback: getTokenAccounts total field
+    const res2 = await fetch(`https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -114,10 +155,9 @@ export async function fetchHolderCount(mintAddress) {
         params: { mint: mintAddress, limit: 1, page: 1 },
       }),
     });
-    const data = await res.json();
-    // Helius returns `total` field = exact holder count
-    const total = data.result?.total || 0;
-    console.log(`[Helius] holder count ${mintAddress.slice(0,8)}: ${total}`);
+    const data2 = await res2.json();
+    const total = data2.result?.total || 0;
+    console.log(`[Helius] holder count fallback ${mintAddress.slice(0,8)}: ${total}`);
     return total;
   } catch (e) {
     console.warn("[Helius] fetchHolderCount failed:", e.message);
