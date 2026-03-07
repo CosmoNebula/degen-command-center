@@ -888,16 +888,17 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
         const checks = [];
         const test = (n, pass) => { checks.push({ name: n, pass: !!pass }); if (pass) score++; };
 
+        const isMig = t.migrated === true;
         test("RISK", risk >= 45);
-        test("WALLETS", uniqueWallets >= 4);
+        test("WALLETS", isMig ? (t.holders || uniqueWallets) >= 4 : uniqueWallets >= 4); // use Helius count for migrated
         test("DEV<25%", devPct < 25);
         test("NO DUMP", !td.deployerSold || td.deployerSellPct < 50);
         test("ORGANIC", !isSuspicious);
-        test("VOLUME", volUsd > 200);
-        test("BUYS", buys > sells && buys > 2);
+        test("VOLUME", isMig ? (t.vol || 0) > 200 : volUsd > 200); // use DexScreener vol for migrated
+        test("BUYS", isMig ? true : (buys > sells && buys > 2)); // migrated already proved buys on pump
         test("DISTRO", topPct < 55);
 
-        const qualified = score >= 5;
+        const qualified = isMig ? score >= 4 : score >= 5; // migrated gets slightly lower bar — already proven
         const threat = isSuspicious ? "SUSPICIOUS" :
           hyperDeployer ? "SERIAL DEV" :
           bundleDetected ? "⚠ BUNDLED" :
@@ -965,11 +966,17 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
           }
         }
 
+        // Migrated tokens: don't overwrite mcap/vol/holders from PumpFun tradeData
+        // These are kept accurate by the migratedInterval (DexScreener + Helius)
+        const isMigratedToken = t.migrated === true;
         const updatedToken = {
           ...t, qualified, qualScore: score, qualChecks: checks,
           riskScore: risk, threat, threatColor,
-          mcap: mcap > 0 ? mcap : t.mcap, vol: volUsd,
-          buys, sells, holders: uniqueWallets,
+          mcap: isMigratedToken ? t.mcap : (mcap > 0 ? mcap : t.mcap),
+          vol: isMigratedToken ? t.vol : volUsd,
+          buys: isMigratedToken ? t.buys : buys,
+          sells: isMigratedToken ? t.sells : sells,
+          holders: isMigratedToken ? t.holders : uniqueWallets, // Helius count preserved for migrated
           topHolderPct: Math.round(topPct),
           devWallet: Math.round(devPct),
           health: qualified ? 70 + (risk - 50) * 0.6 : 20 + risk * 0.3,
