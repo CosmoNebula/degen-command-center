@@ -534,9 +534,12 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         const td=tradeData.current[t.addr];
         const lastTrade=td?.lastTradeTime||t.timestamp||0;
         const silentMs=now_vs-lastTrade;
+        // DB-loaded tokens get a 3min grace on session start before any park rules apply
+        const sessionAge = now_vs - (t.sessionLoadTime || t.timestamp || now_vs);
+        const dbGrace = t.fromDB && sessionAge < 180000;
         const staleHigh=(t.mcap||0)>=40000&&silentMs>150000; // >=$40K, silent 2.5min
-        const staleMid=(t.mcap||0)<40000&&silentMs>60000;   // <$40K, silent 1min
-        const shouldPark=(staleHigh||staleMid)&&!isLocked&&!t.laserIn&&!t.accelerating;
+        const staleMid=(t.mcap||0)<40000&&silentMs>60000&&!t.fromDB; // <$40K, 1min — live tokens only
+        const shouldPark=(staleHigh||staleMid)&&!isLocked&&!t.laserIn&&!t.accelerating&&!dbGrace;
         if(shouldPark&&!t.parked){
           t.parked=true;
           t.parkedAt=t.parkedAt||now_vs; // stamp when first parked for bunker decay timer
@@ -5284,7 +5287,7 @@ export default function DegenCommandCenter(){
             bobOffset:Math.random()*Math.PI*2, initials:row.name.slice(0,2).toUpperCase(),
             coinColor:pick(CC), timestamp:row.first_seen||Date.now(),
             deployer:"", imageUri:"", migrated:row.graduated||false,
-            fromDB:true, peakMcap:row.peak_mcap||liveMcap,
+            fromDB:true, peakMcap:row.peak_mcap||liveMcap, sessionLoadTime:Date.now(),
           });
         } catch(e) { /* skip */ }
       }
