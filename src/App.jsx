@@ -6842,6 +6842,44 @@ export default function DegenCommandCenter(){
             />
           </div>}
 
+          {/* CLAUDE FULLSCREEN OVERLAY — mounts when leftTab===AI, sits above everything */}
+          {leftTab==="AI"&&<div style={{
+            position:"fixed",top:0,left:0,right:0,bottom:0,
+            zIndex:9999,
+            background:"#040412",
+            display:"flex",flexDirection:"column",
+          }}>
+            {/* thin close bar at top */}
+            <div style={{
+              display:"flex",alignItems:"center",justifyContent:"space-between",
+              padding:"6px 14px",
+              borderBottom:"1px solid rgba(0,255,255,0.1)",
+              background:"rgba(0,255,255,0.02)",
+              flexShrink:0,
+            }}>
+              <div style={{fontFamily:"Orbitron,sans-serif",fontSize:"10px",color:"#00ffff",letterSpacing:"3px",fontWeight:900}}>
+                ◈ INTELLIGENCE OFFICE — FULL STREAM
+              </div>
+              <button
+                onClick={()=>setLeftTab("SCANNER")}
+                style={{background:"rgba(255,7,58,0.06)",border:"1px solid rgba(255,7,58,0.25)",color:"#ff073a",fontFamily:"Orbitron,sans-serif",fontSize:"9px",fontWeight:700,letterSpacing:"2px",padding:"4px 12px",borderRadius:"3px",cursor:"pointer"}}
+              >✕ CLOSE</button>
+            </div>
+            <div style={{flex:1,overflow:"hidden"}}>
+              <ClaudeRoom
+                tokensRef={mainTokensRef}
+                lockedTokens={lockedTokens}
+                tradeDataRef={live.tradeDataRef}
+                signalScoresRef={live.signalScoresRef}
+                intel={intel}
+                flashBoard30s={live.flashBoard30s}
+                flashBoard1m={live.flashBoard1m}
+                marketTemp={intel?.marketTemp}
+                isActive={true}
+              />
+            </div>
+          </div>}
+
 
           {/* SMART WALLET TRACKER */}
           {leftTab==="REPORT"&&<div style={{padding:"4px 6px"}}>
