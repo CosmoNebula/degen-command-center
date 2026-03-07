@@ -165,7 +165,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
         if (seenMints.current.has(newToken.mint)) return;
         seenMints.current.add(newToken.mint);
         if (seenMints.current.size > 500) {
-          seenMints.current = new Set([...seenMints.current].slice(-300));
+          seenMints.current = new Set([...seenMints.current].slice(-600));
         }
 
         const name = newToken.symbol || newToken.name || "???";

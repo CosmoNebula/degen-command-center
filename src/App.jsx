@@ -409,7 +409,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         // Always mark laserFired if token has migrated to prevent re-fire
         if(t.migrated)existing.laserFired=true;
       }});
-    if(tokensRef.current.length>300)tokensRef.current=tokensRef.current.slice(-300);
+    if(tokensRef.current.length>600)tokensRef.current=tokensRef.current.slice(-600);
   },[tokens]);
 
   useEffect(()=>{for(let i=0;i<45;i++)fogRef.current.push({x:rand(0,1),y:rand(0.7,1.05),vx:rand(-0.0004,0.0004),size:rand(30,90),opacity:rand(0.02,0.06)})},[]);
@@ -511,7 +511,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         ctx.shadowBlur=0});
 
       // Tokens — render only top 80 visually, but update ALL data
-      const MAX_VISUAL=80;
+      const MAX_VISUAL=150;
       const visualSet=new Set();
       const now_vs=Date.now();
       const aliveAll=tokensRef.current.filter(t=>t.alive&&(t.mcap||0)>=5000);
@@ -529,7 +529,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         const sessionAge = now_vs - (t.sessionLoadTime || t.timestamp || now_vs);
         const dbGrace = t.fromDB && sessionAge < 180000;
         const staleHigh=(t.mcap||0)>=40000&&silentMs>150000; // >=$40K, silent 2.5min
-        const staleMid=(t.mcap||0)<40000&&silentMs>60000&&!t.fromDB; // <$40K live tokens only
+        const staleMid=(t.mcap||0)<40000&&silentMs>180000&&!t.fromDB; // <$40K live tokens, silent 3min
         const staleDB=t.fromDB&&(t.mcap||0)<40000&&silentMs>240000&&sessionAge>180000; // DB tokens under $40K silent 4min after grace
         // preMigration: either explicit bondingPct>80 OR mcap proxy ($30K-$75K non-migrated = near pump.fun ceiling)
         const mcapForPark=t.mcap||0;
@@ -538,9 +538,11 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         const preMigration=((t.bondingPct||0)>80||nearMigrationMcap)&&!t.migrated&&(!t.fromDB||sessionAge>180000);
         const shouldKillStale=(staleHigh||staleMid||staleDB||preMigration)&&!isLocked&&!t.laserIn&&!t.accelerating&&!dbGrace;
         if(shouldKillStale){
-          // Drain ~2-4hp/frame at 30fps = ~10-20s to die visibly
-          t.health=Math.max(0,t.health-rand(2,4));
-          if(t.health<=0){ t.health=0;t.alive=false;t.deathTime=now_vs; }
+          // Only drain once per second (every 30 frames) — 3-6hp/s = ~15-30s to die
+          if(f%30===0){
+            t.health=Math.max(0,t.health-rand(3,6));
+            if(t.health<=0){ t.health=0;t.alive=false;t.deathTime=now_vs; }
+          }
         } else {
           t._stalePending=false;
         }
@@ -562,8 +564,9 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         const bScore=(b.mcap||0)*0.3+(b.vol||0)*2+(b.holders||0)*100+(b.accelerating?80000:0)+(b.qualScore||0)*5000+recB*60000;
         return bScore-aScore;
       });
-      // Fill up to MAX_VISUAL slots
+      // Fill up to MAX_VISUAL slots — top 60 get full render, rest get lite (no shadow)
       aliveAll.slice(0,MAX_VISUAL).forEach(t=>visualSet.add(t.id));
+      const hotSet=new Set(aliveAll.slice(0,60).map(t=>t.id)); // top 60 = full effects
 
       tokensRef.current.forEach(t=>{
         if(!t.alive)return;if(t.inHoldingBay)return; // held for audit
@@ -780,18 +783,26 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         if(t.by>0.15&&t.mooned&&mc<280000)t.mooned=false;
         // Skip rendering if off screen
         if(t.by<-0.05)return;
-        // Skip visual rendering for non-priority tokens (data still updates above)
-        if(!isVisual)return;
+        // Non-visual tokens: skip all rendering AND expensive physics
+        if(!isVisual){
+          // Still age and trail-clean, but skip movement/health/draw
+          t.trail=[];
+          return;
+        }
 
         const px=Math.round(t.bx*W),py=Math.round(t.by*H);const isLk=locked.find(l=>l.id===t.id);const isSel=t.id===selId;
         const color=t.health>70?NEON.green:t.health>40?NEON.yellow:t.health>20?NEON.orange:NEON.red;
         const bob=Math.round(Math.sin(f*0.03+t.bobOffset)*2);const cc=t.coinColor;const cr=12;
+        // isHot: top 60 tokens get full shadow/glow effects. Lite tokens: coin+name+HP bar only, no shadows
+        const isHot=hotSet.has(t.id)||isLk||isSel;
 
-        // Trail - tiny dots
+        // Trail - only for hot tokens
+        if(isHot){
         t.trail.forEach(tr=>{tr.life-=0.015;if(tr.life<=0)return;
           ctx.fillStyle=t.health>50?`rgba(57,255,20,${tr.life*0.1})`:`rgba(255,7,58,${tr.life*0.1})`;
           ctx.beginPath();ctx.arc(tr.x*W,tr.y*H,1,0,Math.PI*2);ctx.fill()});
         t.trail=t.trail.filter(tr=>tr.life>0);
+        }
 
         // Lock
         if(isLk){ctx.strokeStyle=`rgba(255,230,0,${0.5+Math.sin(f*0.06)*0.2})`;ctx.lineWidth=1;
@@ -799,6 +810,9 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
           ctx.setLineDash([4,3]);ctx.beginPath();ctx.arc(0,0,14,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);ctx.restore()}
         if(isSel){ctx.strokeStyle=`rgba(0,255,255,${0.5+Math.sin(f*0.08)*0.3})`;ctx.lineWidth=1;
           ctx.beginPath();ctx.arc(px,py+bob,15,0,Math.PI*2);ctx.stroke()}
+
+        // ── FULL EFFECTS: only for hot tokens (top 60) ──
+        if(isHot){
 
         // BUNDLE WARNING — pulsing red glow ring
         if(t.bundleDetected&&(t.bundleSize||0)>0){
@@ -1021,6 +1035,8 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
           });
           ctx.shadowBlur=0;ctx.textAlign="left";ctx.textBaseline="alphabetic";
         }
+
+        } // end isHot effects
 
         // Coin: image if loaded, else colored circle + initial
         const cached=imgCache.current[t.id];
