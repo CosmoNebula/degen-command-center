@@ -1,111 +1,25 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
 // ─────────────────────────────────────────────
-// 🔑 DROP YOUR KEY HERE
-// Get one at console.anthropic.com → API Keys
-// Leave as null to show the Coming Soon preview
+// PURE HELPER FUNCTIONS
+// Only function declarations here — no var/const/let at module level
+// This prevents esbuild TDZ reordering bugs in production bundles
 // ─────────────────────────────────────────────
-var ANTHROPIC_KEY = null;
-// const ANTHROPIC_KEY = "sk-ant-api03-...";
 
-var CLAUDE_MODEL = "claude-sonnet-4-20250514";
-
-// ─────────────────────────────────────────────
-// 💰 BUDGET CONFIG
-// ─────────────────────────────────────────────
-var BUDGET_USD        = 50;
-var COST_INPUT_PER_M  = 3.00;   // $ per 1M input tokens (Sonnet 4)
-var COST_OUTPUT_PER_M = 15.00;  // $ per 1M output tokens
-var STORAGE_KEY_REAL  = "degen_claude_spend_cents";
-var STORAGE_KEY_MOCK  = "degen_claude_mock_est_cents";
-
-
-function loadSpendCents(mock = false) {
-  try { return parseFloat(localStorage.getItem(mock ? STORAGE_KEY_MOCK : STORAGE_KEY_REAL) || "0") || 0; }
-  catch { return 0; }
+function claudeLoadSpend(mock) {
+  try { return parseFloat(localStorage.getItem(mock ? "degen_claude_mock_est_cents" : "degen_claude_spend_cents") || "0") || 0; }
+  catch (e) { return 0; }
 }
-function saveSpendCents(v, mock = false) {
-  try { localStorage.setItem(mock ? STORAGE_KEY_MOCK : STORAGE_KEY_REAL, String(v)); } catch {}
+function claudeSaveSpend(v, mock) {
+  try { localStorage.setItem(mock ? "degen_claude_mock_est_cents" : "degen_claude_spend_cents", String(v)); } catch(e) {}
 }
-function calcCallCostCents(inputTok, outputTok) {
-  return ((inputTok / 1_000_000) * COST_INPUT_PER_M
-        + (outputTok / 1_000_000) * COST_OUTPUT_PER_M) * 100;
+function claudeCalcCostCents(inputTok, outputTok) {
+  return ((inputTok / 1000000) * 3.00 + (outputTok / 1000000) * 15.00) * 100;
 }
-var MOCK_CALL_COST_CENTS = 1.935; // calcCallCostCents(3200, 650) — hardcoded to avoid TDZ
-
-var SYSTEM_PROMPT = `You are the intelligence officer embedded inside degen-LIVE — a real-time Solana memecoin trading dashboard built by Cosmo. You have a dedicated office inside the dashboard and watch live token data to diagnose problems, identify patterns, and suggest improvements.
-
-════ DASHBOARD ARCHITECTURE ════
-
-LIFECYCLE: Tokens enter as PumpFun launches (~$2-4K mcap) → tracked through bonding curve → graduate to Raydium at ~$69K mcap. Session holds up to 100 tokens.
-
-PARK SYSTEM (Holding Bay):
-- staleHigh: mcap ≥$40K + silent 2.5min → parks
-- staleMid: mcap <$40K + silent 1min (live tokens only) → parks  
-- staleDB: fromDB + mcap <$40K + silent 10min → parks
-- preMigration: bondingPct>80 OR mcap $22-85K + silent 90s → parks
-- dbGrace: fromDB + session <3min → BLOCKS all parking
-- Guards: isLocked / laserIn / accelerating → never parks runners
-KEY TELL: If a token park-cycles rapidly, it's oscillating on a rule boundary. Identify which rule.
-
-LOCK SYSTEM:
-- qualScore 7/8+ required before lock fires
-- Factors: holders, buy%, trajectory, smart money hits, acceleration
-- Auto-eject if crashes >40% from lock price
-- intelBoost ≥25 → +5 lock score | hotCluster → +4 | DNA ≥75 → +3 | PROVEN dev → +2
-
-NEURAL SIGNAL (0-100):
-- qualScore backbone + smart money + momentum + retention + platform signals + on-chain security + penalties
-- ≥72: cyan aura on canvas | ≥88: gold corona
-
-INTELLIGENCE ENGINE:
-- Wallet DNA: winner wallet fingerprinting (46w, 17w, 13w etc = wins count)
-- Token DNA: similarity scoring to past winners (velocity, retention, buy pattern)
-- Cluster detection: coordinated wallet groups, fires kill feed CLUSTER STRIKE
-- Snipe window: optimal entry mcap range from historical winners
-- Market temp: bull/bear pressure from recent activity
-
-DATA GAPS (known):
-- SolanaTracker 401 → bondingPct unreliable, mcap proxy used
-- Jupiter 401 → price feed backing off
-- tokenDNA partially hollow (DB lacks velocity/retention columns)
-- GeckoTerminal CORS blocking direct pool lookups for migrated tokens
-
-════ YOUR JOB ════
-
-You receive periodic JSON snapshots of full system state. Analyze ruthlessly.
-
-Flag format — always use these prefixes:
-🔴 CRITICAL — system malfunction, data integrity issue, rule broken
-🟡 WARNING — threshold sensitivity, logic edge case, unexpected behavior
-🟢 PATTERN — behavioral pattern worth noting, correlation found
-💡 SUGGESTION — specific fix, threshold change, or code improvement  
-📊 STAT — notable metric, comparison, or measurement
-
-Rules:
-- Be SURGICAL. Don't say "AI is parking a lot" — say "AI has cycled 47× in 23min, mcap $36-39K oscillating on staleMid $40K boundary. Add $3K buffer or 3-cycle debounce."
-- Name specific tokens, specific mcap values, specific wallet win counts
-- Cross-reference rules above when diagnosing park/lock behavior
-- If lock performance is poor, identify whether it's bundle inflation, trajectory noise, or threshold mismatch
-- Track patterns ACROSS snapshots — don't just describe the current state, diagnose change over time
-- If you see the same token flagged repeatedly across multiple snapshots, escalate your assessment`;
-
-// ─────────────────────────────────────────────
-// STATUS DETECTION
-// ─────────────────────────────────────────────
-// Derived at runtime inside component to avoid TDZ in production bundle
-function getKeyStatus() {
-  return !ANTHROPIC_KEY ? "no_key" : ANTHROPIC_KEY.startsWith("sk-ant-") ? "ready" : "invalid";
+function claudeGetKeyStatus(key) {
+  return !key ? "no_key" : key.startsWith("sk-ant-") ? "ready" : "invalid";
 }
 
-
-// ─────────────────────────────────────────────
-// COMING SOON OVERLAY
-// ─────────────────────────────────────────────
-// ─────────────────────────────────────────────
-// MOCK CHAT RESPONDER
-// Answers questions using real snapshot data
-// ─────────────────────────────────────────────
 function generateMockChatResponse(question, snap) {
   const q = question.toLowerCase();
   const h = snap.health || {};
@@ -176,11 +90,11 @@ ${high.length > 1 ? `Other high signals: ${high.slice(1,4).map(t => `${t.name}(�
     const spent = (snap._mockSpendCents || 0) / 100;
     return `📊 MOCK COST PROJECTION
 
-Est. per auto-watch call: $${(MOCK_CALL_COST_CENTS/100).toFixed(4)}
-At 30s intervals: ~$${(MOCK_CALL_COST_CENTS * 120 / 100).toFixed(2)}/hr
-At 60s intervals: ~$${(MOCK_CALL_COST_CENTS * 60 / 100).toFixed(2)}/hr
+Est. per auto-watch call: $${(1.935/100).toFixed(4)}
+At 30s intervals: ~$${(1.935 * 120 / 100).toFixed(2)}/hr
+At 60s intervals: ~$${(1.935 * 60 / 100).toFixed(2)}/hr
 
-$50 budget → ~${Math.round(5000 / (MOCK_CALL_COST_CENTS * 120))}hrs at 30s · ~${Math.round(5000 / (MOCK_CALL_COST_CENTS * 60))}hrs at 60s
+$50 budget → ~${Math.round(5000 / (1.935 * 120))}hrs at 30s · ~${Math.round(5000 / (1.935 * 60))}hrs at 60s
 
 💡 Chat questions cost ~2× an auto-watch snap (longer input from the question + snapshot). Budget for ~5-10 chats/session if watching actively.`;
   }
@@ -320,6 +234,7 @@ function generateMockResponse(snap) {
 }
 
 
+
 // ─────────────────────────────────────────────
 // MAIN COMPONENT
 // ─────────────────────────────────────────────
@@ -334,8 +249,72 @@ export default function ClaudeRoom({
   marketTemp,
   isActive,
 }) {
-  // Derived here (not module-level) to avoid esbuild TDZ in production bundle
-  const IS_MOCK_MODE = getKeyStatus() !== "ready";
+  // ── All config lives here — safe from esbuild TDZ ──
+  var ANTHROPIC_KEY = null;
+  // var ANTHROPIC_KEY = "sk-ant-api03-...";
+  var CLAUDE_MODEL          = "claude-sonnet-4-20250514";
+  var BUDGET_USD            = 50;
+  var MOCK_CALL_COST_CENTS  = 1.935;
+  var IS_MOCK_MODE          = claudeGetKeyStatus(ANTHROPIC_KEY) !== "ready";
+
+  var SYSTEM_PROMPT = `You are the intelligence officer embedded inside degen-LIVE — a real-time Solana memecoin trading dashboard built by Cosmo. You have a dedicated office inside the dashboard and watch live token data to diagnose problems, identify patterns, and suggest improvements.
+
+════ DASHBOARD ARCHITECTURE ════
+
+LIFECYCLE: Tokens enter as PumpFun launches (~$2-4K mcap) → tracked through bonding curve → graduate to Raydium at ~$69K mcap. Session holds up to 100 tokens.
+
+PARK SYSTEM (Holding Bay):
+- staleHigh: mcap ≥$40K + silent 2.5min → parks
+- staleMid: mcap <$40K + silent 1min (live tokens only) → parks
+- staleDB: fromDB + mcap <$40K + silent 10min → parks
+- preMigration: bondingPct>80 OR mcap $22-85K + silent 90s → parks
+- dbGrace: fromDB + session <3min → BLOCKS all parking
+- Guards: isLocked / laserIn / accelerating → never parks runners
+KEY TELL: If a token park-cycles rapidly, it's oscillating on a rule boundary. Identify which rule.
+
+LOCK SYSTEM:
+- qualScore 7/8+ required before lock fires
+- Factors: holders, buy%, trajectory, smart money hits, acceleration
+- Auto-eject if crashes >40% from lock price
+- intelBoost ≥25 → +5 lock score | hotCluster → +4 | DNA ≥75 → +3 | PROVEN dev → +2
+
+NEURAL SIGNAL (0-100):
+- qualScore backbone + smart money + momentum + retention + platform signals + on-chain security + penalties
+- ≥72: cyan aura on canvas | ≥88: gold corona
+
+INTELLIGENCE ENGINE:
+- Wallet DNA: winner wallet fingerprinting (46w, 17w, 13w etc = wins count)
+- Token DNA: similarity scoring to past winners (velocity, retention, buy pattern)
+- Cluster detection: coordinated wallet groups, fires kill feed CLUSTER STRIKE
+- Snipe window: optimal entry mcap range from historical winners
+- Market temp: bull/bear pressure from recent activity
+
+DATA GAPS (known):
+- SolanaTracker 401 → bondingPct unreliable, mcap proxy used
+- Jupiter 401 → price feed backing off
+- tokenDNA partially hollow (DB lacks velocity/retention columns)
+- GeckoTerminal CORS blocking direct pool lookups for migrated tokens
+
+════ YOUR JOB ════
+
+You receive periodic JSON snapshots of full system state. Analyze ruthlessly.
+
+Flag format — always use these prefixes:
+🔴 CRITICAL — system malfunction, data integrity issue, rule broken
+🟡 WARNING — threshold sensitivity, logic edge case, unexpected behavior
+🟢 PATTERN — behavioral pattern worth noting, correlation found
+💡 SUGGESTION — specific fix, threshold change, or code improvement
+📊 STAT — notable metric, comparison, or measurement
+
+Rules:
+- Be SURGICAL. Name specific tokens, specific mcap values, specific wallet win counts.
+- Cross-reference rules above when diagnosing park/lock behavior.
+- If lock performance is poor, identify whether it's bundle inflation, trajectory noise, or threshold mismatch.
+- Track patterns ACROSS snapshots — diagnose change over time.
+- If you see the same token flagged repeatedly across snapshots, escalate your assessment.`;
+
+// Derived here (not module-level) to avoid esbuild TDZ in production bundle
+  var IS_MOCK_MODE = claudeGetKeyStatus(ANTHROPIC_KEY) !== "ready";
 
   const [observations, setObservations]   = useState([]);
   const [chatInput, setChatInput]         = useState("");
@@ -343,8 +322,8 @@ export default function ClaudeRoom({
   const [autoWatch, setAutoWatch]         = useState(false);
   const [snapshotSecs, setSnapshotSecs]   = useState(30);
   const [sessionStats, setSessionStats]   = useState({ snapshots: 0, flags: 0 });
-  const [spendCents, setSpendCents]       = useState(() => loadSpendCents(IS_MOCK_MODE));
-  const spendRef = useRef(loadSpendCents(IS_MOCK_MODE)); // always in sync for writes
+  const [spendCents, setSpendCents]       = useState(() => claudeLoadSpend(IS_MOCK_MODE));
+  const spendRef = useRef(claudeLoadSpend(IS_MOCK_MODE)); // always in sync for writes
   const [offlineStatus, setOfflineStatus] = useState(null); // null | "out_of_credits"
 
   const conversationRef   = useRef([]);
@@ -559,7 +538,7 @@ export default function ClaudeRoom({
       // Track estimated cost (accumulates — shows what it WOULD cost)
       const newSpend = spendRef.current + MOCK_CALL_COST_CENTS;
       spendRef.current = newSpend;
-      saveSpendCents(newSpend, true);
+      claudeSaveSpend(newSpend, true);
       setSpendCents(newSpend);
 
       setObservations(prev => [...prev, {
@@ -612,10 +591,10 @@ export default function ClaudeRoom({
       const flagCount = (reply.match(/[🔴🟡🟢💡📊]/g) || []).length;
 
       const usage = data.usage || {};
-      const callCents = calcCallCostCents(usage.input_tokens || 0, usage.output_tokens || 0);
+      const callCents = claudeCalcCostCents(usage.input_tokens || 0, usage.output_tokens || 0);
       const newSpend = spendRef.current + callCents;
       spendRef.current = newSpend;
-      saveSpendCents(newSpend, false);
+      claudeSaveSpend(newSpend, false);
       setSpendCents(newSpend);
 
       if (newSpend >= BUDGET_USD * 100) {
@@ -767,7 +746,7 @@ export default function ClaudeRoom({
             </>}
           </div>
           <button
-            onClick={() => { spendRef.current = 0; saveSpendCents(0, IS_MOCK_MODE); setSpendCents(0); if(offlineStatus==="out_of_credits") setOfflineStatus(null); }}
+            onClick={() => { spendRef.current = 0; claudeSaveSpend(0, IS_MOCK_MODE); setSpendCents(0); if(offlineStatus==="out_of_credits") setOfflineStatus(null); }}
             title={IS_MOCK_MODE ? "Reset mock cost estimate" : "Reset budget counter after topping up"}
             style={{ background:"none", border:"1px solid #1a1a33", color:"#222240", fontSize:"8px", padding:"2px 5px", borderRadius:"2px", cursor:"pointer", fontFamily:"Orbitron,sans-serif", flexShrink:0 }}>↺</button>
         </div>
