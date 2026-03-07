@@ -4051,10 +4051,33 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
           ctx.beginPath();ctx.moveTo(t1x,fy);ctx.lineTo(t1x+t1w,fy);ctx.stroke();
         }
 
-        // ── NEON SIGN BOARD above entrance ──
-        const signX=BX+Math.floor(BW*0.08),signY=BY+Math.floor(BH*0.08);
+        // ── DOCK COUNT DISPLAY — above sign ──
+        const dockY=H-28;
+        ctx.font="9px 'Share Tech Mono',monospace";
+        ctx.textAlign="center";
+        if(bunkerCount>0){
+          ctx.fillStyle=`rgba(160,100,255,${0.7+pulse*0.3})`;
+          ctx.shadowColor="#8030ee";ctx.shadowBlur=6;
+          ctx.fillText(`${bunkerCount} DOCKED`,BX+BW/2,dockY);
+          ctx.shadowBlur=0;
+          // Activity indicator dots row
+          const dotRowY=dockY+5,dotSpacing=8,dotTotal=Math.min(bunkerCount,12);
+          const dotStartX=BX+BW/2-(dotTotal*dotSpacing)/2;
+          for(let di=0;di<dotTotal;di++){
+            const dotOn=(f+di*5)%16<10;
+            ctx.fillStyle=dotOn?`rgba(180,100,255,0.9)`:`rgba(50,20,100,0.5)`;
+            ctx.fillRect(dotStartX+di*dotSpacing,dotRowY,5,5);
+            if(dotOn){ctx.shadowColor="#9040ff";ctx.shadowBlur=4;ctx.fillRect(dotStartX+di*dotSpacing,dotRowY,5,5);ctx.shadowBlur=0;}
+          }
+        } else {
+          ctx.fillStyle="rgba(60,30,100,0.4)";
+          ctx.fillText("-- EMPTY --",BX+BW/2,dockY);
+        }
+
+        // ── NEON SIGN BOARD — bottom of building ──
         const signW=Math.floor(BW*0.84),signH=18;
-        ctx.fillStyle="rgba(8,4,24,0.92)";ctx.fillRect(signX,signY,signW,signH);
+        const signX=BX+Math.floor(BW*0.08),signY=H-signH-2;
+        ctx.fillStyle="rgba(8,4,24,0.96)";ctx.fillRect(signX,signY,signW,signH);
         // Sign border — animated neon
         ctx.strokeStyle=glow?`rgba(180,90,255,${0.6+pulse*0.35})`:`rgba(80,40,160,0.4)`;
         ctx.lineWidth=2;ctx.strokeRect(signX,signY,signW,signH);
@@ -4065,29 +4088,6 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         ctx.shadowColor="#9040ff";ctx.shadowBlur=glow?8:3;
         ctx.fillText("▣ HOLDING BAY",signX+signW/2,signY+12);
         ctx.shadowBlur=0;
-
-        // ── DOCK COUNT DISPLAY ──
-        const dockY=signY+signH+4;
-        ctx.font="9px 'Share Tech Mono',monospace";
-        ctx.textAlign="center";
-        if(bunkerCount>0){
-          ctx.fillStyle=`rgba(160,100,255,${0.7+pulse*0.3})`;
-          ctx.shadowColor="#8030ee";ctx.shadowBlur=6;
-          ctx.fillText(`${bunkerCount} DOCKED`,BX+BW/2,dockY+10);
-          ctx.shadowBlur=0;
-          // Activity indicator dots row
-          const dotRowY=dockY+16,dotSpacing=8,dotTotal=Math.min(bunkerCount,12);
-          const dotStartX=BX+BW/2-(dotTotal*dotSpacing)/2;
-          for(let di=0;di<dotTotal;di++){
-            const dotOn=(f+di*5)%16<10;
-            ctx.fillStyle=dotOn?`rgba(180,100,255,0.9)`:`rgba(50,20,100,0.5)`;
-            ctx.fillRect(dotStartX+di*dotSpacing,dotRowY,5,5);
-            if(dotOn){ctx.shadowColor="#9040ff";ctx.shadowBlur=4;ctx.fillRect(dotStartX+di*dotSpacing,dotRowY,5,5);ctx.shadowBlur=0;}
-          }
-        } else {
-          ctx.fillStyle="rgba(60,30,100,0.4)";
-          ctx.fillText("-- EMPTY --",BX+BW/2,dockY+10);
-        }
 
         // ── BUILDING EDGE GLOW when active ──
         if(glow){
