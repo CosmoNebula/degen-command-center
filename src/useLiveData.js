@@ -1054,23 +1054,33 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
               }
             });
 
-            // Batch update all tokens at once
+            // Batch update — pre-mig tokens: metadata only (pump socket owns mcap/vol/buys/sells)
+            // Migrated tokens: full update handled by migratedInterval, dexInterval only fills gaps
             setTokens(prev => {
               let changed = false;
               const updated = prev.map(t => {
                 const dex = results[t.addr];
                 if (!dex) return t;
                 changed = true;
+                if (t.migrated) {
+                  // Post-mig: dexInterval fills gaps only — migratedInterval is the primary source
+                  return {
+                    ...t,
+                    imageUri: dex.imageUrl || t.imageUri,
+                    priceChange5m: dex.priceChange5m !== 0 ? dex.priceChange5m : t.priceChange5m,
+                    priceChange1h: dex.priceChange1h !== 0 ? dex.priceChange1h : t.priceChange1h,
+                    dexEnriched: true,
+                  };
+                }
+                // Pre-mig: pump socket owns mcap/vol/buys/sells — dex only adds metadata
                 return {
                   ...t,
-                  liquidity: dex.liquidity || t.liquidity,
-                  mcap: dex.mcap > 0 ? dex.mcap : t.mcap,
-                  vol: dex.vol > 0 ? dex.vol : t.vol,
-                  priceUsd: dex.priceUsd || t.priceUsd,
                   imageUri: dex.imageUrl || t.imageUri,
-                  dexPlatform: dex.platform || t.platform,
                   priceChange5m: dex.priceChange5m !== 0 ? dex.priceChange5m : t.priceChange5m,
                   priceChange1h: dex.priceChange1h !== 0 ? dex.priceChange1h : t.priceChange1h,
+                  // Only use dex mcap if pump socket hasn't given us one yet
+                  mcap: (t.mcap && t.mcap > 0) ? t.mcap : (dex.mcap > 0 ? dex.mcap : t.mcap),
+                  liquidity: dex.liquidity || t.liquidity,
                   dexEnriched: true,
                 };
               });
@@ -1273,22 +1283,16 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
 
     // === BATCH 2s poll: all migrated tokens in ONE DexScreener request ===
     const migratedInterval = setInterval(async () => {
-      const mints = [...migratedMints.current];
-      if (mints.length === 0) return;
       const curTokens = tokensRef.current;
       const now = Date.now();
 
-      const toPoll = mints.map(mint => ({
-        addr: mint, id: mintToId.current[mint] || null,
-      })).filter(m => {
-        if (!m.id) return false;
-        const live = curTokens.find(t => t.id === m.id);
-        if (live) { migratedLastSeen[m.addr] = now; return true; }
-        const lastSeen = migratedLastSeen[m.addr] || now;
-        migratedLastSeen[m.addr] = migratedLastSeen[m.addr] || now;
-        if ((now - lastSeen) / 1000 > 300) { migratedMints.current.delete(m.addr); delete migratedLastSeen[m.addr]; return false; }
-        return true;
-      });
+      // Scan tokensRef directly — catches DB-loaded migrated tokens that were never in migratedMints
+      const toPoll = curTokens
+        .filter(t => t.migrated && t.alive && t.addr)
+        .map(t => ({ addr: t.addr, id: t.id }));
+
+      // Also keep migratedMints in sync for other consumers
+      toPoll.forEach(mt => { migratedMints.current.add(mt.addr); });
 
       if (toPoll.length === 0) return;
 
@@ -1348,26 +1352,37 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
         }
       });
 
-      // Helius real holder count every 30s (every 15th cycle at 2s)
+      // Helius holder refresh — stagger across cycles so all tokens get covered
+      // Each cycle picks the next token in round-robin order
       migratedHolderCycle++;
-      if (migratedHolderCycle % 15 === 0) {
-        for (const mt of toPoll.slice(0, 10)) { // was 3 — all migrated tokens need holder updates
-          try {
-            const [count, largest] = await Promise.all([
-              fetchHolderCount(mt.addr),
-              fetchLargestHolders(mt.addr),
-            ]);
-            const holderCount = count || 0;
-            const topPct = largest?.topHolderPct || 0;
-            if (holderCount > 0) {
-              setTokens(prev => prev.map(t => t.id === mt.id ? {
-                ...t, holders: holderCount, topHolderPct: topPct,
-              } : t));
-              setMigrations(prev => prev.map(m => m.mint === mt.addr ? {
-                ...m, curHolders: holderCount, lastDexUpdate: now,
-              } : m));
+      if (toPoll.length > 0) {
+        const holderIdx = migratedHolderCycle % toPoll.length; // round-robin one token per cycle
+        // Only actually fetch every 5 cycles (10s per token) to avoid rate limits
+        if (migratedHolderCycle % 5 === 0) {
+          const mt = toPoll[holderIdx % toPoll.length];
+          if (mt) {
+            try {
+              const [count, largest] = await Promise.all([
+                fetchHolderCount(mt.addr),
+                fetchLargestHolders(mt.addr),
+              ]);
+              const holderCount = count || 0;
+              const topPct = largest?.topHolderPct || 0;
+              if (holderCount > 0) {
+                console.log(`[MIGRATED-HOLDERS] ✅ ${mt.addr.slice(0,8)}: ${holderCount} holders`);
+                setTokens(prev => prev.map(t => t.id === mt.id ? {
+                  ...t, holders: holderCount, topHolderPct: topPct,
+                } : t));
+                setMigrations(prev => prev.map(m => m.mint === mt.addr ? {
+                  ...m, curHolders: holderCount, lastDexUpdate: now,
+                } : m));
+              } else {
+                console.warn(`[MIGRATED-HOLDERS] ⚠ ${mt.addr.slice(0,8)}: Helius returned 0 — keeping existing`);
+              }
+            } catch(e) {
+              console.warn(`[MIGRATED-HOLDERS] ❌ ${mt.addr.slice(0,8)}:`, e.message);
             }
-          } catch(e) { /* skip */ }
+          }
         }
       }
     }, 2000);

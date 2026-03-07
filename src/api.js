@@ -127,9 +127,12 @@ export async function fetchTokenMeta(mintAddress) {
 }
 
 export async function fetchHolderCount(mintAddress) {
-  if (!HELIUS_KEY) return 0;
+  if (!HELIUS_KEY) {
+    console.warn("[Helius] fetchHolderCount: no HELIUS_KEY set — holders will be 0");
+    return 0;
+  }
   try {
-    // Use getAsset (Helius DAS) — token_info.holder_count is the most reliable source
+    // Method 1: getAsset DAS — token_info.holder_count (most accurate when populated)
     const res = await fetch(`https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -141,24 +144,45 @@ export async function fetchHolderCount(mintAddress) {
     });
     const data = await res.json();
     const count = data.result?.token_info?.holder_count || 0;
-    if (count > 0) {
-      console.log(`[Helius] holder count ${mintAddress.slice(0,8)}: ${count}`);
-      return count;
-    }
-    // Fallback: getTokenAccounts total field
+    if (count > 0) return count;
+
+    // Method 2: getTokenAccounts — reliable total field, works for all SPL tokens
     const res2 = await fetch(`https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        jsonrpc: "2.0", id: 1,
+        jsonrpc: "2.0", id: 2,
         method: "getTokenAccounts",
         params: { mint: mintAddress, limit: 1, page: 1 },
       }),
     });
     const data2 = await res2.json();
     const total = data2.result?.total || 0;
-    console.log(`[Helius] holder count fallback ${mintAddress.slice(0,8)}: ${total}`);
-    return total;
+    if (total > 0) return total;
+
+    // Method 3: getProgramAccounts count — last resort, slower but always works
+    const res3 = await fetch(`https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0", id: 3,
+        method: "getProgramAccounts",
+        params: [
+          "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          {
+            encoding: "jsonParsed",
+            filters: [
+              { dataSize: 165 },
+              { memcmp: { offset: 0, bytes: mintAddress } }
+            ],
+            dataSlice: { offset: 0, length: 0 }, // don't need data, just count
+          }
+        ],
+      }),
+    });
+    const data3 = await res3.json();
+    const pgCount = Array.isArray(data3.result) ? data3.result.length : 0;
+    return pgCount;
   } catch (e) {
     console.warn("[Helius] fetchHolderCount failed:", e.message);
     return 0;

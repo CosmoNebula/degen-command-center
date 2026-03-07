@@ -5361,6 +5361,7 @@ export default function DegenCommandCenter(){
   const [showMenu,setShowMenu]=useState(false);
   const [bayExpanded,setBayExpanded]=useState(false);
   const [dangerTab,setDangerTab]=useState("30s");
+  const [flashDangerTab,setFlashDangerTab]=useState("30s");
   const [intelEvents,setIntelEvents]=useState([]);
   const [migrations,setMigrations]=useState([]);
   const [rightTab,setRightTab]=useState("LOCKS");
@@ -7887,141 +7888,74 @@ export default function DegenCommandCenter(){
                   </div>)})}
               </>}
 
-              {/* ⚡ FLASH BOARDS — 30s + 1m danger zones */}
-              {rightTab==="FLASH"&&<div style={{padding:"2px 0"}}>
-                {/* Header */}
-                <div style={{fontSize:9,color:"#ff073a",letterSpacing:2,fontFamily:"'Orbitron'",marginBottom:8,textAlign:"center",
-                  textShadow:"0 0 10px #ff073a",padding:"4px 0",borderBottom:"1px solid rgba(255,7,58,0.2)"}}>
-                  ⚡ DANGER ZONE BOARDS ⚡
-                </div>
-
-                {/* 30s Board */}
-                <div style={{marginBottom:10}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
-                    <div style={{fontSize:9,color:"#ff073a",letterSpacing:2,fontFamily:"'Orbitron'",fontWeight:900}}>
-                      ⚡ 30 SECOND BOARD
+              {/* ⚡ FLASH BOARDS — tabbed danger zones */}
+              {rightTab==="FLASH"&&(()=>{
+                const fdBoards = {
+                  "30s": {label:"⚡ 30s",col:"#ff073a",barScale:2,board:live.flashBoard30s||[],empty:"Accumulating data...",badges:(g)=>g>=50?"🚀 MOON":g>=30?"🔥 RIP":g>=20?"⚡ FAST":""},
+                  "1m":  {label:"🔥 1m", col:"#ff6600",barScale:1.5,board:live.flashBoard1m||[],empty:"Accumulating data...",badges:(g)=>g>=100?"🚀🚀 INSANE":g>=50?"🚀 MOON":g>=30?"🔥 RIPPING":""},
+                  "5m":  {label:"⏱ 5m", col:"#ffe600",barScale:0.6,board:live.flashBoard5m||[],empty:"Accumulating 5m data...",badges:(g)=>g>=200?"🚀🚀 INSANE":g>=100?"🚀 MOON":g>=50?"🔥 RUNNER":""},
+                };
+                const fd = fdBoards[flashDangerTab] || fdBoards["30s"];
+                return <div style={{padding:"2px 0"}}>
+                  {/* Header + tabs */}
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",
+                    marginBottom:8,paddingBottom:6,borderBottom:"1px solid rgba(255,7,58,0.2)"}}>
+                    <div style={{fontSize:9,color:"#ff073a",letterSpacing:2,fontFamily:"'Orbitron'",
+                      textShadow:"0 0 10px #ff073a",fontWeight:700}}>⚡ DEGEN DANGER</div>
+                    <div style={{display:"flex",gap:3}}>
+                      {Object.entries(fdBoards).map(([key,b])=>(
+                        <div key={key} onClick={()=>setFlashDangerTab(key)}
+                          style={{fontSize:8,fontFamily:"'Orbitron'",fontWeight:700,
+                            padding:"2px 7px",borderRadius:3,cursor:"pointer",
+                            color: flashDangerTab===key?"#111":b.col,
+                            background: flashDangerTab===key?b.col:"transparent",
+                            border:`1px solid ${b.col}${flashDangerTab===key?"ff":"44"}`,
+                            transition:"all 0.15s"}}>
+                          {b.label}
+                        </div>
+                      ))}
                     </div>
-                    <div style={{fontSize:8,color:"rgba(255,7,58,0.5)"}}>live</div>
                   </div>
-                  {(!live.flashBoard30s||live.flashBoard30s.length===0)&&
-                    <div style={{color:NEON.dimText,fontSize:10,textAlign:"center",padding:"8px 0",fontStyle:"italic"}}>
-                      Accumulating data...</div>}
-                  {(live.flashBoard30s||[]).map((entry,i)=>{
+                  {/* Active board */}
+                  {fd.board.length===0 &&
+                    <div style={{color:NEON.dimText,fontSize:10,textAlign:"center",padding:"12px 0",fontStyle:"italic"}}>
+                      {fd.empty}</div>}
+                  {fd.board.map((entry,i)=>{
                     const isUp=entry.gain>0;
                     const absGain=Math.abs(entry.gain);
-                    const barW=Math.min(100,absGain*2);
+                    const barW=Math.min(100,absGain*fd.barScale);
+                    const sig=entry.sigScore||0;
+                    const badge=absGain>0?fd.badges(absGain):"";
                     return(<div key={entry.addr} style={{
-                      background:isUp?"rgba(57,255,20,0.04)":"rgba(255,7,58,0.04)",
-                      border:`1px solid ${isUp?"rgba(57,255,20,0.15)":"rgba(255,7,58,0.15)"}`,
-                      borderLeft:`3px solid ${isUp?NEON.green:"#ff073a"}`,
+                      background:isUp?`rgba(${fd.col==="#ff073a"?"57,255,20":"255,102,0"}${fd.col==="#ffe600"?",0.04":""},0.04)`:"rgba(255,7,58,0.04)",
+                      border:`1px solid ${isUp?fd.col+"26":"rgba(255,7,58,0.15)"}`,
+                      borderLeft:`3px solid ${isUp?fd.col:"#ff073a"}`,
                       borderRadius:4,padding:"5px 7px",marginBottom:3,cursor:"pointer"}}
                       onClick={()=>{const t=tokens.find(tk=>tk.addr===entry.addr);if(t)selectToken(t);}}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                         <span style={{fontSize:10,fontWeight:900,color:NEON.text,fontFamily:"'Orbitron'"}}>
                           {i===0?"👑 ":""}{entry.name}</span>
-                        <span style={{fontSize:12,fontWeight:900,color:isUp?NEON.green:"#ff073a",fontFamily:"'Orbitron'"}}>
-                          {isUp?"+":""}{entry.gain.toFixed(1)}%</span>
-                      </div>
-                      <div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:NEON.dimText,marginTop:2}}>
-                        <span>${(entry.startMcap/1000).toFixed(1)}K → ${(entry.mcap/1000).toFixed(1)}K</span>
-                        {absGain>=20&&<span style={{color:isUp?"#ffd700":"#ff073a",fontWeight:700}}>
-                          {absGain>=50?"🚀 MOON":absGain>=30?"🔥 RIP":absGain>=20?"⚡ FAST":""}</span>}
-                      </div>
-                      <div style={{marginTop:3,height:2,background:"rgba(255,255,255,0.05)",borderRadius:1}}>
-                        <div style={{height:"100%",width:barW+"%",background:isUp?
-                          "linear-gradient(90deg,#39ff1460,#39ff14)":"linear-gradient(90deg,#ff073a60,#ff073a)",
-                          borderRadius:1,transition:"width 0.5s ease"}}/>
-                      </div>
-                    </div>);
-                  })}
-                </div>
-
-                {/* 1m Board */}
-                <div>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
-                    <div style={{fontSize:9,color:"#ff6600",letterSpacing:2,fontFamily:"'Orbitron'",fontWeight:900}}>
-                      🔥 1 MINUTE BOARD
-                    </div>
-                    <div style={{fontSize:8,color:"rgba(255,102,0,0.5)"}}>live</div>
-                  </div>
-                  {(!live.flashBoard1m||live.flashBoard1m.length===0)&&
-                    <div style={{color:NEON.dimText,fontSize:10,textAlign:"center",padding:"8px 0",fontStyle:"italic"}}>
-                      Accumulating data...</div>}
-                  {(live.flashBoard1m||[]).map((entry,i)=>{
-                    const isUp=entry.gain>0;
-                    const absGain=Math.abs(entry.gain);
-                    const barW=Math.min(100,absGain*1.5);
-                    return(<div key={entry.addr} style={{
-                      background:isUp?"rgba(255,102,0,0.04)":"rgba(255,7,58,0.04)",
-                      border:`1px solid ${isUp?"rgba(255,102,0,0.15)":"rgba(255,7,58,0.15)"}`,
-                      borderLeft:`3px solid ${isUp?"#ff6600":"#ff073a"}`,
-                      borderRadius:4,padding:"5px 7px",marginBottom:3,cursor:"pointer"}}
-                      onClick={()=>{const t=tokens.find(tk=>tk.addr===entry.addr);if(t)selectToken(t);}}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                        <span style={{fontSize:10,fontWeight:900,color:NEON.text,fontFamily:"'Orbitron'"}}>
-                          {i===0?"👑 ":""}{entry.name}</span>
-                        <span style={{fontSize:12,fontWeight:900,color:isUp?"#ff6600":"#ff073a",fontFamily:"'Orbitron'"}}>
-                          {isUp?"+":""}{entry.gain.toFixed(1)}%</span>
-                      </div>
-                      <div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:NEON.dimText,marginTop:2}}>
-                        <span>${(entry.startMcap/1000).toFixed(1)}K → ${(entry.mcap/1000).toFixed(1)}K</span>
-                        {absGain>=30&&<span style={{color:isUp?"#ffd700":"#ff073a",fontWeight:700}}>
-                          {absGain>=100?"🚀🚀 INSANE":absGain>=50?"🚀 MOON":absGain>=30?"🔥 RIPPING":""}</span>}
-                      </div>
-                      <div style={{marginTop:3,height:2,background:"rgba(255,255,255,0.05)",borderRadius:1}}>
-                        <div style={{height:"100%",width:barW+"%",background:isUp?
-                          "linear-gradient(90deg,#ff660060,#ff6600)":"linear-gradient(90deg,#ff073a60,#ff073a)",
-                          borderRadius:1,transition:"width 0.5s ease"}}/>
-                      </div>
-                    </div>);
-                  })}
-                </div>
-
-                {/* ─── 5 MINUTE BOARD ─── */}
-                <div style={{marginTop:8}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
-                    <div style={{fontSize:9,color:"#ffe600",letterSpacing:2,fontFamily:"'Orbitron'",fontWeight:900}}>
-                      ⏱ 5 MINUTE BOARD
-                    </div>
-                    <div style={{fontSize:8,color:"rgba(255,230,0,0.5)"}}>live</div>
-                  </div>
-                  {(!live.flashBoard5m||live.flashBoard5m.length===0)&&
-                    <div style={{color:NEON.dimText,fontSize:10,textAlign:"center",padding:"6px 0",fontStyle:"italic"}}>
-                      Accumulating 5m data...</div>}
-                  {(live.flashBoard5m||[]).map((entry,i)=>{
-                    const isUp=entry.gain>0;
-                    const absGain=Math.abs(entry.gain);
-                    const barW=Math.min(100,absGain*0.6);
-                    const sig = entry.sigScore || 0;
-                    return(<div key={entry.addr} style={{
-                      background:isUp?"rgba(255,230,0,0.04)":"rgba(255,7,58,0.04)",
-                      border:`1px solid ${isUp?"rgba(255,230,0,0.15)":"rgba(255,7,58,0.15)"}`,
-                      borderLeft:`3px solid ${isUp?"#ffe600":"#ff073a"}`,
-                      borderRadius:4,padding:"4px 7px",marginBottom:3,cursor:"pointer"}}
-                      onClick={()=>{const t=tokens.find(tk=>tk.addr===entry.addr);if(t)selectToken(t);}}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                        <span style={{fontSize:10,fontWeight:900,color:NEON.text,fontFamily:"'Orbitron'"}}>
-                          {i===0?"👑 ":""}{entry.name}</span>
-                        <div style={{display:"flex",alignItems:"center",gap:5}}>
+                        <div style={{display:"flex",alignItems:"center",gap:4}}>
                           {sig>=80&&<span style={{fontSize:8,color:"#ffd700",fontWeight:700,textShadow:"0 0 6px #ffd700"}}>◈{Math.round(sig)}</span>}
-                          <span style={{fontSize:12,fontWeight:900,color:isUp?"#ffe600":"#ff073a",fontFamily:"'Orbitron'"}}>
+                          <span style={{fontSize:12,fontWeight:900,color:isUp?fd.col:"#ff073a",fontFamily:"'Orbitron'"}}>
                             {isUp?"+":""}{entry.gain.toFixed(1)}%</span>
                         </div>
                       </div>
                       <div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:NEON.dimText,marginTop:2}}>
                         <span>${(entry.startMcap/1000).toFixed(1)}K → ${(entry.mcap/1000).toFixed(1)}K</span>
-                        {absGain>=50&&<span style={{color:isUp?"#ffd700":"#ff073a",fontWeight:700}}>
-                          {absGain>=200?"🚀🚀 INSANE":absGain>=100?"🚀 MOON":absGain>=50?"🔥 RUNNER":""}</span>}
+                        {badge&&<span style={{color:isUp?"#ffd700":"#ff073a",fontWeight:700}}>{badge}</span>}
                       </div>
                       <div style={{marginTop:3,height:2,background:"rgba(255,255,255,0.05)",borderRadius:1}}>
-                        <div style={{height:"100%",width:barW+"%",background:isUp?
-                          "linear-gradient(90deg,#ffe60060,#ffe600)":"linear-gradient(90deg,#ff073a60,#ff073a)",
+                        <div style={{height:"100%",width:barW+"%",
+                          background:isUp?`linear-gradient(90deg,${fd.col}60,${fd.col})`:"linear-gradient(90deg,#ff073a60,#ff073a)",
                           borderRadius:1,transition:"width 0.5s ease"}}/>
                       </div>
                     </div>);
                   })}
-                </div>
+                </div>;
+              })()}
 
+              {rightTab==="FLASH"&&<div style={{padding:"2px 0"}}>
                 {/* ◈ NEURAL TOP SIGNALS — live composite scores */}
                 {(()=>{
                   const topSignal=tokens.filter(t=>t.alive&&t.qualified)
