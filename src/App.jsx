@@ -4812,159 +4812,131 @@ export default function DegenCommandCenter(){
     };
 
     // ── PRUNE PASS (every 5 min) ────────────────────────────────────────────────
+    // Strategy: push as many rules as possible to server-side DELETE filters.
+    // Only fetch rows when we need client-side computation (win rate).
     const runPrune = async () => {
       try {
         const now = Date.now();
         console.log("[MAINT] 🧹 Prune pass starting...");
-        const m7  = now - 420000;     // 7 minutes ago
-        const h24 = now - 86400000;   // 24h ago
-        const d7  = now - 604800000;  // 7 days ago
+        const m7   = new Date(now - 420000).toISOString();    // 7 min ago
+        const h2   = new Date(now - 7200000).toISOString();   // 2h ago
+        const h24  = new Date(now - 86400000).toISOString();  // 24h ago
+        const d7   = new Date(now - 604800000).toISOString(); // 7 days ago
         let pruned = 0;
 
-        // ── TOKEN PURGE ───────────────────────────────────────────────────────
-        // Paginate to get ALL tokens, not just first 1000
-        const allTokens = [];
-        let tokenPage = 0;
-        while (true) {
-          const pageRes = await fetch(
-            `${SB_URL}/rest/v1/token_history?select=addr,peak_mcap,death_time,first_seen&limit=1000&offset=${tokenPage * 1000}`,
-            { headers: hdrs }
-          );
-          if (!pageRes.ok) break;
-          const page = await pageRes.json();
-          if (!Array.isArray(page) || page.length === 0) break;
-          allTokens.push(...page);
-          if (page.length < 1000) break;
-          tokenPage++;
-        }
-        console.log(`[MAINT] 🪙 Scanning ${allTokens.length} tokens...`);
-
+        // ── TOKEN PURGE — server-side filtered fetches, then batch delete ────────
+        // Only fetch tokens that COULD qualify for pruning — never fetch the whole table
         const tokensToPurge = [];
-        for (const t of allTokens) {
-          const peak = t.peak_mcap || 0;
-          const firstSeen = t.first_seen
-            ? (typeof t.first_seen === "number" ? t.first_seen : new Date(t.first_seen).getTime())
-            : 0;
-          const deathTime = t.death_time
-            ? (typeof t.death_time === "number" ? t.death_time : new Date(t.death_time).getTime())
-            : 0;
 
-          // Rule 1: Never broke $4K and has been around 7+ minutes
-          if (peak <= 4000 && firstSeen > 0 && firstSeen < m7) {
-            tokensToPurge.push(t.addr); continue;
-          }
-          // Rule 2: Dead, peak under $10K, older than 24h
-          if (deathTime > 0 && deathTime < h24 && peak < 10000) {
-            tokensToPurge.push(t.addr); continue;
-          }
-          // Rule 3: Dead, any peak, older than 7 days
-          if (deathTime > 0 && deathTime < d7) {
-            tokensToPurge.push(t.addr); continue;
-          }
-        }
-        const tokenPruned = await delBatch("token_history", tokensToPurge);
-        pruned += tokenPruned;
-        if (tokenPruned > 0)
-          console.log(`[MAINT] 🗑 Pruned ${tokenPruned} tokens`);
-        else
-          console.log(`[MAINT] 🪙 No tokens met prune criteria — sample first_seen: ${allTokens[0]?.first_seen}, death_time: ${allTokens[0]?.death_time}, peak: ${allTokens[0]?.peak_mcap}`);
-
-        // ── WALLET PURGE — aggressive multi-rule cleanup ─────────────────────
-        // Fetch all wallets once, apply all rules in one pass
-        // Fetch ALL wallets with pagination — Supabase default limit is 1000
-        const allWallets = [];
-        let walletPage = 0;
-        const PAGE = 1000;
-        while (true) {
-          const pageRes = await fetch(
-            `${SB_URL}/rest/v1/wallet_scores?select=addr,wins,losses,holds,total_bought,total_pnl,updated_at&limit=${PAGE}&offset=${walletPage * PAGE}`,
+        // Rule 1: peak <= $4K and first_seen > 7min ago (alive duds)
+        try {
+          const r1 = await fetch(
+            `${SB_URL}/rest/v1/token_history?select=addr&peak_mcap=lte.4000&first_seen=lt.${m7}`,
             { headers: hdrs }
           );
-          if (!pageRes.ok) break;
-          const page = await pageRes.json();
-          if (!Array.isArray(page) || page.length === 0) break;
-          allWallets.push(...page);
-          if (page.length < PAGE) break; // last page
-          walletPage++;
+          if (r1.ok) { const rows = await r1.json(); rows.forEach(r => tokensToPurge.push(r.addr)); }
+        } catch(e) { /* skip */ }
+
+        // Rule 2: dead, peak < $10K, died 24h+ ago
+        try {
+          const r2 = await fetch(
+            `${SB_URL}/rest/v1/token_history?select=addr&death_time=lt.${h24}&peak_mcap=lt.10000&death_time=not.is.null`,
+            { headers: hdrs }
+          );
+          if (r2.ok) { const rows = await r2.json(); rows.forEach(r => tokensToPurge.push(r.addr)); }
+        } catch(e) { /* skip */ }
+
+        // Rule 3: dead, any peak, 7+ days ago
+        try {
+          const r3 = await fetch(
+            `${SB_URL}/rest/v1/token_history?select=addr&death_time=lt.${d7}&death_time=not.is.null`,
+            { headers: hdrs }
+          );
+          if (r3.ok) { const rows = await r3.json(); rows.forEach(r => tokensToPurge.push(r.addr)); }
+        } catch(e) { /* skip */ }
+
+        const uniqueTokens = [...new Set(tokensToPurge)];
+        if (uniqueTokens.length > 0) {
+          const tokenPruned = await delBatch("token_history", uniqueTokens);
+          pruned += tokenPruned;
+          console.log(`[MAINT] 🗑 Pruned ${tokenPruned} tokens`);
+        } else {
+          console.log("[MAINT] 🪙 No tokens met prune criteria");
         }
-        console.log(`[MAINT] 👛 Scanning ${allWallets.length} wallets...`);
-        const wallets = allWallets;
-        if (wallets.length > 0) {
-          const now2h  = now - 7200000;   // 2 hours ago
-          const now24h = now - 86400000;  // 24 hours ago
-          const toPurge = new Set();
-          const reasons = {};
 
-          for (const w of wallets) {
-            const addr = w.addr;
-            const wins    = w.wins    || 0;
-            const losses  = w.losses  || 0;
-            const holds   = w.holds   || 0;
-            const bought  = w.total_bought || 0;
-            const pnl     = w.total_pnl   || 0;
-            const trades  = Array.isArray(w.trades) ? w.trades : [];
-            const total   = wins + losses;
-            const winRate = total > 0 ? wins / total : 0;
-            const updatedAt = w.updated_at ? new Date(w.updated_at).getTime() : 0;
+        // ── WALLET PURGE — direct server-side DELETEs for simple rules ──────────
+        // Rules that map cleanly to column filters: delete without fetching rows
+        let walletPruned = 0;
 
-            // Rule 1: Under 0.25 SOL ever spent — dust wallets
-            if (bought < 0.25) {
-              toPurge.add(addr); reasons[addr] = "<0.25 SOL"; continue;
+        // Rule 1: <0.25 SOL ever spent — dust wallets (direct delete)
+        try {
+          const r = await fetch(`${SB_URL}/rest/v1/wallet_scores?total_bought=lt.0.25`, { method: "DELETE", headers: delHdrs });
+          if (r.ok) console.log("[MAINT] 👛 Rule1 dust wallets deleted");
+        } catch(e) { /* skip */ }
+
+        // Rule 2: 0 wins, updated 2h+ ago (never proved themselves)
+        try {
+          const r = await fetch(`${SB_URL}/rest/v1/wallet_scores?wins=eq.0&losses=eq.0&updated_at=lt.${h2}`, { method: "DELETE", headers: delHdrs });
+          if (r.ok) console.log("[MAINT] 👛 Rule2 zero-activity wallets deleted");
+        } catch(e) { /* skip */ }
+
+        // Rule 4: exactly 1 loss, 0 wins, 0 holds — one-and-done loser
+        try {
+          const r = await fetch(`${SB_URL}/rest/v1/wallet_scores?wins=eq.0&losses=eq.1&holds=eq.0`, { method: "DELETE", headers: delHdrs });
+          if (r.ok) console.log("[MAINT] 👛 Rule4 one-loss wallets deleted");
+        } catch(e) { /* skip */ }
+
+        // Rule 5: 3+ losses, 0 wins — pure rug chaser
+        try {
+          const r = await fetch(`${SB_URL}/rest/v1/wallet_scores?wins=eq.0&losses=gte.3`, { method: "DELETE", headers: delHdrs });
+          if (r.ok) console.log("[MAINT] 👛 Rule5 zero-win rug chasers deleted");
+        } catch(e) { /* skip */ }
+
+        // Rule 7: 0 wins, inactive 24h+ — stale ghost
+        try {
+          const r = await fetch(`${SB_URL}/rest/v1/wallet_scores?wins=eq.0&updated_at=lt.${h24}`, { method: "DELETE", headers: delHdrs });
+          if (r.ok) console.log("[MAINT] 👛 Rule7 stale ghosts deleted");
+        } catch(e) { /* skip */ }
+
+        // Rules 3 & 6 require win rate calculation — fetch only wallets with 7+ trades
+        // and do client-side check. Much smaller fetch than the full table.
+        try {
+          const res = await fetch(
+            `${SB_URL}/rest/v1/wallet_scores?select=addr,wins,losses,total_pnl&wins=gte.1`,
+            { headers: hdrs }
+          );
+          if (res.ok) {
+            const wallets = await res.json();
+            const toPurge = [];
+            for (const w of wallets) {
+              const wins = w.wins || 0;
+              const losses = w.losses || 0;
+              const total = wins + losses;
+              const winRate = total > 0 ? wins / total : 0;
+              const pnl = w.total_pnl || 0;
+              // Rule 3: 7+ trades and win rate under 60%
+              if (total >= 7 && winRate < 0.60) { toPurge.push(w.addr); continue; }
+              // Rule 6: deeply negative PNL with under 40% win rate
+              if (pnl < -3 && winRate < 0.40) { toPurge.push(w.addr); continue; }
             }
-
-            // Rule 2: Under 2 wins and in DB more than 2 hours
-            if (wins < 2 && updatedAt < now2h) {
-              toPurge.add(addr); reasons[addr] = "<2 wins 2h+"; continue;
-            }
-
-            // Rule 3: 7+ trades and win rate under 60% — chronic underperformer
-            if (total >= 7 && winRate < 0.60) {
-              toPurge.add(addr); reasons[addr] = `${Math.round(winRate*100)}% WR after ${total} trades`; continue;
-            }
-
-            // Rule 4: Bought once, lost, never came back — one-and-done loser
-            if (total === 1 && losses === 1 && holds === 0) {
-              toPurge.add(addr); reasons[addr] = "1 trade, 1 loss"; continue;
-            }
-
-            // Rule 5: 3+ losses, 0 wins — pure rug chaser
-            if (losses >= 3 && wins === 0) {
-              toPurge.add(addr); reasons[addr] = `0 wins, ${losses} losses`; continue;
-            }
-
-            // Rule 6: Deeply negative PNL (< -3 SOL) with under 40% win rate — chronic loser
-            if (pnl < -3 && winRate < 0.40) {
-              toPurge.add(addr); reasons[addr] = `${pnl.toFixed(1)} SOL PNL, ${Math.round(winRate*100)}% WR`; continue;
-            }
-
-            // Rule 7: No activity in 24h, 0 wins — stale ghost
-            if (wins === 0 && updatedAt < now24h) {
-              toPurge.add(addr); reasons[addr] = "0 wins, inactive 24h+"; continue;
+            if (toPurge.length > 0) {
+              walletPruned = await delBatch("wallet_scores", toPurge);
+              console.log(`[MAINT] 👛 Rules 3&6 purged ${walletPruned} chronic losers`);
             }
           }
-
-          const walletPruned = await delBatch("wallet_scores", [...toPurge]);
-          pruned += walletPruned;
-          if (walletPruned > 0)
-            console.log(`[MAINT] 🗑 Purged ${walletPruned} wallets — breakdown by rule logged above`);
-
-          // Log rule breakdown
-          const ruleCounts = {};
-          for (const r of Object.values(reasons)) {
-            const key = r.replace(/\d+(\.\d+)?/g, "N");
-            ruleCounts[key] = (ruleCounts[key] || 0) + 1;
-          }
-          if (walletPruned > 0) console.log("[MAINT] 📊 Purge breakdown:", ruleCounts);
-        }
+        } catch(e) { console.warn("[MAINT] Rules 3&6 fetch failed:", e.message); }
 
         // Delete smart_alerts older than 7 days
-        del("smart_alerts", `created_at=lt.${new Date(d7).toISOString()}`);
+        try {
+          fetch(`${SB_URL}/rest/v1/smart_alerts?created_at=lt.${d7}`, { method: "DELETE", headers: delHdrs });
+        } catch(e) { /* skip */ }
 
-        if (pruned > 0) console.log(`[MAINT] 🧹 Prune pass complete — ${pruned} rows removed`);
+        pruned += walletPruned;
+        console.log(`[MAINT] 🧹 Prune pass complete`);
       } catch(e) { console.warn("[MAINT] Prune failed:", e.message); }
     };
 
-    // Run token scan immediately, then every 30s
+        // Run token scan immediately, then every 30s
     runTokenScan();
     const scanIv = setInterval(runTokenScan, 30000);
 

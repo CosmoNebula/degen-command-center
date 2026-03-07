@@ -210,7 +210,11 @@ export function useSupabase({ onStatus } = {}) {
     if (initialLoadDone.current) return;
     status("Loading wallet history from DB...");
     try {
-      const rows = await sb.select("wallet_scores", { order: "wins.desc", limit: 2000 });
+      // Only load wallets with at least 1 win — no point loading garbage on startup
+      const url = `${SUPABASE_URL}/rest/v1/wallet_scores?wins=gte.1&order=wins.desc&limit=2000`;
+      const r = await fetch(url, { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } });
+      if (!r.ok) throw new Error(`status ${r.status}`);
+      const rows = await r.json();
       let loaded = 0;
       for (const row of rows) {
         if (!row.addr) continue;
