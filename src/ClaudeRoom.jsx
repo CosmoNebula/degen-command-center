@@ -313,9 +313,6 @@ Rules:
 - Track patterns ACROSS snapshots — diagnose change over time.
 - If you see the same token flagged repeatedly across snapshots, escalate your assessment.`;
 
-// Derived here (not module-level) to avoid esbuild TDZ in production bundle
-  var IS_MOCK_MODE = claudeGetKeyStatus(ANTHROPIC_KEY) !== "ready";
-
   const [observations, setObservations]   = useState([]);
   const [chatInput, setChatInput]         = useState("");
   const [isLoading, setIsLoading]         = useState(false);
@@ -680,24 +677,6 @@ Rules:
       else if (line.match(/^[A-Z]{2,}/)) color = "#c0c0e0";
       return <div key={i} style={{ color, lineHeight:"1.65", minHeight:"1em", fontFamily:"'Share Tech Mono',monospace", fontSize:"11px" }}>{line||"\u00a0"}</div>;
     });
-
-  // live sidebar values
-  const tokens      = tokensRef?.current || [];
-  const locked      = lockedTokens || [];
-  const parked      = tokens.filter(t => t.isParked).length;
-  const field       = tokens.filter(t => !t.isParked && !locked.find(l => l.mint === t.mint)).length;
-  const sessionMin  = Math.round((Date.now() - sessionStartRef.current) / 60000);
-  const topCyclers  = Object.entries(parkCycleRef.current).sort(([,a],[,b]) => b.count - a.count).slice(0,7);
-  const recentLocks = Object.values(lockHistoryRef.current).slice(-8).reverse();
-
-  // budget bar values
-  const spentDollars    = spendCents / 100;
-  const budgetBarColor  = IS_MOCK_MODE
-    ? (spentDollars < 5 ? "#39ff14" : spentDollars < 20 ? "#ffd700" : "#ff073a")
-    : (spendCents < BUDGET_USD * 50 ? "#39ff14" : spendCents < BUDGET_USD * 80 ? "#ffd700" : "#ff073a");
-  const budgetBarPct    = IS_MOCK_MODE
-    ? Math.min(100, (spentDollars / BUDGET_USD) * 100)           // fills up in mock
-    : Math.max(0, ((BUDGET_USD - spentDollars) / BUDGET_USD) * 100); // depletes in live
 
   // ─── TELEMETRY DERIVED VALUES ──────────────
   const tokens       = tokensRef?.current || [];
