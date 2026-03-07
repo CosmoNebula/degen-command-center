@@ -5445,6 +5445,32 @@ export default function DegenCommandCenter(){
   // predictions + signals removed in v102c
   const mainTokensRef=useRef([]);
   const hotClusterRef=useRef(new Set()); // synced from intel for canvas access
+
+  // ═══ LIVE DATA ═══
+  // walletScoresRef is shared between live and supabase via a stable ref container
+  const walletScoresContainer = useRef(null);
+
+  const supabase = useSupabase({
+    onStatus: (msg, type) => {
+      console.log(`[DB ${type}] ${msg}`);
+      setDbStatus({ msg, type, ts: Date.now() });
+    },
+  });
+
+  const live = useLiveData({
+    onMarkDirty: (addr) => supabase.markDirty(addr),
+    onSmartAlert: (alert) => supabase.logSmartAlert(alert),
+    onUpsertToken: (token) => supabase.upsertToken(token),
+  });
+
+  // ── INTELLIGENCE ENGINE ─────────────────────────────────────────────────────
+  const intel = useIntelligence({
+    walletScoresRef: live.walletScoresRef,
+    tokens: live.tokens,
+    tradeDataRef: live.tradeDataRef,
+    deployerHistoryRef: live.deployerHistoryRef,
+  });
+
   useEffect(()=>{ hotClusterRef.current = intel?.hotClusterTokens || new Set(); }, [intel?.hotClusterTokens]);
 
   // ── Wire intel signalBoost into useLiveData externalBoostRef (closes the neural feedback loop) ──
@@ -5516,30 +5542,6 @@ export default function DegenCommandCenter(){
     }
   },[]);
 
-  // ═══ LIVE DATA ═══
-  // walletScoresRef is shared between live and supabase via a stable ref container
-  const walletScoresContainer = useRef(null);
-
-  const supabase = useSupabase({
-    onStatus: (msg, type) => {
-      console.log(`[DB ${type}] ${msg}`);
-      setDbStatus({ msg, type, ts: Date.now() });
-    },
-  });
-
-  const live = useLiveData({
-    onMarkDirty: (addr) => supabase.markDirty(addr),
-    onSmartAlert: (alert) => supabase.logSmartAlert(alert),
-    onUpsertToken: (token) => supabase.upsertToken(token),
-  });
-
-  // ── INTELLIGENCE ENGINE ─────────────────────────────────────────────────────
-  const intel = useIntelligence({
-    walletScoresRef: live.walletScoresRef,
-    tokens: live.tokens,
-    tradeDataRef: live.tradeDataRef,
-    deployerHistoryRef: live.deployerHistoryRef,
-  });
 
   // Once live is ready, expose its walletScoresRef to supabase
   useEffect(() => {
