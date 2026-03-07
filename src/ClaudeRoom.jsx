@@ -5,19 +5,19 @@ import { useState, useEffect, useRef, useCallback } from "react";
 // Get one at console.anthropic.com → API Keys
 // Leave as null to show the Coming Soon preview
 // ─────────────────────────────────────────────
-const ANTHROPIC_KEY = null;
+var ANTHROPIC_KEY = null;
 // const ANTHROPIC_KEY = "sk-ant-api03-...";
 
-const CLAUDE_MODEL = "claude-sonnet-4-20250514";
+var CLAUDE_MODEL = "claude-sonnet-4-20250514";
 
 // ─────────────────────────────────────────────
 // 💰 BUDGET CONFIG
 // ─────────────────────────────────────────────
-const BUDGET_USD        = 50;
-const COST_INPUT_PER_M  = 3.00;   // $ per 1M input tokens (Sonnet 4)
-const COST_OUTPUT_PER_M = 15.00;  // $ per 1M output tokens
-const STORAGE_KEY_REAL  = "degen_claude_spend_cents";
-const STORAGE_KEY_MOCK  = "degen_claude_mock_est_cents";
+var BUDGET_USD        = 50;
+var COST_INPUT_PER_M  = 3.00;   // $ per 1M input tokens (Sonnet 4)
+var COST_OUTPUT_PER_M = 15.00;  // $ per 1M output tokens
+var STORAGE_KEY_REAL  = "degen_claude_spend_cents";
+var STORAGE_KEY_MOCK  = "degen_claude_mock_est_cents";
 
 
 function loadSpendCents(mock = false) {
@@ -31,9 +31,9 @@ function calcCallCostCents(inputTok, outputTok) {
   return ((inputTok / 1_000_000) * COST_INPUT_PER_M
         + (outputTok / 1_000_000) * COST_OUTPUT_PER_M) * 100;
 }
-const MOCK_CALL_COST_CENTS = 1.935; // calcCallCostCents(3200, 650) — hardcoded to avoid TDZ
+var MOCK_CALL_COST_CENTS = 1.935; // calcCallCostCents(3200, 650) — hardcoded to avoid TDZ
 
-const SYSTEM_PROMPT = `You are the intelligence officer embedded inside degen-LIVE — a real-time Solana memecoin trading dashboard built by Cosmo. You have a dedicated office inside the dashboard and watch live token data to diagnose problems, identify patterns, and suggest improvements.
+var SYSTEM_PROMPT = `You are the intelligence officer embedded inside degen-LIVE — a real-time Solana memecoin trading dashboard built by Cosmo. You have a dedicated office inside the dashboard and watch live token data to diagnose problems, identify patterns, and suggest improvements.
 
 ════ DASHBOARD ARCHITECTURE ════
 
