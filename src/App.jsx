@@ -4681,9 +4681,17 @@ export default function DegenCommandCenter(){
   useEffect(() => {
     const SB_URL = "https://yrmjphhfgduysoftnuxv.supabase.co";
     const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlybWpwaGhmZ2R1eXNvZnRudXh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3MzI5MzAsImV4cCI6MjA4ODMwODkzMH0.scHhvTGiABJDybgbjgjilw8XuxOfmWPsqo4iytMZmio";
-    const hdrs = { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`, "Content-Type": "application/json" };
+    const hdrs    = { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`, "Content-Type": "application/json" };
+    const delHdrs = { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`, "Content-Type": "application/json", Prefer: "return=minimal" };
     const patch = (table, filter, body) => fetch(`${SB_URL}/rest/v1/${table}?${filter}`, { method:"PATCH", headers:hdrs, body:JSON.stringify(body) });
-    const del   = (table, filter)       => fetch(`${SB_URL}/rest/v1/${table}?${filter}`, { method:"DELETE", headers:hdrs });
+    const del   = async (table, filter) => {
+      const r = await fetch(`${SB_URL}/rest/v1/${table}?${filter}`, { method:"DELETE", headers:delHdrs });
+      if (!r.ok) {
+        const txt = await r.text();
+        console.warn(`[MAINT] ❌ DELETE ${table}?${filter} → ${r.status}: ${txt}`);
+      }
+      return r;
+    };
 
     // ── TOKEN SCAN (every 30s) ──────────────────────────────────────────────────
     const runTokenScan = async () => {
@@ -4787,6 +4795,7 @@ export default function DegenCommandCenter(){
     const runPrune = async () => {
       try {
         const now = Date.now();
+        console.log("[MAINT] 🧹 Prune pass starting...");
         const m7  = now - 420000;     // 7 minutes ago
         const h24 = now - 86400000;   // 24h ago
         const d7  = now - 604800000;  // 7 days ago
