@@ -319,7 +319,8 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
   useEffect(()=>{onMenuRef.current=onMenuToggle},[onMenuToggle]);
   
   useEffect(()=>{
-    tokens.filter(t=>t.qualified||t.migrated).forEach(t=>{
+    const lockedAddrs=new Set((lockedRef.current||[]).map(l=>l.addr));
+    tokens.filter(t=>t.qualified||t.migrated||lockedAddrs.has(t.addr)).forEach(t=>{
       const existing=tokensRef.current.find(e=>e.id===t.id);
       if(!existing){
         const copy={...t};
@@ -514,7 +515,9 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
       const MAX_VISUAL=150;
       const visualSet=new Set();
       const now_vs=Date.now();
-      const aliveAll=tokensRef.current.filter(t=>t.alive&&(t.mcap||0)>=5000);
+      // Always include locked tokens regardless of mcap; everyone else needs $500+ to show
+      const lockedIds=new Set(lockedRef.current.map(l=>l.id));
+      const aliveAll=tokensRef.current.filter(t=>t.alive&&(lockedIds.has(t.id)||(t.mcap||0)>=500));
 
       // ── PARKED: tokens alive for scoring but hidden from battlefield ──────────
       // A token is parked if: mcap > $40K AND no trade activity for 8+ minutes AND not locked
@@ -3033,7 +3036,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
 
       // ─── MOOD COLOR ───
       const lockedCount=lockedRef.current.length;
-      const aliveCount3=tokensRef.current.filter(t=>t.alive&&(t.mcap||0)>=5000).length;
+      const aliveCount3=tokensRef.current.filter(t=>t.alive&&(t.mcap||0)>=500).length;
       if(lockedCount>=3)ai.moodTarget=[255,215,64];
       else if(lockedCount>=1)ai.moodTarget=[0,230,255];
       else if(aliveCount3>15)ai.moodTarget=[120,200,255];
@@ -3078,7 +3081,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
           ai.focusTimer=30;
         }else{
         const locked2=lockedRef.current;
-        const alive3=tokensRef.current.filter(t=>t.alive&&(t.mcap||0)>=5000);
+        const alive3=tokensRef.current.filter(t=>t.alive&&(t.mcap||0)>=500);
         let pick=null;
         if(locked2.length>0)pick=locked2[Math.floor(Math.random()*locked2.length)];
         else if(alive3.length>0){alive3.sort((a,b)=>(b.mcap||0)-(a.mcap||0));pick=alive3[Math.floor(Math.random()*Math.min(5,alive3.length))];}
