@@ -1318,24 +1318,30 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
       }
     }, 2000);
 
-    // ─── BUNKER AUDIT: scan parked tokens with DexScreener, nuke dead ones ────
+    // ─── HOLDING BAY AUDIT: fast scan — release alive coins, nuke dead ones ────
+    // Runs every 20s. Rotates through parked tokens in batches of 5 to avoid rate limits.
+    let bayAuditCursor = 0;
     const deadCheckInterval = setInterval(async () => {
       const now = Date.now();
 
-      // Priority 1: parked tokens — batch scan up to 10 at once
+      // Collect all parked tokens + stale unparked
       const parked = tokensRef.current.filter(t => t.alive && t.parked);
-      // Priority 2: DB-loaded or long-silent unparked tokens
       const staleUnparked = tokensRef.current.filter(t => {
         if (!t.alive || t.parked) return false;
         const td = tradeData.current[t.addr];
         const silentMs = now - (td?.lastTradeTime || t.timestamp);
-        return t.fromDB ? silentMs > 180000 : (silentMs > 480000 && t.qualified);
+        return t.fromDB ? silentMs > 300000 : (silentMs > 480000 && t.qualified);
       });
 
-      const toAudit = [...parked, ...staleUnparked].slice(0, 10);
-      if (!toAudit.length) return;
+      const allCandidates = [...parked, ...staleUnparked];
+      if (!allCandidates.length) return;
 
-      console.log(`[BUNKER] 🔍 Auditing ${toAudit.length} tokens (${parked.length} parked, ${staleUnparked.length} stale)`);
+      // Rotate cursor so every token gets scanned even if bay is large
+      if (bayAuditCursor >= allCandidates.length) bayAuditCursor = 0;
+      const toAudit = allCandidates.slice(bayAuditCursor, bayAuditCursor + 5);
+      bayAuditCursor += 5;
+
+      console.log(`[BAY] 🔍 Scanning ${toAudit.length}/${allCandidates.length} (${parked.length} docked, cursor ${bayAuditCursor})`);
 
       try {
         const results = await fetchTokensBatch(toAudit.map(t => t.addr));
@@ -1345,63 +1351,78 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
           const liveMcap = dex?.mcap || 0;
           const peakMcap = t.peakMcap || t.mcap || 0;
           const platform = dex?.platform || 'unknown';
+          const timeParked = now - (t.parkedAt || now);
 
-          // ── PRE-MIGRATION tokens get special treatment ──
+          // ── PRE-MIGRATION tokens ──
           if (t._preMig) {
-            // Did it actually migrate? DexScreener will show raydium/meteora/orca etc
             const hasMigrated = dex && platform !== 'pump.fun' && platform !== 'unknown' && liveMcap > 0;
-            // Increment scan counter
             const scanCount = (t._bayScans || 0) + 1;
-
             if (hasMigrated) {
-              // Token graduated — remove from our tracker (it's now a proper DEX coin, not our game)
-              console.log(`[BUNKER] 🎓 ${t.name} MIGRATED to ${platform} — removing from bay ($${(liveMcap/1000).toFixed(1)}K)`);
-              setTokens(prev => prev.map(tok => tok.addr === t.addr ? { ...tok, alive: false, health: 0, deathTime: now, _migratedOut: true } : tok));
+              console.log(`[BAY] 🎓 ${t.name} MIGRATED → ${platform} ($${(liveMcap/1000).toFixed(1)}K) — removing`);
+              setTokens(prev => prev.map(tok => tok.addr === t.addr ? { ...tok, alive: false, health: 0, deathTime: now } : tok));
               if (onUpsertTokenRef.current) sbUpsertToken({ ...t, alive: false, mcap: liveMcap, peakMcap });
-            } else if (scanCount >= 2) {
-              // 2 scans and still stuck on bonding curve — assume bugged, nuke it
-              console.log(`[BUNKER] 🪲 ${t.name} stuck bug after ${scanCount} bay scans — purging`);
+            } else if (scanCount >= 3) {
+              console.log(`[BAY] 🪲 ${t.name} stuck after ${scanCount} scans — purging`);
               setTokens(prev => prev.map(tok => tok.addr === t.addr ? { ...tok, alive: false, health: 0, deathTime: now } : tok));
             } else {
-              // 1st scan — still waiting, update scan counter and mcap
-              console.log(`[BUNKER] ⏳ ${t.name} pre-mig scan ${scanCount} — still on bonding curve ($${(liveMcap/1000).toFixed(1)}K)`);
+              console.log(`[BAY] ⏳ ${t.name} pre-mig scan ${scanCount} — still bonding ($${(liveMcap/1000).toFixed(1)}K)`);
               setTokens(prev => prev.map(tok => tok.addr === t.addr ? { ...tok, mcap: liveMcap || tok.mcap, _bayScans: scanCount } : tok));
-              // Also update the ref directly so next loop sees updated count
               const tRef = tokensRef.current.find(r => r.addr === t.addr);
               if (tRef) tRef._bayScans = scanCount;
             }
-            continue; // skip normal audit logic
+            continue;
           }
 
-          // ── NORMAL parked / stale token audit ──
-          // Dead criteria: no dex data, mcap < $800, OR fell >92% from peak
+          // ── NORMAL docked token ──
+          // Dead: no data, mcap < $800, cratered >92% from peak, OR docked 8min+ and down >80%
           const isDead = !dex || liveMcap < 800 || (peakMcap > 3000 && liveMcap < peakMcap * 0.08);
-          // Extra: parked token that's been parked 10+ min and mcap fell >75% from peak
-          const bunkerDead = t.parked && (now - (t.parkedAt || now)) > 600000 && peakMcap > 5000 && liveMcap < peakMcap * 0.25;
+          const bayDecay = t.parked && timeParked > 480000 && peakMcap > 5000 && liveMcap < peakMcap * 0.20;
 
-          if (isDead || bunkerDead) {
-            const reason = bunkerDead ? `bunker decay (${((liveMcap/peakMcap)*100).toFixed(0)}% of peak)` : `dead ($${liveMcap?.toFixed(0)||0})`;
-            console.log(`[BUNKER] 💀 ${t.name} evicted — ${reason}`);
+          if (isDead || bayDecay) {
+            const reason = bayDecay ? `bay decay ${((liveMcap/peakMcap)*100).toFixed(0)}% of peak` : `dead $${liveMcap.toFixed(0)}`;
+            console.log(`[BAY] 💀 ${t.name} evicted — ${reason}`);
             setTokens(prev => prev.map(tok => tok.addr === t.addr ? { ...tok, alive: false, health: 0, deathTime: now } : tok));
             if (onUpsertTokenRef.current) sbUpsertToken({ ...t, alive: false, mcap: liveMcap, peakMcap });
-          } else if (liveMcap > 0) {
-            // Still alive — update mcap. If parked token is pumping again, un-park it
-            const pumpingAgain = t.parked && liveMcap > (t.mcap || 0) * 1.15;
+            continue;
+          }
+
+          if (liveMcap > 0) {
+            // Release conditions (any one triggers return to field):
+            // 1. Pumping hard (>10% gain since parked)
+            // 2. Still healthy mcap (>50% of peak) and been docked >2min — give it another shot
+            // 3. High mcap token ($40K+) that hasn't cratered — always worth showing
+            const prevMcap = t.mcap || 0;
+            const pumping = liveMcap > prevMcap * 1.10;
+            const stillHealthy = liveMcap > peakMcap * 0.50 && timeParked > 120000;
+            const highValue = liveMcap >= 40000 && liveMcap > peakMcap * 0.30;
+            const shouldRelease = t.parked && (pumping || stillHealthy || highValue);
+
             const zz=[[5000,0.95],[10000,0.63],[20000,0.47],[50000,0.32],[100000,0.20],[300000,0.10]];
             let targetY=0.95;
             if(liveMcap>=300000)targetY=0.08;
             else{for(let i=0;i<zz.length-1;i++){if(liveMcap>=zz[i][0]&&liveMcap<zz[i+1][0]){const pct=(liveMcap-zz[i][0])/(zz[i+1][0]-zz[i][0]);targetY=zz[i][1]+(zz[i+1][1]-zz[i][1])*pct;break;}}}
+
+            if (shouldRelease) {
+              const why = pumping ? `📈 pumping +${(((liveMcap/prevMcap)-1)*100).toFixed(0)}%` : stillHealthy ? `💚 still healthy` : `💰 high value`;
+              console.log(`[BAY] 🔄 ${t.name} RELEASED — ${why} $${(liveMcap/1000).toFixed(1)}K`);
+            }
+
             setTokens(prev => prev.map(tok => tok.addr === t.addr ? {
               ...tok, mcap: liveMcap, targetY,
               peakMcap: Math.max(tok.peakMcap || 0, liveMcap),
-              ...(pumpingAgain ? { parked: false, bunkerX: null, bunkerY: null, by: 0.95 } : {}),
+              ...(shouldRelease ? { parked: false, bunkerX: null, bunkerY: null, _preMig: false, _bayScans: 0, by: targetY, bx: 0.08 + Math.random() * 0.75 } : {}),
             } : tok));
-            if (pumpingAgain) console.log(`[BUNKER] 🔄 ${t.name} PUMPING FROM BUNKER — $${(liveMcap/1000).toFixed(1)}K — returning to field`);
+
+            // Also update ref for immediate canvas loop effect
+            if (shouldRelease) {
+              const tRef = tokensRef.current.find(r => r.addr === t.addr);
+              if (tRef) { tRef.parked = false; tRef.bunkerX = null; tRef.bunkerY = null; tRef._preMig = false; tRef._bayScans = 0; }
+            }
             if (onUpsertTokenRef.current) sbUpsertToken({ ...t, mcap: liveMcap, peakMcap: Math.max(peakMcap, liveMcap), alive: true });
           }
         }
-      } catch(e) { console.warn('[BUNKER] Audit failed:', e.message); }
-    }, 180000); // every 3 mins
+      } catch(e) { console.warn('[BAY] Audit failed:', e.message); }
+    }, 20000); // every 20s — rotates through all docked tokens
 
     return () => {
       if (typeof pf === 'function') pf();

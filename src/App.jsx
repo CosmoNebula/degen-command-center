@@ -510,8 +510,8 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         const sessionAge = now_vs - (t.sessionLoadTime || t.timestamp || now_vs);
         const dbGrace = t.fromDB && sessionAge < 180000;
         const staleHigh=(t.mcap||0)>=40000&&silentMs>150000; // >=$40K, silent 2.5min
-        const staleMid=(t.mcap||0)<40000&&silentMs>60000; // <$40K, 1min silence — dbGrace handles fresh loads
-        const preMigration=(t.bondingPct||0)>80&&!t.migrated; // close to migration — park to bay
+        const staleMid=(t.mcap||0)<40000&&silentMs>60000&&!t.fromDB; // <$40K live tokens only — DB tokens use staleHigh only
+        const preMigration=(t.bondingPct||0)>80&&!t.migrated&&(!t.fromDB||sessionAge>300000); // >80% bonding — park after 5min grace for DB tokens
         const shouldPark=(staleHigh||staleMid||preMigration)&&!isLocked&&!t.laserIn&&!t.accelerating&&!dbGrace;
         if(preMigration&&!t.parked) t._preMig=true; // tag so audit knows why it's parked
         if(shouldPark&&!t.parked){
