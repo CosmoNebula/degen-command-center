@@ -332,6 +332,8 @@ Rules:
   const sessionStartRef   = useRef(Date.now());
   const feedEndRef        = useRef(null);
   const snapshotCountRef  = useRef(0);
+  const tempHistoryRef    = useRef([]);   // [{t, score, bull, bear}] last 40 pts
+  const sigHistoryRef     = useRef([]);   // [{t, avg}] last 40 pts
 
 
   useEffect(() => { autoWatchRef.current = autoWatch; }, [autoWatch]);
@@ -624,6 +626,19 @@ Rules:
     }
     return () => clearInterval(intervalRef.current);
   }, [autoWatch, snapshotSecs, runWatch]);
+
+  // ─── TELEMETRY HISTORY ───────────────────
+  useEffect(() => {
+    const mt = marketTemp || {};
+    tempHistoryRef.current = [...tempHistoryRef.current, {
+      t: Date.now(), score: mt.score ?? 50, bull: mt.bullPressure ?? 0, bear: mt.bearPressure ?? 0
+    }].slice(-40);
+    const toks = tokensRef?.current || [];
+    const sigs = signalScoresRef?.current || {};
+    const scores = toks.map(t => sigs[t.mint] || 0).filter(s => s > 0);
+    const avg = scores.length ? Math.round(scores.reduce((a,b)=>a+b,0)/scores.length) : 0;
+    sigHistoryRef.current = [...sigHistoryRef.current, { t: Date.now(), avg }].slice(-40);
+  }, [marketTemp]);
 
   // ─── MANUAL CHAT ─────────────────────────
   const handleSend = useCallback(() => {
