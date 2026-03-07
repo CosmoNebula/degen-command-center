@@ -411,6 +411,9 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         if(t.migrated)existing.laserFired=true;
       }});
     if(tokensRef.current.length>600)tokensRef.current=tokensRef.current.slice(-600);
+    // Prune imgCache — keep only images for tokens still in tokensRef
+    var liveIds=new Set(tokensRef.current.map(t=>t.id));
+    Object.keys(imgCache.current).forEach(id=>{if(!liveIds.has(id))delete imgCache.current[id]});
   },[tokens]);
 
   useEffect(()=>{for(let i=0;i<45;i++)fogRef.current.push({x:rand(0,1),y:rand(0.7,1.05),vx:rand(-0.0004,0.0004),size:rand(30,90),opacity:rand(0.02,0.06)})},[]);
@@ -4738,10 +4741,10 @@ function LeaderboardPanel({ SB_URL, SB_KEY, onSelectToken, onSelectWallet, onKil
     if (category) fetchData(section, category, timeframe);
   }, [section, category, timeframe]);
 
-  // Auto-refresh every 3s while a category is selected
+  // Auto-refresh every 30s while a category is selected
   useEffect(() => {
     if (!category || section === "HUNTERS") return;
-    const iv = setInterval(() => fetchData(section, category, timeframe, true), 3000);
+    const iv = setInterval(() => fetchData(section, category, timeframe, true), 30000);
     return () => clearInterval(iv);
   }, [section, category, timeframe]);
 
@@ -4965,6 +4968,7 @@ export default function DegenCommandCenter(){
   const [alienStats,setAlienStats]=useState([]);
   // ═══ NEW FEATURE STATE ═══
   const correspondentRef=useRef({queue:[],_lastId:0});
+  const corrFired=useRef(new Set()); // tracks fired correspondent events to avoid state mutation
   const [corrDisplay,setCorrDisplay]=useState({visible:false,msg:"",mood:"idle"});
   const pushMsg=(msg,mood)=>{const cr=correspondentRef.current;cr.queue.push({msg,mood});if(cr.queue.length>4)cr.queue.shift();};
   const comboRef=useRef({count:0,lastEvent:0,peak:0});
@@ -5839,49 +5843,40 @@ export default function DegenCommandCenter(){
     return()=>clearInterval(iv);
   },[]);
 
-  // Correspondent event triggers
+  // Correspondent event triggers — uses corrFired ref Set instead of mutating token/migration objects
   useEffect(()=>{
-    const cr=correspondentRef.current;
-    const pushMsg=(msg,mood)=>{cr.queue.push({msg,mood});if(cr.queue.length>4)cr.queue.shift()};
-    tokens.forEach(t=>{
-      if(t.mcap>=300000&&!t._corr300k){t._corr300k=true;pushMsg("🚨 "+t.name+" JUST HIT $300K — absolute MOONSHOT in progress!","hype")}
-      if(t.mcap>=100000&&!t._corr100k){t._corr100k=true;pushMsg("⚡ "+t.name+" crossed $100K — this one has legs!","hype")}
+    var cr=correspondentRef.current;
+    var cf=corrFired.current;
+    var pm=function(msg,mood){cr.queue.push({msg,mood});if(cr.queue.length>4)cr.queue.shift()};
+    var ck=function(key){if(cf.has(key))return true;cf.add(key);return false};
+    tokens.forEach(function(t){
+      if(t.mcap>=300000&&!ck(t.addr+"_300k"))pm("🚨 "+t.name+" JUST HIT $300K — absolute MOONSHOT in progress!","hype");
+      if(t.mcap>=100000&&!ck(t.addr+"_100k"))pm("⚡ "+t.name+" crossed $100K — this one has legs!","hype");
     });
-    const newBundles=tokens.filter(t=>t.bundleDetected&&t.bundleSize>=5&&!t._corrBundle);
-    if(newBundles.length>0){newBundles.forEach(t=>{t._corrBundle=true});
-      pushMsg("👀 Heavy bundle activity — "+newBundles.length+" token(s) with 5+ bundled wallets. Watch out.","sus")}
+    var newBundles=tokens.filter(function(t){return t.bundleDetected&&t.bundleSize>=5&&!ck(t.addr+"_bundle")});
+    if(newBundles.length>0)pm("👀 Heavy bundle activity — "+newBundles.length+" token(s) with 5+ bundled wallets. Watch out.","sus");
     if(graveyard.length>0){
-      const recent=graveyard.filter(g=>Date.now()-g.time<10000);
-      if(recent.length>=5&&!cr._massDeathTime){cr._massDeathTime=Date.now();
-        pushMsg("💀 BLOODBATH — "+recent.length+" tokens wiped in 10 seconds. The aliens are feasting.","rip")}}
+      var recent=graveyard.filter(function(g){return Date.now()-g.time<10000});
+      if(recent.length>=5&&!ck("massDeath_"+Math.floor(Date.now()/10000)))
+        pm("💀 BLOODBATH — "+recent.length+" tokens wiped in 10 seconds. The aliens are feasting.","rip")}
     if(migrations.length>0){
-      const freshMig=migrations.find(m=>Date.now()-m.timestamp<5000&&!m._corrAnnounced);
-      if(freshMig){freshMig._corrAnnounced=true;
-        pushMsg("🌉 "+freshMig.name+" just GRADUATED to Raydium at $"+formatNum(freshMig.mcap)+" — tracking price.","hype")}}
-    // Rugcheck warnings for migrated tokens
-    migrations.forEach(m=>{
-      if(m.rugLevel==="DANGER"&&!m._corrRugWarned){m._corrRugWarned=true;
-        pushMsg("⚠️ "+m.name+" flagged DANGER by RugCheck — mint authority active, proceed with caution!","sus")}
-      if(m.lpLocked&&!m._corrLPAnnounced){m._corrLPAnnounced=true;
-        pushMsg("🔒 "+m.name+" has LOCKED LP — bullish signal, less likely to rug.","hype")}
+      var freshMig=migrations.find(function(m){return Date.now()-m.timestamp<5000&&!ck(m.mint+"_migAnn")});
+      if(freshMig)pm("🌉 "+freshMig.name+" just GRADUATED to Raydium at $"+formatNum(freshMig.mcap)+" — tracking price.","hype")}
+    migrations.forEach(function(m){
+      if(m.rugLevel==="DANGER"&&!ck(m.mint+"_rugWarn"))pm("⚠️ "+m.name+" flagged DANGER by RugCheck — mint authority active, proceed with caution!","sus");
+      if(m.lpLocked&&!ck(m.mint+"_lpLock"))pm("🔒 "+m.name+" has LOCKED LP — bullish signal, less likely to rug.","hype");
     });
-    // Cross-source trend alerts
-    tokens.forEach(t=>{
-      if(t.trendScore>=2&&!t._corrMultiTrend){t._corrMultiTrend=true;
-        pushMsg("🔥🔥 "+t.name+" trending on MULTIPLE platforms — Gecko + Defined.fi + internal signals all firing!","hype")}
-      if(t.bondingPct>90&&!t._corrBonding90){t._corrBonding90=true;
-        pushMsg("🚀 "+t.name+" at "+t.bondingPct.toFixed(0)+"% bonding — seconds from MIGRATION! Watch closely.","alarm")}
-      if(t.isKOTH&&!t._corrKOTH){t._corrKOTH=true;
-        pushMsg("👑 "+t.name+" is KING OF THE HILL on pump.fun — top of the leaderboard!","hype")}
-      if(t.liquidityRating==="PAPER"&&t.mcap>20000&&!t._corrPaperLiq){t._corrPaperLiq=true;
-        pushMsg("⚠️ "+t.name+" has PAPER THIN liquidity — $5K sell = "+t.slippage5k?.toFixed(0)+"% slippage. Careful out there.","sus")}
-      if(t.jupVerified&&!t._corrJupVerified){t._corrJupVerified=true;
-        pushMsg("✅ "+t.name+" is Jupiter VERIFIED — passed their token screening.","hype")}
-      if(t.activityLevel==="BLAZING"&&!t._corrBlazing){t._corrBlazing=true;
-        pushMsg("🔥 "+t.name+" on-chain activity is BLAZING — "+t.recentTx5m+" transactions in the last 5 minutes!","hype")}
-      if(t.rayBurnPct>95&&!t._corrBurn){t._corrBurn=true;
-        pushMsg("🔥 "+t.name+" LP is "+t.rayBurnPct.toFixed(0)+"% BURNED — can't pull liquidity. Bullish.","hype")}
+    tokens.forEach(function(t){
+      if(t.trendScore>=2&&!ck(t.addr+"_multiTrend"))pm("🔥🔥 "+t.name+" trending on MULTIPLE platforms — Gecko + Defined.fi + internal signals all firing!","hype");
+      if(t.bondingPct>90&&!ck(t.addr+"_bond90"))pm("🚀 "+t.name+" at "+(t.bondingPct||0).toFixed(0)+"% bonding — seconds from MIGRATION! Watch closely.","alarm");
+      if(t.isKOTH&&!ck(t.addr+"_koth"))pm("👑 "+t.name+" is KING OF THE HILL on pump.fun — top of the leaderboard!","hype");
+      if(t.liquidityRating==="PAPER"&&t.mcap>20000&&!ck(t.addr+"_paperLiq"))pm("⚠️ "+t.name+" has PAPER THIN liquidity — $5K sell = "+(t.slippage5k||0).toFixed(0)+"% slippage. Careful out there.","sus");
+      if(t.jupVerified&&!ck(t.addr+"_jupVer"))pm("✅ "+t.name+" is Jupiter VERIFIED — passed their token screening.","hype");
+      if(t.activityLevel==="BLAZING"&&!ck(t.addr+"_blazing"))pm("🔥 "+t.name+" on-chain activity is BLAZING — "+(t.recentTx5m||0)+" transactions in the last 5 minutes!","hype");
+      if(t.rayBurnPct>95&&!ck(t.addr+"_burn"))pm("🔥 "+t.name+" LP is "+(t.rayBurnPct||0).toFixed(0)+"% BURNED — can't pull liquidity. Bullish.","hype");
     });
+    // Prune corrFired if it gets too large
+    if(cf.size>500){var arr=[...cf];corrFired.current=new Set(arr.slice(-300))}
   },[tokens,graveyard,migrations]);
 
   // ═══ COMBO SYSTEM — streaks of good events ═══
