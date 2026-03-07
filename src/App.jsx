@@ -4877,7 +4877,7 @@ export default function DegenCommandCenter(){
         const PAGE = 1000;
         while (true) {
           const pageRes = await fetch(
-            `${SB_URL}/rest/v1/wallet_scores?select=addr,wins,losses,holds,total_bought,total_pnl,trades,updated_at&limit=${PAGE}&offset=${walletPage * PAGE}`,
+            `${SB_URL}/rest/v1/wallet_scores?select=addr,wins,losses,holds,total_bought,total_pnl,updated_at&limit=${PAGE}&offset=${walletPage * PAGE}`,
             { headers: hdrs }
           );
           if (!pageRes.ok) break;
