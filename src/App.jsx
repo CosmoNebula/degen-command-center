@@ -894,14 +894,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
             ctx.beginPath();ctx.arc(px,py+bob,auraR+5,0,Math.PI*2);ctx.stroke();
           }
           ctx.globalAlpha=1;ctx.restore();
-          // Signal score label
-          const sigLabel = isElite ? '◈'+sigScore : sigScore+'';
-          ctx.font=`bold 7px 'Orbitron',sans-serif`;
-          ctx.fillStyle=isElite?'#ffd700':'#00ffff';
-          ctx.shadowColor=isElite?'#ffd700':'#00ffff';ctx.shadowBlur=6;
-          ctx.textAlign='center';
-          ctx.fillText(sigLabel,px,py+bob+cr+18);
-          ctx.textAlign='left';ctx.shadowBlur=0;
+          // (signal score label now in orbital tags ring)
         }
 
         // ── CLUSTER ORBITAL — spinning purple dots for tokens in hot clusters ──
@@ -918,13 +911,6 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
             ctx.beginPath();ctx.arc(dotX,dotY,2,0,Math.PI*2);ctx.fill();
             ctx.shadowBlur=0;
           }
-          // CLUSTER label
-          ctx.font="bold 7px 'Orbitron',sans-serif";
-          ctx.fillStyle=`rgba(191,0,255,${0.6+Math.sin(f*0.07)*0.3})`;
-          ctx.shadowColor='#bf00ff';ctx.shadowBlur=5;
-          ctx.textAlign='center';
-          ctx.fillText('CLUSTER',px,py+bob-cr-8);
-          ctx.textAlign='left';ctx.shadowBlur=0;
         }
 
         // ── NEURAL SPOTLIGHT — auto-info HUD on high-signal tokens (no click needed) ──
@@ -993,46 +979,69 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
           ctx.fillText("✓",px,py+bob+cr+8);ctx.textAlign="left";
         }
 
-        // ── LIVE % CHANGE LABEL — always visible, no click needed ──────────
-        // Use flash snaps to compute live 30s / 1m gain on the coin itself
+        // ── ORBITAL TAGS — collect all active tags, arrange evenly around coin ──
+        const orbTags = [];
+
+        // % change (flash snaps)
         const coinSnaps = (()=>{try{return flashSnapsRef_local?.current?.[t.addr]||[];}catch{return [];}})();
         if(coinSnaps.length >= 2 && t.mcap > 0){
           const now30 = Date.now()-30000;
-          const snap30 = coinSnaps.reduce((b,s)=>{
-            if(!b)return s;
-            return Math.abs(s.time-now30)<Math.abs(b.time-now30)?s:b;
-          },null);
+          const snap30 = coinSnaps.reduce((b,s)=>(!b||(Math.abs(s.time-now30)<Math.abs(b.time-now30)))?s:b, null);
           if(snap30 && snap30.mcap > 0 && Date.now()-snap30.time >= 10000){
             const pct30 = ((t.mcap - snap30.mcap) / snap30.mcap) * 100;
             if(Math.abs(pct30) >= 1.5){
-              const isUp30 = pct30 > 0;
+              const isUp = pct30 > 0;
               const absP = Math.abs(pct30);
-              // Color intensity based on magnitude
               const alpha = Math.min(1, 0.6 + absP * 0.015);
-              const col = isUp30 ? `rgba(57,255,20,${alpha})` : `rgba(255,7,58,${alpha})`;
-              const label = (isUp30?"+":"")+pct30.toFixed(1)+"%";
-              ctx.font=`bold ${absP>=20?8:7}px 'Orbitron',sans-serif`;
-              ctx.textAlign="center";
-              ctx.fillStyle=col;
-              ctx.shadowColor=col;
-              ctx.shadowBlur=absP>=30?10:6;
-              // Position above coin (stacked with other labels)
-              ctx.fillText(label, px, py+bob-cr-14);
-              ctx.shadowBlur=0;ctx.textAlign="left";
+              orbTags.push({
+                text: (isUp?"+":"")+pct30.toFixed(1)+"%",
+                col: isUp ? `rgba(57,255,20,${alpha})` : `rgba(255,7,58,${alpha})`,
+                glow: isUp ? "#39ff14" : "#ff073a",
+                size: absP >= 20 ? 8 : 7,
+              });
             }
           }
         }
 
-        // ── SMART MONEY BADGE — shows wallet count without clicking ─────────
+        // Smart money
         if(t.hasSmartMoney && (t.smartWalletCount||0)>0){
-          const smLabel = "🧠"+(t.smartWalletCount||1);
-          ctx.font="bold 7px 'Share Tech Mono',monospace";
-          ctx.textAlign="center";
           const smAlpha = 0.6+Math.sin(f*0.09)*0.3;
-          ctx.fillStyle=`rgba(255,149,0,${smAlpha})`;
-          ctx.shadowColor="#ff9500";ctx.shadowBlur=6;
-          ctx.fillText(smLabel, px, py+bob+cr+18);
-          ctx.shadowBlur=0;ctx.textAlign="left";
+          orbTags.push({text:"🧠"+(t.smartWalletCount||1), col:`rgba(255,149,0,${smAlpha})`, glow:"#ff9500", size:7});
+        }
+
+        // Holders
+        if((t.holders||0)>0){
+          orbTags.push({text:"H"+t.holders, col:"#00bfff", glow:"#00bfff", size:7});
+        }
+
+        // Signal score (only if not showing the full HUD)
+        if(sigScore >= 72 && sigScore < 85 && !t.bundleDetected && !t.isSerialRugger){
+          const isElite = sigScore >= 88;
+          orbTags.push({text:(isElite?"◈":"")+sigScore, col:isElite?"#ffd700":"#00ffff", glow:isElite?"#ffd700":"#00ffff", size:7});
+        }
+
+        // Cluster
+        if(hotClusters.current.has(t.addr)){
+          orbTags.push({text:"CLSTR", col:`rgba(191,0,255,${0.7+Math.sin(f*0.07)*0.25})`, glow:"#bf00ff", size:6});
+        }
+
+        // Now place them in a ring, evenly spaced, starting from top (−π/2)
+        if(orbTags.length > 0){
+          const orbitR = cr + 16;
+          const angleStep = (Math.PI * 2) / orbTags.length;
+          // Offset starting angle slightly so single tag sits top-right, not straight up
+          const startAngle = orbTags.length === 1 ? -Math.PI * 0.5 : -Math.PI * 0.5;
+          orbTags.forEach((tag, ti) => {
+            const angle = startAngle + angleStep * ti;
+            const tx = px + Math.cos(angle) * orbitR;
+            const ty = py + bob + Math.sin(angle) * orbitR;
+            ctx.font=`bold ${tag.size}px 'Orbitron',sans-serif`;
+            ctx.textAlign="center";ctx.textBaseline="middle";
+            ctx.fillStyle=tag.col;
+            ctx.shadowColor=tag.glow;ctx.shadowBlur=5;
+            ctx.fillText(tag.text, tx, ty);
+          });
+          ctx.shadowBlur=0;ctx.textAlign="left";ctx.textBaseline="alphabetic";
         }
 
         // Coin: image if loaded, else colored circle + initial
@@ -1068,15 +1077,6 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         const hbW=16,hbY=py+bob+cr+3;
         ctx.fillStyle="rgba(255,255,255,0.04)";ctx.fillRect(px-hbW/2,hbY,hbW,2);
         ctx.fillStyle=color;ctx.fillRect(px-hbW/2,hbY,Math.max(0,hbW*(t.health/100)),2);
-
-        // HOLDERS — blue H count below health bar
-        if((t.holders||0)>0){
-          const hLabel="H"+t.holders;
-          ctx.font="bold 7px 'Orbitron',sans-serif";ctx.fillStyle="#00bfff";
-          ctx.shadowColor="#00bfff";ctx.shadowBlur=4;
-          ctx.textAlign="center";ctx.fillText(hLabel,px,hbY+10);
-          ctx.textAlign="left";ctx.shadowBlur=0;
-        }
 
         // Name — small, above
         ctx.font="10px 'Share Tech Mono'";
@@ -5550,10 +5550,15 @@ export default function DegenCommandCenter(){
     }
   }, [!!live.walletScoresRef]);
 
-  // Pipe live tokens into state
+  // Pipe live tokens into state — preserve inHoldingBay DB tokens
   useEffect(() => {
     if (live.tokens.length > 0) {
-      setTokens(live.tokens);
+      setTokens(prev => {
+        const holdingTokens = prev.filter(t => t.inHoldingBay && t.alive);
+        const liveAddrs = new Set(live.tokens.map(t => t.addr));
+        const freshHolding = holdingTokens.filter(t => !liveAddrs.has(t.addr));
+        return [...live.tokens, ...freshHolding];
+      });
       mainTokensRef.current=live.tokens;
       setTotalScanned(live.stats.scanned);
       setDeployed(live.stats.deployed);
@@ -5626,44 +5631,30 @@ export default function DegenCommandCenter(){
     setTimeout(hydrate, 3000);
   }, []);
 
-  // ── HOLDING BAY AUDIT — DB tokens must show life before entering battlefield ──
+  // ── HOLDING BAY AUDIT — stagger DB tokens onto battlefield after a grace period ──
   useEffect(() => {
     const iv = setInterval(() => {
       const now = Date.now();
-      const td = live.tradeDataRef?.current || {};
       setTokens(prev => {
         let changed = false;
         const next = prev.map(t => {
           if (!t.inHoldingBay) return t;
           const age = now - (t.holdingEnteredAt || now);
-          if (age < 20000) return t; // never audit before 20s — give it time to load trade data
-
-          const trd = td[t.addr];
-          const recentTrade = trd?.lastTradeTime && (now - trd.lastTradeTime) < 90000;
-          const mcapMoved = Math.abs((t.mcap||0) - (t.holdingMcap||0)) / Math.max(1, t.holdingMcap||1) > 0.05;
-          const hasSmarts = (t.smartWalletCount||0) >= 1;
-          const stillAliveOnChain = (t.mcap||0) >= 3000; // just being tradeable counts
-          const showsLife = recentTrade || mcapMoved || hasSmarts || (t.buys||0) >= 2 || stillAliveOnChain;
-
-          if (showsLife) {
-            // Graduate — release to battlefield
+          // Release after 30s — stagger so they don't all flood in at once
+          // Use addr hash for spread: each token gets a random 30-90s window
+          const releaseAfter = 30000 + (parseInt(t.addr?.slice(-4) || '0', 16) % 60000);
+          if (age >= releaseAfter) {
             changed = true;
-            addKillFeed({type:"system", text:`🔓 ${t.name} cleared audit → DEPLOYED`});
             return {...t, inHoldingBay:false, warpIn:true,
-              bx:0.2+Math.random()*0.6, by:0.95};
-          } else if (age > 240000) {
-            // 4 min zero signal — incinerate
-            changed = true;
-            addKillFeed({type:"system", text:`🔥 ${t.name} incinerated — dead on arrival`});
-            return {...t, alive:false, inHoldingBay:false};
+              bx:0.15+Math.random()*0.7, by:0.9};
           }
           return t;
         });
         return changed ? next : prev;
       });
-    }, 15000);
+    }, 5000);
     return () => clearInterval(iv);
-  }, [live.tradeDataRef]);
+  }, []);
 
   useEffect(() => {
     if (live.whaleAlerts.length > 0) {
