@@ -7,19 +7,19 @@ import { RARITIES } from "./HunterData.js";
 import { useIntelligence, ARCHETYPES } from "./useIntelligence";
 import ClaudeRoom from "./ClaudeRoom";
 
-const NEON = {
+var NEON = {
   magenta:"#ff00ff",cyan:"#00ffff",green:"#39ff14",red:"#ff073a",
   orange:"#ff6600",yellow:"#ffe600",purple:"#bf00ff",pink:"#ff6eb4",
   bg:"#05030e",text:"#e0e0ff",dimText:"#5a5a7a",
   panelBg:"rgba(8,6,20,0.85)",panelBorder:"rgba(255,0,255,0.2)",
 };
-const PLATFORMS=["PumpFun","Bonk","Moonshot","Raydium","Meteora","Orca"];
-const PLATFORM_COLORS={PumpFun:"#39ff14",Bonk:"#ff6600",Moonshot:"#ff00ff",Raydium:"#00bfff",
+var PLATFORMS=["PumpFun","Bonk","Moonshot","Raydium","Meteora","Orca"];
+var PLATFORM_COLORS={PumpFun:"#39ff14",Bonk:"#ff6600",Moonshot:"#ff00ff",Raydium:"#00bfff",
   Meteora:"#ffd740",Orca:"#7c4dff",DexScreener:"#00ffcc",Jupiter:"#448aff"};
-const NAMES_A=["DOGE","PEPE","BONK","WIF","MOON","ELON","TRUMP","GIGA","CHAD","SIGMA","BASED","COPE","FROG","CAT","APE","BULL","SEND","COOK","NUKE","PUMP","WAGMI","HODL","YOLO","LAMBO","REKT","FOMO","SHILL","BAG","MINT","FLIP"];
-const NAMES_B=["INU","COIN","TOKEN","SOL","MOON","ROCKET","KING","LORD","GOD","MASTER","VERSE","CHAIN","SWAP","FI","DAO","X","AI","GPT","BOT","MEME","2.0","CLASSIC","GOLD","DIAMOND","HANDS","GANG","ARMY","NATION","WORLD","MAX"];
-const WHALE_NAMES=["0xDegen_Larry","SolWhale.sol","NightTrader_9","CryptoMom420","PumpSlayer","ApeKing.sol","DegenSensei","LiqHunter_X","MoonBoi.sol","ShadowBuyer"];
-const COIN_COLORS=[
+var NAMES_A=["DOGE","PEPE","BONK","WIF","MOON","ELON","TRUMP","GIGA","CHAD","SIGMA","BASED","COPE","FROG","CAT","APE","BULL","SEND","COOK","NUKE","PUMP","WAGMI","HODL","YOLO","LAMBO","REKT","FOMO","SHILL","BAG","MINT","FLIP"];
+var NAMES_B=["INU","COIN","TOKEN","SOL","MOON","ROCKET","KING","LORD","GOD","MASTER","VERSE","CHAIN","SWAP","FI","DAO","X","AI","GPT","BOT","MEME","2.0","CLASSIC","GOLD","DIAMOND","HANDS","GANG","ARMY","NATION","WORLD","MAX"];
+var WHALE_NAMES=["0xDegen_Larry","SolWhale.sol","NightTrader_9","CryptoMom420","PumpSlayer","ApeKing.sol","DegenSensei","LiqHunter_X","MoonBoi.sol","ShadowBuyer"];
+var COIN_COLORS=[
   {bg:"#ff6b35",fg:"#fff",rim:"#cc5528"},{bg:"#00d4aa",fg:"#fff",rim:"#00a885"},
   {bg:"#7c4dff",fg:"#fff",rim:"#6237cc"},{bg:"#ff4081",fg:"#fff",rim:"#cc3367"},
   {bg:"#448aff",fg:"#fff",rim:"#366ecc"},{bg:"#ffd740",fg:"#222",rim:"#ccac33"},
@@ -82,7 +82,7 @@ function generateWhaleAlert(){
     amount:rand(500,50000),timestamp:Date.now()};
 }
 
-const INTEL_TYPES=[
+var INTEL_TYPES=[
   {type:"deployer",icon:"🔗",color:NEON.orange,gen:()=>`Same deployer launched ${pick(NAMES_A)+pick(NAMES_B)} and ${pick(NAMES_A)+pick(NAMES_B)} within ${randInt(2,8)} min`},
   {type:"rug_pattern",icon:"🔴",color:NEON.red,gen:()=>`${pick(NAMES_A)+pick(NAMES_B)} matches rug pattern: LP unlocked + dev ${randInt(15,35)}% + ${randInt(8,20)} bundle TXs`},
   {type:"volume",icon:"📊",color:NEON.cyan,gen:()=>`${pick(NAMES_A)+pick(NAMES_B)} volume spike +${randInt(150,800)}% in ${randInt(30,120)}s — ${randInt(15,60)} buys`},

@@ -4,8 +4,8 @@
 // ═══════════════════════════════════════════════════════════════
 import { useState, useEffect, useCallback, useRef } from "react";
 
-const _HS_SB_URL = "https://yrmjphhfgduysoftnuxv.supabase.co";
-const _HS_SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlybWpwaGhmZ2R1eXNvZnRudXh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3MzI5MzAsImV4cCI6MjA4ODMwODkzMH0.scHhvTGiABJDybgbjgjilw8XuxOfmWPsqo4iytMZmio";
+var _HS_SB_URL = "https://yrmjphhfgduysoftnuxv.supabase.co";
+var _HS_SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlybWpwaGhmZ2R1eXNvZnRudXh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3MzI5MzAsImV4cCI6MjA4ODMwODkzMH0.scHhvTGiABJDybgbjgjilw8XuxOfmWPsqo4iytMZmio";
 
 
 import { STATS, RARITIES, ITEMS, LEVEL_TITLES, getLevelTitle, getLevel, xpForLevel, xpForNextLevel, calcGearScore, calcTotalStats, rollLoot } from './HunterData.js';

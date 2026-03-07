@@ -85,8 +85,8 @@ var _LIVE_COIN_COLORS = [
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 function formatNum(n) { if (n >= 1e6) return (n / 1e6).toFixed(1) + "M"; if (n >= 1e3) return (n / 1e3).toFixed(1) + "K"; return n.toFixed(0); }
 
-let SOL_USD = 84; // default, updated live from Jupiter every 30s
-let MCAP_CORRECTION = 1.0; // auto-calibrated: PumpPortal FDV → DexScreener mcap ratio
+var SOL_USD = 84; // default, updated live from Jupiter every 30s
+var MCAP_CORRECTION = 1.0; // auto-calibrated: PumpPortal FDV → DexScreener mcap ratio
 var mcapSamples = []; // stores {ppMcap, dexMcap} pairs for calibration
 
 // Convert tradeData's lastMcapSol to USD, applying correction only for PumpPortal-sourced values
