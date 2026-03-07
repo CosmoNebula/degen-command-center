@@ -2257,6 +2257,24 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
         if (t.rugLevel === 'DANGER') s -= 18;
         if (t.isSerialRugger) s -= 35;
         if (t.isStale || t.isDead) s -= 15;
+        // ── MCAP RETRACE PENALTY — coin that pumped and dumped back should NOT score high ──
+        const peak = t.peakMcap || t.mcap || 0;
+        const cur_mc = t.mcap || 0;
+        if (peak > 0 && cur_mc > 0) {
+          const retracePct = (peak - cur_mc) / peak; // 0 = at peak, 1 = totally collapsed
+          if (retracePct > 0.6) s -= 40;         // >60% retrace from peak = dead
+          else if (retracePct > 0.4) s -= 20;    // >40% retrace = fading
+          else if (retracePct > 0.25) s -= 8;    // >25% retrace = cooling
+        }
+
+        // ── TRADE SILENCE DECAY — no recent trades = score decays ──
+        const td_s = tradeData.current[t.addr];
+        const lastTrade = td_s?.lastTradeTime || t.timestamp || 0;
+        const silentSec = (now - lastTrade) / 1000;
+        if (silentSec > 300) s -= 35;       // 5min silence = nearly dead
+        else if (silentSec > 120) s -= 18;  // 2min silence = cooling
+        else if (silentSec > 60) s -= 8;    // 1min silence = slowing
+
         scores[t.addr] = Math.max(0, Math.min(100, Math.round(s)));
 
         // ── AUTO-SURFACE: emit when score crosses 92+ with hard quality gates ──
@@ -2279,7 +2297,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
           )
         );
 
-        if (cur >= 92 && prev < 92 && now - lastSurface > 90000 && meetsGates) {
+        if (cur >= 88 && prev < 88 && now - lastSurface > 90000 && meetsGates) {
           autoSurfaceCooldown[t.addr] = now;
           const extData = externalBoostRef.current[t.addr];
           const reasons = [];

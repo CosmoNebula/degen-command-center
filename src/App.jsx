@@ -5542,14 +5542,15 @@ export default function DegenCommandCenter(){
     }
   }, [!!live.walletScoresRef]);
 
-  // Pipe live tokens into state — preserve inHoldingBay DB tokens
+  // Pipe live tokens into state — preserve ALL DB tokens (holding OR released) that aren't in live feed
   useEffect(() => {
     if (live.tokens.length > 0) {
       setTokens(prev => {
-        const holdingTokens = prev.filter(t => t.inHoldingBay && t.alive);
+        // Keep any DB-originated token that is still alive and NOT already in live feed
+        // This includes: still-holding tokens AND already-released DB tokens on the battlefield
         const liveAddrs = new Set(live.tokens.map(t => t.addr));
-        const freshHolding = holdingTokens.filter(t => !liveAddrs.has(t.addr));
-        return [...live.tokens, ...freshHolding];
+        const dbSurvivors = prev.filter(t => t.fromDB && t.alive && !liveAddrs.has(t.addr));
+        return [...live.tokens, ...dbSurvivors];
       });
       mainTokensRef.current=live.tokens;
       setTotalScanned(live.stats.scanned);
@@ -7366,9 +7367,10 @@ export default function DegenCommandCenter(){
           {/* ── NEURAL SURFACE AUTO-POP — fires when score ≥ 88 (elite tier) ── */}
           {(()=>{
             const sigRef = live.signalScoresRef?.current || {};
-            // Score ≥ 88 = elite popup on battlefield
+            // Score ≥ 88 = elite popup on battlefield — must have real mcap
             const eliteTokens = tokens
-              .filter(t => t.alive && t.qualified && (sigRef[t.addr]||0) >= 88)
+              .filter(t => t.alive && t.qualified && (sigRef[t.addr]||0) >= 88
+                && (t.mcap||0) >= 8000 && (t.qualScore||0) >= 5 && !t.bundleDetected)
               .map(t => ({...t, sig: sigRef[t.addr]||0}))
               .sort((a,b) => b.sig - a.sig);
             // Also check autoSurface for confirmed events
@@ -7392,7 +7394,7 @@ export default function DegenCommandCenter(){
               (eliteTok.holders||0) > 100 ? `${eliteTok.holders} HODLERS` : null,
             ].filter(Boolean);
 
-            const isElite = sig >= 92;
+            const isElite = sig >= 160;
             const borderCol = isElite ? "rgba(255,215,0,0.8)" : "rgba(255,7,58,0.6)";
             const glowCol = isElite ? "rgba(255,215,0,0.3)" : "rgba(255,7,58,0.2)";
             const textCol = isElite ? "#ffd700" : "#ff073a";
@@ -7533,7 +7535,7 @@ export default function DegenCommandCenter(){
                 // Neural signal score — the composite brain score
                 const baseSignal = live.signalScoresRef?.current?.[token.addr] || 0;
                 const intelB = intel?.signalBoost?.[token.addr]?.boost || 0;
-                const totalSignal = Math.round(baseSignal + intelB);
+                const totalSignal = Math.min(100, Math.round(baseSignal + intelB));
                 if (totalSignal > 0) {
                   const sigColor = totalSignal >= 88 ? '#ffd700' : totalSignal >= 72 ? '#00ffff' : totalSignal >= 55 ? '#ffe600' : NEON.dimText;
                   extras.push({l:"◈ SIGNAL",v:`${totalSignal}/100${totalSignal>=88?' ★':''}`,c:sigColor});
@@ -7703,7 +7705,8 @@ export default function DegenCommandCenter(){
               {(()=>{
                 const sigRef = live.signalScoresRef?.current || {};
                 const hotCoins = tokens
-                  .filter(t => t.alive && t.qualified && (sigRef[t.addr]||0) >= 75)
+                  .filter(t => t.alive && t.qualified && (sigRef[t.addr]||0) >= 75
+                    && (t.mcap||0) >= 5000 && !t.bundleDetected)
                   .map(t => ({...t, sig: sigRef[t.addr]||0}))
                   .sort((a,b) => b.sig - a.sig);
                 const marqueeItems = hotCoins.length > 0 ? hotCoins : [];
@@ -7734,8 +7737,8 @@ export default function DegenCommandCenter(){
                         whiteSpace:"nowrap",
                       }}>
                         {[...marqueeItems, ...marqueeItems].map((t,i) => {
-                          const isElite = t.sig >= 90;
-                          const col = t.sig >= 90 ? "#ffd700" : t.sig >= 85 ? "#ff073a" : NEON.cyan;
+                          const isElite = t.sig >= 160;
+                          const col = t.sig >= 160 ? "#ffd700" : t.sig >= 130 ? "#ff073a" : NEON.cyan;
                           return (
                             <div key={`${t.id}-${i}`}
                               onClick={()=>selectToken(t)}
@@ -7973,7 +7976,7 @@ export default function DegenCommandCenter(){
                         <span style={{fontSize:10,fontWeight:900,color:NEON.text,fontFamily:"'Orbitron'"}}>
                           {i===0?"👑 ":""}{entry.name}</span>
                         <div style={{display:"flex",alignItems:"center",gap:4}}>
-                          {sig>=80&&<span style={{fontSize:8,color:"#ffd700",fontWeight:700,textShadow:"0 0 6px #ffd700"}}>◈{Math.round(sig)}</span>}
+                          {sig>=90&&<span style={{fontSize:8,color:sig>=160?"#ffd700":sig>=130?"#ff073a":NEON.cyan,fontWeight:700,textShadow:`0 0 6px ${sig>=160?"#ffd700":sig>=130?"#ff073a":NEON.cyan}`}}>◈{Math.round(sig)}</span>}
                           <span style={{fontSize:12,fontWeight:900,color:isUp?fd.col:"#ff073a",fontFamily:"'Orbitron'"}}>
                             {isUp?"+":""}{entry.gain.toFixed(1)}%</span>
                         </div>
@@ -7997,7 +8000,7 @@ export default function DegenCommandCenter(){
                 {(()=>{
                   const topSignal=tokens.filter(t=>t.alive&&t.qualified)
                     .map(t=>({t,sig:(live.signalScoresRef?.current?.[t.addr]||0)+(intel?.signalBoost?.[t.addr]?.boost||0)}))
-                    .filter(x=>x.sig>=65).sort((a,b)=>b.sig-a.sig).slice(0,6);
+                    .filter(x=>x.sig>=90).sort((a,b)=>b.sig-a.sig).slice(0,6);
                   if(!topSignal.length)return null;
                   return(<div style={{marginTop:10,paddingTop:8,borderTop:"1px solid rgba(0,255,255,0.1)"}}>
                     <div style={{fontSize:9,color:NEON.cyan,letterSpacing:2,fontFamily:"'Orbitron'",marginBottom:5}}>
@@ -8005,7 +8008,7 @@ export default function DegenCommandCenter(){
                     </div>
                     {topSignal.map(({t,sig})=>{
                       const boost = intel?.signalBoost?.[t.addr];
-                      const isElite = sig>=88;
+                      const isElite = sig>=160;
                       return(<div key={t.addr} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
                         padding:"4px 6px",marginBottom:2,
                         background:isElite?"rgba(255,215,0,0.05)":"rgba(0,255,255,0.03)",
