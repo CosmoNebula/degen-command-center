@@ -317,8 +317,7 @@ function generateMockResponse(snap) {
   lines.push(``);
   lines.push(`◈ MOCK TRIAL COMPLETE — This is simulated analysis based on real session data. Add API key to activate live intelligence.`);
 
-  return lines.join("
-");
+  return lines.join("\n");
 }
 
 
