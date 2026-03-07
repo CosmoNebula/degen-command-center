@@ -361,10 +361,11 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
               ws.activeBuys[mint] = { token: _tname, addr: mint, sol: 0, entryMcap: entryMcNow||0, time: now };
             }
             ws.activeBuys[mint].sol += sol;
+            ws.activeBuys[mint].entryMcap = ws.activeBuys[mint].entryMcap || tdMcapUsd(td) || 0;
           }
-          // Compute unrealized loss drag from open holds
+          // Compute unrealized value from open holds (use stored unrealizedPnl field if available)
           const unrealizedPnl = ws ? (ws.trades||[]).filter(tr=>tr.type==="HOLD")
-            .reduce((s,tr)=>s+(tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol)),0) : 0;
+            .reduce((s,tr)=>s+(tr.unrealizedPnl!=null?tr.unrealizedPnl:(tr.pnl!=null?tr.pnl:0)),0) : 0;
           const qualWinCount = ws ? (ws.trades||[]).filter(tr=>tr.type==="WIN").length : 0;
           const qualLossCount = ws ? (ws.trades||[]).filter(tr=>tr.type==="LOSS").length : 0;
           const qualTotal = qualWinCount + qualLossCount;
@@ -1056,7 +1057,8 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
 
       // Helius: check on-chain metadata once per token
       for (const mint of batch) {
-        if (enriched[mint]?.heliusDone) continue;
+        // Retry failed Helius enrichments every 30s (don't block forever on one bad response)
+        if (enriched[mint]?.heliusDone && (now - (enriched[mint]?.lastHelius || 0)) < 30000) continue;
         try {
           const [meta, largest, count] = await Promise.all([
             fetchTokenMeta(mint),
@@ -1083,6 +1085,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
           }
         } catch (e) {
           enriched[mint].heliusDone = true;
+          enriched[mint].lastHelius = now; // retry after 30s
           console.warn(`[HELIUS] ❌ ${mint.slice(0, 8)}`, e.message);
         }
       }
@@ -1294,7 +1297,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
       // Helius real holder count every 30s (every 15th cycle at 2s)
       migratedHolderCycle++;
       if (migratedHolderCycle % 15 === 0) {
-        for (const mt of toPoll.slice(0, 3)) {
+        for (const mt of toPoll.slice(0, 10)) { // was 3 — all migrated tokens need holder updates
           try {
             const [count, largest] = await Promise.all([
               fetchHolderCount(mt.addr),
@@ -1558,9 +1561,12 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
       // Get qualified tokens — including migrated (SolanaTracker returns real holder count for both)
       const pumpTokens = cur.filter(t =>
         t.alive && t.qualified
-      ).slice(0, 4); // max 4 per cycle to avoid rate limits
+      );
+      // Sort: migrated tokens first (need holders most urgently), then by recency
+      pumpTokens.sort((a, b) => (b.migrated ? 1 : 0) - (a.migrated ? 1 : 0));
+      const pumpBatch = pumpTokens.slice(0, 8); // max 8 per cycle (was 4)
 
-      for (const t of pumpTokens) {
+      for (const t of pumpBatch) {
         // Skip if cached less than 15s ago
         const cached = curveProgressCache.current[t.addr];
         if (cached && Date.now() - cached.ts < 15000) continue;
@@ -1839,46 +1845,69 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
             const hasExited = (data.sold || 0) >= data.bought * 0.5;
             if (hasExited && holdDuration < 30000) return;
 
-            const sellEvts = (data.sellEvents || []).filter(s =>
-              s.time >= (data.firstBuyTime || 0) &&
-              (!data.lastSellTime || s.time <= data.lastSellTime)
+            // ─── WALLET-LEVEL OUTCOME ───
+            // PumpPortal reports solAmount on sells as COST BASIS, not actual SOL received.
+            // Fix: use sell event mcap ratios to compute actual SOL out for each sell.
+            // Each sellEvent has { sol (cost basis), mcap (mcap at sell time), time }
+            // Actual SOL received per sell ≈ cost_basis * (sell_mcap / entry_mcap)
+
+            const entryMcap = data.entryMcap || 0;
+            const currentMcap = t.mcap || 0;
+
+            // Filter sell events to this position window, cap so sells can't exceed bought
+            const rawSellEvts = (data.sellEvents || []).filter(s =>
+              s.time >= (data.firstBuyTime || 0)
             );
-            // Cap sell amounts to bought so bleed can't inflate sells beyond buy size
             let capRemaining = data.bought;
-            const cappedSellEvts = sellEvts.filter(s => {
+            const sellEvts = rawSellEvts.filter(s => {
               if (capRemaining <= 0.001) return false;
-              capRemaining -= s.sol;
+              const capped = Math.min(s.sol, capRemaining);
+              capRemaining -= capped;
               return true;
             });
+            const cappedSellEvts = sellEvts; // alias for legacy trade record use
 
-            // ─── WALLET-LEVEL OUTCOME ───
-            // PumpPortal reports solAmount on sells as original cost basis, NOT SOL received.
-            // Detect this: if sold ≈ bought but mcap moved significantly, estimate real SOL out.
-            const rawSold = data.sold || 0;
-            const entryMcap = data.entryMcap || 0;
-            const exitMcapRaw = data.exitMcap || t.mcap || 0;
-            const mcapRatio = entryMcap > 0 && exitMcapRaw > 0 ? exitMcapRaw / entryMcap : 1;
-            const soldRatioRaw = data.bought > 0 ? rawSold / data.bought : 0;
-            // If sold ≈ bought (within 2%) but mcap moved >10% — cost-basis reporting detected
-            const costBasisReporting = soldRatioRaw >= 0.9 && soldRatioRaw <= 1.1 && Math.abs(mcapRatio - 1) > 0.1;
-            // Estimated actual SOL received = bought * mcapRatio (bonding curve approximation)
-            const estimatedSold = costBasisReporting ? data.bought * mcapRatio : rawSold;
-            const sold = estimatedSold;
-            const pnl = sold - data.bought;
-            const soldRatio = data.bought > 0 ? sold / data.bought : 0;
-            const positionClosed = soldRatioRaw >= 0.5; // use raw ratio to detect exit
-            const positionFullyExited = soldRatioRaw >= 0.95;
+            // Compute actual SOL received per sell using mcap ratio
+            let actualSolReceived = 0;
+            let costBasisSold = 0;
+            for (const s of sellEvts) {
+              costBasisSold += s.sol;
+              if (entryMcap > 0 && s.mcap > 0) {
+                // Bonding curve approximation: actual out = cost_basis * (exit_mcap / entry_mcap)
+                actualSolReceived += s.sol * (s.mcap / entryMcap);
+              } else {
+                actualSolReceived += s.sol; // fallback: treat as break-even if no mcap data
+              }
+            }
 
-            const exitMcap = positionClosed ? (data.exitMcap || t.mcap || 0) : (t.mcap || 0);
+            // Position sizing
+            const soldRatioRaw = data.bought > 0 ? costBasisSold / data.bought : 0;
+            const positionFullyExited = soldRatioRaw >= 0.90;
+            const positionClosed = soldRatioRaw >= 0.50;
 
-            const walletWin = positionClosed && pnl > 0 && (soldRatio >= 1.2 || positionFullyExited);
+            // Remaining position unrealized value
+            const remainingCost = Math.max(0, data.bought - costBasisSold);
+            const mcapRatio = entryMcap > 0 && currentMcap > 0 ? currentMcap / entryMcap : 1;
+            const remainingValue = remainingCost * mcapRatio;
+            const unrealizedPnl = remainingValue - remainingCost;
+
+            // PnL: realized (from actual sales) + unrealized (remaining position)
+            const realizedPnl = actualSolReceived - costBasisSold;
+            const pnl = realizedPnl + (positionFullyExited ? 0 : unrealizedPnl);
+            const sold = actualSolReceived; // for trade record compatibility
+
+            const exitMcap = positionClosed ? (data.exitMcap || currentMcap) : currentMcap;
+
+            // WIN: fully exited with profit, OR partially exited with strong realized gain
+            const walletWin = (positionFullyExited && realizedPnl > 0) ||
+              (positionClosed && realizedPnl > 0 && actualSolReceived >= data.bought * 1.2);
             const walletLoss = !walletWin && (
               (tokenDead && pnl < 0) ||
-              (positionFullyExited && pnl < 0)
+              (positionFullyExited && realizedPnl < 0)  // use realized only on full exit
             );
             const walletHold = !walletWin && !walletLoss && tokenAlive;
 
-            // Use capped+filtered sell events for all trade records
+            // Sell events for trade records
             const sellEvents = cappedSellEvts;
 
             // ── WIN ──
@@ -1951,7 +1980,16 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
             // Refresh live HOLD entries with current mcap/pnl/athMcap/sellEvents
             if (walletHold && ws.holdAddrs.has(t.addr)) {
               const existTrade = ws.trades.find(tr => tr.addr === t.addr && tr.type === "HOLD");
-              if (existTrade) { existTrade.mcap = exitMcap; existTrade.sold = sold; existTrade.pnl = pnl; existTrade.athMcap = Math.max(td.athMcap||0, existTrade.athMcap||0); existTrade.sellEvents = sellEvents; }
+              if (existTrade) {
+                existTrade.mcap = exitMcap;
+                existTrade.sold = sold;            // actual SOL received from sells so far
+                existTrade.pnl = pnl;              // realized + unrealized combined
+                existTrade.realizedPnl = realizedPnl;
+                existTrade.unrealizedPnl = unrealizedPnl;
+                existTrade.remainingCost = remainingCost; // SOL still in position
+                existTrade.athMcap = Math.max(td.athMcap||0, existTrade.athMcap||0);
+                existTrade.sellEvents = cappedSellEvts;
+              }
             }
           });
         });
@@ -2049,7 +2087,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
             const losses=(w.trades||[]).filter(tr=>tr.type==="LOSS").length;
             const total=wins+losses;
             const rate=total>0?wins/total:0;
-            const unrealized=(w.trades||[]).filter(tr=>tr.type==="HOLD").reduce((s,tr)=>s+(tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol)),0);
+            const unrealized=(w.trades||[]).filter(tr=>tr.type==="HOLD").reduce((s,tr)=>s+(tr.unrealizedPnl!=null?tr.unrealizedPnl:(tr.pnl!=null?tr.pnl:0)),0);
             const adjustedPnl=(w.totalPnl||0)+unrealized;
             return wins>=4&&rate>=0.60&&wins>=(losses*2)&&total>=5&&(w.totalPnl||0)>=1.0&&adjustedPnl>0.5;
           }).length,

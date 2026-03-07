@@ -57,7 +57,9 @@ function normalizePair(p) {
     addr: p.baseToken?.address || "",
     platform: p.dexId || "unknown",
     mcap: p.marketCap || p.fdv || 0,
-    vol: p.volume?.h24 || 0,
+    vol: p.volume?.h1 || p.volume?.h6 || p.volume?.h24 || 0,
+    vol1h: p.volume?.h1 || 0,
+    vol24h: p.volume?.h24 || 0,
     priceUsd: parseFloat(p.priceUsd || 0),
     priceChange5m: p.priceChange?.m5 || 0,
     priceChange1h: p.priceChange?.h1 || 0,
@@ -532,13 +534,14 @@ export async function fetchGeckoOHLCV(poolAddress, timeframe = "minute", aggrega
 
 // ─── SOLANATRACKER: PumpFun bonding curve progress (FREE, no key) ───
 
-let _stBackoff = 0;
+const _stBackoff = {}; // per-token backoff map
 export async function fetchPumpCurveProgress(mintAddress) {
   try {
-    if (Date.now() < _stBackoff) return null;
+    if (Date.now() < (_stBackoff[mintAddress] || 0)) return null;
     const res = await proxyFetch(`https://data.solanatracker.io/tokens/${mintAddress}`);
     if (!res.ok) {
-      if (res.status === 401 || res.status === 429) _stBackoff = Date.now() + 60000;
+      // Per-token backoff: 429/401 backs off only this mint for 60s
+      if (res.status === 429 || res.status === 401) _stBackoff[mintAddress] = Date.now() + 60000;
       return null;
     }
     const data = await res.json();
