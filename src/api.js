@@ -126,45 +126,78 @@ export async function fetchTokenMeta(mintAddress) {
   }
 }
 
+// Try both SPL Token and Token-2022 programs — pumpswap tokens may use either
+var TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+var TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+
+function _countNonZeroBase64(accounts) {
+  return accounts.filter(function(acct) {
+    try {
+      var bytes = atob(acct.account?.data?.[0] || "");
+      if (bytes.length < 8) return true; // include if can't decode
+      var val = 0;
+      for (var i = 7; i >= 0; i--) val = val * 256 + bytes.charCodeAt(i);
+      return val > 0;
+    } catch(e) { return true; }
+  }).length;
+}
+
+async function _gpaHolderCount(rpcUrl, programId, mintAddress) {
+  var isToken2022 = programId === TOKEN_2022_PROGRAM;
+  var params = [
+    programId,
+    {
+      encoding: "base64",
+      // Token-2022 accounts have variable size (extensions), so no dataSize filter
+      // SPL Token accounts are always 165 bytes
+      filters: [
+        ...(isToken2022 ? [] : [{ dataSize: 165 }]),
+        { memcmp: { offset: 0, bytes: mintAddress } }
+      ],
+    }
+  ];
+  // For legacy SPL, use dataSlice to minimize payload
+  if (!isToken2022) params[1].dataSlice = { offset: 64, length: 8 };
+  var res = await fetch(rpcUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getProgramAccounts", params }),
+  });
+  if (!res.ok) { console.warn("[GPA] HTTP", res.status, programId.slice(0,8)); return 0; }
+  var data = await res.json();
+  if (data.error) { console.warn("[GPA] RPC error:", data.error.message || data.error.code); return 0; }
+  if (!Array.isArray(data?.result)) return 0;
+  if (isToken2022) {
+    // Token-2022: variable size, filter non-zero via amount at offset 64
+    return data.result.filter(function(acct) {
+      try {
+        // Full account data — amount is at offset 64, 8 bytes LE u64
+        var raw = atob(acct.account?.data?.[0] || "");
+        if (raw.length < 72) return true;
+        var val = 0;
+        for (var i = 71; i >= 64; i--) val = val * 256 + raw.charCodeAt(i);
+        return val > 0;
+      } catch(e) { return true; }
+    }).length;
+  }
+  return _countNonZeroBase64(data.result);
+}
+
 export async function fetchHolderCount(mintAddress) {
   if (!HELIUS_KEY) return 0;
   try {
-    // getProgramAccounts on SPL Token Program — counts actual on-chain token accounts
-    // This is the ONLY reliable method; DAS getAsset and getTokenAccounts both return 1 for pumpswap tokens
-    const res = await fetch(`https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0", id: 1,
-        method: "getProgramAccounts",
-        params: [
-          "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
-          {
-            encoding: "base64",
-            dataSlice: { offset: 64, length: 8 }, // amount field only — minimal data transfer
-            filters: [
-              { dataSize: 165 },
-              { memcmp: { offset: 0, bytes: mintAddress } }
-            ],
-          }
-        ],
-      }),
-    });
-    if (!res.ok) { console.warn("[Helius] getProgramAccounts HTTP", res.status); return 0; }
-    const data = await res.json();
-    if (data.error) { console.warn("[Helius] getProgramAccounts RPC error:", data.error.message || data.error.code); return 0; }
-    if (!Array.isArray(data?.result)) return 0;
-    // Count only accounts with non-zero balance (base64 decode 8-byte little-endian u64)
-    const nonZero = data.result.filter(acct => {
-      try {
-        const bytes = atob(acct.account?.data?.[0] || "");
-        if (bytes.length < 8) return true; // include if can't decode
-        let val = 0;
-        for (let i = 7; i >= 0; i--) val = val * 256 + bytes.charCodeAt(i);
-        return val > 0;
-      } catch { return true; }
-    }).length;
-    return nonZero;
+    var rpcUrl = `https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`;
+    // Try legacy SPL Token first
+    var count = await _gpaHolderCount(rpcUrl, TOKEN_PROGRAM, mintAddress);
+    if (count > 1) return count;
+    // If 0-1, try Token-2022 (pumpswap tokens may use this program)
+    var count2022 = await _gpaHolderCount(rpcUrl, TOKEN_2022_PROGRAM, mintAddress);
+    if (count2022 > 1) {
+      console.log(`[Helius] Token-2022 holders for ${mintAddress.slice(0,8)}: ${count2022}`);
+      return count2022;
+    }
+    // Return whichever was higher
+    return Math.max(count, count2022);
   } catch (e) {
     console.warn("[Helius] fetchHolderCount failed:", e.message);
     return 0;
@@ -172,64 +205,17 @@ export async function fetchHolderCount(mintAddress) {
 }
 
 // Fallback: public Solana RPC getProgramAccounts (no API key needed, slower but free)
+// Tries both SPL Token and Token-2022 programs
 export async function fetchHolderCountPublic(mintAddress) {
   try {
-    var rpcUrl = HELIUS_KEY
-      ? `https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`
-      : "https://api.mainnet-beta.solana.com";
-    // Use jsonParsed on a different path — sometimes succeeds when base64 dataSlice fails
-    var res = await fetch(rpcUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0", id: 1,
-        method: "getProgramAccounts",
-        params: [
-          "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
-          {
-            encoding: "jsonParsed",
-            filters: [
-              { dataSize: 165 },
-              { memcmp: { offset: 0, bytes: mintAddress } }
-            ],
-          }
-        ],
-      }),
-    });
-    if (!res.ok) {
-      // If Helius failed, retry on public RPC
-      if (HELIUS_KEY) {
-        res = await fetch("https://api.mainnet-beta.solana.com", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            jsonrpc: "2.0", id: 1,
-            method: "getProgramAccounts",
-            params: [
-              "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
-              {
-                encoding: "jsonParsed",
-                filters: [
-                  { dataSize: 165 },
-                  { memcmp: { offset: 0, bytes: mintAddress } }
-                ],
-              }
-            ],
-          }),
-        });
-        if (!res.ok) return 0;
-      } else {
-        return 0;
-      }
-    }
-    var data = await res.json();
-    if (data.error) { console.warn("[GPA-Public] RPC error:", data.error.message || data.error.code); return 0; }
-    if (!Array.isArray(data?.result)) return 0;
-    var nonZero = data.result.filter(a =>
-      (a.account?.data?.parsed?.info?.tokenAmount?.uiAmount || 0) > 0
-    ).length;
-    if (nonZero > 0) console.log(`[GPA-Public] ${mintAddress.slice(0,8)}: ${nonZero}`);
-    return nonZero;
+    var rpcUrl = "https://api.mainnet-beta.solana.com";
+    // Try legacy SPL Token first
+    var count = await _gpaHolderCount(rpcUrl, TOKEN_PROGRAM, mintAddress);
+    if (count > 1) { console.log(`[GPA-Public] ${mintAddress.slice(0,8)}: ${count} (SPL)`); return count; }
+    // Try Token-2022
+    var count2022 = await _gpaHolderCount(rpcUrl, TOKEN_2022_PROGRAM, mintAddress);
+    if (count2022 > 1) { console.log(`[GPA-Public] ${mintAddress.slice(0,8)}: ${count2022} (Token-2022)`); return count2022; }
+    return Math.max(count, count2022);
   } catch(e) { return 0; }
 }
 
