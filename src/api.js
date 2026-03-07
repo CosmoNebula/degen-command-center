@@ -723,15 +723,18 @@ export async function fetchDefinedTrending() {
 
 // ─── JUPITER QUOTE API: Liquidity depth / slippage analysis (FREE, no key) ───
 
-export async function fetchJupiterSlippage(mintAddress, sellAmountUsd = 5000, solUsdPrice = 84) {
+export async function fetchJupiterSlippage(mintAddress, sellAmountUsd = 5000, solUsdPrice = 140) {
   try {
-    // Get current price first
-    const priceData = await fetchJupiterPrice([mintAddress]);
-    const jp = priceData[mintAddress];
+    // Get current price + token decimals in parallel
+    var [priceData, meta] = await Promise.all([
+      fetchJupiterPrice([mintAddress]),
+      fetchTokenMeta(mintAddress),
+    ]);
+    var jp = priceData[mintAddress];
     if (!jp || !jp.price) return null;
-    const priceUsd = parseFloat(jp.price);
-    const decimals = 6; // PumpFun standard
-    const SOL_MINT = "So11111111111111111111111111111111111111112";
+    var priceUsd = parseFloat(jp.price);
+    var decimals = meta?.decimals || 6;
+    var SOL_MINT = "So11111111111111111111111111111111111111112";
     // Calculate token amount for desired USD sell
     const tokenAmount = Math.floor((sellAmountUsd / priceUsd) * Math.pow(10, decimals));
     if (tokenAmount <= 0) return null;
@@ -930,17 +933,22 @@ export function qualifyToken(dex, holders, meta) {
 // ─── FULL SCAN PIPELINE ───
 
 export async function fullTokenScan(mint) {
-  const [dex, holdersData, meta] = await Promise.all([
+  var [dex, holdersData, meta, holderCount] = await Promise.all([
     fetchTokenByAddress(mint),
     fetchLargestHolders(mint),
     fetchTokenMeta(mint),
+    fetchHolderCount(mint),
   ]);
   if (!dex) return null;
-  const qual = qualifyToken(dex, holdersData, meta);
+  // getProgramAccounts is the real count; fetchLargestHolders.holderCount is intentionally 0
+  if (holderCount <= 1) holderCount = (await fetchHolderCountPublic(mint)) || holderCount;
+  // Patch holdersData so qualifyToken sees real count
+  if (holdersData) holdersData.holderCount = holderCount;
+  var qual = qualifyToken(dex, holdersData, meta);
 
   return {
     ...dex, id: mint + Date.now(),
-    holders: holdersData?.holderCount || 0,
+    holders: holderCount,
     devWallet: 0, // would need deployer analysis
     lpLocked: false,
     mintAuth: meta?.mintAuth || false,
