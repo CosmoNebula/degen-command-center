@@ -1,7 +1,10 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useLiveData } from "./useLiveData";
 import { useSupabase } from "./useSupabase";
-import { fetchTokenByAddress, proxyUrl } from "./api";
+import { fetchTokenByAddress, fetchTokensBatch, proxyUrl } from "./api";
+import { HunterPanel, TreasureChestOverlay, useChestSystem, HunterLeaderboard } from "./HunterSystem";
+import { RARITIES } from "./HunterData.js";
+import { useIntelligence, ARCHETYPES } from "./useIntelligence";
 
 const NEON = {
   magenta:"#ff00ff",cyan:"#00ffff",green:"#39ff14",red:"#ff073a",
@@ -29,7 +32,7 @@ const COIN_COLORS=[
 function rand(a,b){return Math.random()*(b-a)+a}
 function randInt(a,b){return Math.floor(rand(a,b))}
 function pick(a){return a[randInt(0,a.length)]}
-function formatNum(n){if(n>=1e6)return(n/1e6).toFixed(1)+"M";if(n>=1e3)return(n/1e3).toFixed(1)+"K";return n.toFixed(0)}
+function formatNum(n){n=n||0;if(n>=1e6)return(n/1e6).toFixed(1)+"M";if(n>=1e3)return(n/1e3).toFixed(1)+"K";return n.toFixed(0)}
 function formatAddr(a){return a.slice(0,4)+"..."+a.slice(-4)}
 function genAddr(){const c="0123456789abcdef";let s="";for(let i=0;i<40;i++)s+=c[randInt(0,16)];return s}
 
@@ -215,7 +218,25 @@ function RadarScope({pings}){
 }
 
 // ═══════════════ BATTLEFIELD ═══════════════
-function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAlienUpdate,onMenuToggle,whaleTrigger,dolphinTrigger}){
+function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAlienUpdate,onMenuToggle,whaleTrigger,dolphinTrigger,tradeDataRef,signalScoresRef,hotClusterRef,flashSnapsRef}){
+  const tradeData = tradeDataRef || {current:{}};
+  const sigScores = signalScoresRef || {current:{}};
+  const hotClusters = hotClusterRef || {current: new Set()};
+  const flashSnapsRef_local = flashSnapsRef || {current:{}};
+  // Helper: draw rounded rect path (ctx.roundRect not available in all canvas envs)
+  const roundRect = (ctx, x, y, w, h, r) => {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  };
   const canvasRef=useRef(null);const tokensRef=useRef([]);const frameRef=useRef(0);
   const explosionsRef=useRef([]);const fogRef=useRef([]);const lockedRef=useRef([]);
   const selectedRef=useRef(null);const warpTrailsRef=useRef([]);
@@ -387,7 +408,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         // Always mark laserFired if token has migrated to prevent re-fire
         if(t.migrated)existing.laserFired=true;
       }});
-    if(tokensRef.current.length>150)tokensRef.current=tokensRef.current.slice(-150);
+    if(tokensRef.current.length>300)tokensRef.current=tokensRef.current.slice(-300);
   },[tokens]);
 
   useEffect(()=>{for(let i=0;i<45;i++)fogRef.current.push({x:rand(0,1),y:rand(0.7,1.05),vx:rand(-0.0004,0.0004),size:rand(30,90),opacity:rand(0.02,0.06)})},[]);
@@ -433,6 +454,8 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         ctx.beginPath();ctx.moveTo(0,z.y*H);ctx.lineTo(W,z.y*H);ctx.stroke();ctx.setLineDash([]);
         ctx.font=z.bold?"bold 14px 'Orbitron'":"bold 11px 'Orbitron'";ctx.fillStyle=z.c;ctx.shadowColor=z.sc;ctx.shadowBlur=12;
         ctx.fillText(z.l,8,z.y*H-4);ctx.shadowBlur=0});
+
+      // Holding Bay drawn after tokens — see bottom of frame
 
       // War fog
       fogRef.current.forEach(fog=>{fog.x+=fog.vx;if(fog.x<-0.1)fog.x=1.1;if(fog.x>1.1)fog.x=-0.1;
@@ -486,23 +509,74 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
           ctx.beginPath();ctx.arc(p3.x*W,p3.y*H,Math.max(0.3,2*ex.life),0,Math.PI*2);ctx.fill()});
         ctx.shadowBlur=0});
 
-      // Tokens — render only top 40 visually, but update ALL data
-      const MAX_VISUAL=40;
+      // Tokens — render only top 80 visually, but update ALL data
+      const MAX_VISUAL=80;
       const visualSet=new Set();
+      const now_vs=Date.now();
       const aliveAll=tokensRef.current.filter(t=>t.alive&&(t.mcap||0)>=5000);
-      // Priority: locked first, then migrated, then by mcap descending
+
+      // ── PARKED: tokens alive for scoring but hidden from battlefield ──────────
+      // A token is parked if: mcap > $40K AND no trade activity for 8+ minutes AND not locked
+      // This keeps the battlefield fresh with movers, not stale giants from last session
+      aliveAll.forEach(t=>{
+        const isLocked=!!lockedRef.current.find(l=>l.id===t.id);
+        const td=tradeData.current[t.addr];
+        // DB tokens with no live trade data: measure silence from session load time so it grows naturally
+        const lastTrade=td?.lastTradeTime||(t.fromDB?t.sessionLoadTime:t.timestamp)||0;
+        const silentMs=now_vs-lastTrade;
+        // DB-loaded tokens get a 3min grace on session start before any park rules apply
+        const sessionAge = now_vs - (t.sessionLoadTime || t.timestamp || now_vs);
+        const dbGrace = t.fromDB && sessionAge < 180000;
+        const staleHigh=(t.mcap||0)>=40000&&silentMs>150000; // >=$40K, silent 2.5min
+        const staleMid=(t.mcap||0)<40000&&silentMs>60000&&!t.fromDB; // <$40K live tokens only
+        const staleDB=t.fromDB&&(t.mcap||0)<40000&&silentMs>600000&&sessionAge>180000; // DB tokens under $40K silent 10min
+        // preMigration: either explicit bondingPct>80 OR mcap proxy ($30K-$75K non-migrated = near pump.fun ceiling)
+        const mcapForPark=t.mcap||0;
+        // nearMigrationMcap: in bonding ceiling range AND silent — don't park active traders
+        const nearMigrationMcap=mcapForPark>=22000&&mcapForPark<=85000&&!t.migrated&&silentMs>90000;
+        const preMigration=((t.bondingPct||0)>80||nearMigrationMcap)&&!t.migrated&&(!t.fromDB||sessionAge>180000);
+        const shouldPark=(staleHigh||staleMid||staleDB||preMigration)&&!isLocked&&!t.laserIn&&!t.accelerating&&!dbGrace;
+        if(preMigration&&!staleHigh&&!staleMid&&!staleDB&&!t.parked) t._preMig=true; // only tag if preMigration is sole reason
+        if(shouldPark&&!t.parked){
+          t.parked=true;
+          t.parkedAt=t.parkedAt||now_vs; // stamp when first parked for bunker decay timer
+          // Assign a stable bunker slot so they don't all stack on same pixel
+          if(!t.bunkerX){ t.bunkerX=0.79+Math.random()*0.18; t.bunkerY=0.80+Math.random()*0.14; }
+          console.log(`[FIELD] 🅿 ${t.name} parked — $${((t.mcap||0)/1000).toFixed(0)}K, ${Math.floor(silentMs/60000)}min silent`);
+        }
+        // Un-park if new activity arrives (trade within last 30s)
+        if(t.parked&&silentMs<30000){
+          t.parked=false;
+          t.parkedAt=null;t.bunkerX=null;t.bunkerY=null;
+          t._preMig=false;t._bayScans=0; // clear bay tracking on return
+          t.by=0.95;t.bx=rand(0.08,0.92); // re-enter at pit
+          console.log(`[FIELD] 🔄 ${t.name} un-parked — new activity`);
+        }
+      });
+
+      // Priority: locked > laserIn > active movers > fresh qualified > parked last
       aliveAll.sort((a,b)=>{
         const aLk=lockedRef.current.find(l=>l.id===a.id)?1:0;
         const bLk=lockedRef.current.find(l=>l.id===b.id)?1:0;
         if(aLk!==bLk)return bLk-aLk;
         if(a.laserIn&&!b.laserIn)return -1;if(b.laserIn&&!a.laserIn)return 1;
+        // Parked tokens go to back of queue
+        if(a.parked&&!b.parked)return 1;if(b.parked&&!a.parked)return -1;
         if(a.migrated&&!b.migrated)return -1;if(b.migrated&&!a.migrated)return 1;
-        // Momentum score: mcap + volume + holders + acceleration
-        const aScore=(a.mcap||0)+(a.vol||0)*2+(a.holders||0)*100+(a.accelerating?50000:0)+(a.qualScore||0)*5000;
-        const bScore=(b.mcap||0)+(b.vol||0)*2+(b.holders||0)*100+(b.accelerating?50000:0)+(b.qualScore||0)*5000;
+        // Momentum score: recency-weighted
+        const tdA=tradeData.current[a.addr];const tdB=tradeData.current[b.addr];
+        const recA=tdA?Math.max(0,1-((now_vs-(tdA.lastTradeTime||0))/600000)):0; // freshness 0-1 over 10min
+        const recB=tdB?Math.max(0,1-((now_vs-(tdB.lastTradeTime||0))/600000)):0;
+        const aScore=(a.mcap||0)*0.3+(a.vol||0)*2+(a.holders||0)*100+(a.accelerating?80000:0)+(a.qualScore||0)*5000+recA*60000;
+        const bScore=(b.mcap||0)*0.3+(b.vol||0)*2+(b.holders||0)*100+(b.accelerating?80000:0)+(b.qualScore||0)*5000+recB*60000;
         return bScore-aScore;
       });
-      aliveAll.slice(0,MAX_VISUAL).forEach(t=>visualSet.add(t.id));
+      // Active tokens fill the 80 slots — parked tokens don't count against limit
+      const activeTokens=aliveAll.filter(t=>!t.parked);
+      const parkedTokens=aliveAll.filter(t=>t.parked);
+      activeTokens.slice(0,MAX_VISUAL).forEach(t=>visualSet.add(t.id));
+      // Parked tokens are always "visible" so they can be drawn in the bunker
+      parkedTokens.forEach(t=>visualSet.add(t.id));
 
       tokensRef.current.forEach(t=>{
         if(!t.alive)return;t.age++;
@@ -702,9 +776,21 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
             targetFromMcap=zones[i][1]+(zones[i+1][1]-zones[i][1])*pct;break;}}}
         const gatedProgress=targetFromMcap+(0.95-targetFromMcap)*(1-Math.max(volGate,t.migrated?0.8:t.qualified?0.3:0));
         const canMove=t.migrated||(t.buys>=1&&t.vol>50);
-        t.targetY=Math.max(-0.1,Math.min(0.95,canMove?gatedProgress:0.95)); // allow negative Y (off screen)
-        const moveSpeed=t.migrated?0.015:0.005;
-        t.by+=(t.targetY-t.by)*moveSpeed;t.bx+=t.vx;if(t.bx<0.05||t.bx>0.95)t.vx*=-1;
+        if(t.parked){
+          // Fly to bunker — top-right corner above battlefield
+          const bx3=t.bunkerX||0.88,by3=t.bunkerY||0.87;
+          t.bx+=(bx3-t.bx)*0.04; t.by+=(by3-t.by)*0.04; // smooth glide in
+          t.vx=0; // no horizontal drift in bunker
+        } else {
+          t.targetY=Math.max(-0.1,Math.min(0.95,canMove?gatedProgress:0.95));
+          if(t.bx>0.76)t.targetY=Math.min(t.targetY,0.74); // don't sink into bay zone
+          const moveSpeed=t.migrated?0.015:0.005;
+          t.by+=(t.targetY-t.by)*moveSpeed;t.bx+=t.vx;
+          // ── HOLDING BAY EXCLUSION ZONE (bottom-right) — field tokens bounce off ──
+          const bayLeft=0.76,bayTop=0.76;
+          if(t.bx>bayLeft&&t.by>bayTop){t.bx=bayLeft-(t.bx-bayLeft)*0.5;t.vx*=-1;}
+          if(t.bx<0.05||t.bx>0.95)t.vx*=-1;
+        }
         if(f%4===0){t.trail.push({x:t.bx,y:t.by,life:1});if(t.trail.length>20)t.trail.shift()}
         if(t.by<0.12&&!t.mooned){t.mooned=true;
           onKillFeedRef.current?.({type:"moon",name:t.name,text:`🚀 ${t.name} HIT THE MOON! 🌙`});
@@ -720,9 +806,10 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         // Skip visual rendering for non-priority tokens (data still updates above)
         if(!isVisual)return;
 
-        const px=Math.round(t.bx*W),py=Math.round(t.by*H);const isLk=locked.find(l=>l.id===t.id);const isSel=t.id===selId;
+        const px=Math.round(t.bx*W),py=Math.round(t.by*H);const isLk=locked.find(l=>l.id===t.id);const isSel=t.id===selId;const isParked=!!t.parked&&!isLk;
         const color=t.health>70?NEON.green:t.health>40?NEON.yellow:t.health>20?NEON.orange:NEON.red;
-        const bob=Math.round(Math.sin(f*0.03+t.bobOffset)*2);const cc=t.coinColor;const cr=12;
+        const bob=isParked?0:Math.round(Math.sin(f*0.03+t.bobOffset)*2);const cc=t.coinColor;const cr=isParked?8:12;
+        if(isParked)ctx.globalAlpha=0.28;
 
         // Trail - tiny dots
         t.trail.forEach(tr=>{tr.life-=0.015;if(tr.life<=0)return;
@@ -783,12 +870,109 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         // MULTI-TREND GLOW — gold shimmer for tokens trending on multiple platforms
         if(t.trendScore>=2){
           const tGlow=0.15+Math.sin(f*0.06)*0.1;
-          ctx.save();ctx.shadowColor="#ffd740";ctx.shadowBlur=15+Math.sin(f*0.08)*8;
+          ctx.save();ctx.shadowColor="rgba(255,215,64,0.8)";ctx.shadowBlur=15+Math.sin(f*0.08)*8;
           ctx.strokeStyle=`rgba(255,215,64,${tGlow})`;ctx.lineWidth=1;
           ctx.beginPath();ctx.arc(px,py+bob,cr+9,0,Math.PI*2);ctx.stroke();ctx.restore();
         }
 
-        // KOTH CROWN — tiny pixel crown above token
+        // ── NEURAL SIGNAL AURA — pulsing ring for high-confidence signals ──
+        const sigScore = sigScores.current[t.addr] || 0;
+        if(sigScore >= 72 && !t.bundleDetected && !t.isSerialRugger){
+          const isElite = sigScore >= 88;
+          const pulseSpeed = isElite ? 0.14 : 0.08;
+          const auraR = cr + 12 + Math.sin(f * pulseSpeed) * 2.5;
+          const auraAlpha = isElite ? (0.22 + Math.sin(f*pulseSpeed)*0.14) : (0.14 + Math.sin(f*pulseSpeed)*0.10);
+          const auraColor = isElite ? '#ffd700' : '#00ffff';
+          ctx.save();
+          ctx.shadowColor = auraColor;
+          ctx.shadowBlur = isElite ? 22 + Math.sin(f*pulseSpeed)*10 : 14 + Math.sin(f*pulseSpeed)*6;
+          ctx.strokeStyle = `${auraColor}`;
+          ctx.globalAlpha = auraAlpha;
+          ctx.lineWidth = isElite ? 2 : 1.5;
+          ctx.beginPath();ctx.arc(px,py+bob,auraR,0,Math.PI*2);ctx.stroke();
+          // Second outer ring for elite
+          if(isElite){
+            ctx.globalAlpha = auraAlpha * 0.4;
+            ctx.beginPath();ctx.arc(px,py+bob,auraR+5,0,Math.PI*2);ctx.stroke();
+          }
+          ctx.globalAlpha=1;ctx.restore();
+          // Signal score label
+          const sigLabel = isElite ? '◈'+sigScore : sigScore+'';
+          ctx.font=`bold 7px 'Orbitron',sans-serif`;
+          ctx.fillStyle=isElite?'#ffd700':'#00ffff';
+          ctx.shadowColor=isElite?'#ffd700':'#00ffff';ctx.shadowBlur=6;
+          ctx.textAlign='center';
+          ctx.fillText(sigLabel,px,py+bob+cr+18);
+          ctx.textAlign='left';ctx.shadowBlur=0;
+        }
+
+        // ── CLUSTER ORBITAL — spinning purple dots for tokens in hot clusters ──
+        if(hotClusters.current.has(t.addr)){
+          const numDots = 4;
+          for(let di=0;di<numDots;di++){
+            const dotAngle=(f*0.04)+(di*(Math.PI*2/numDots));
+            const orbitR = cr+14+Math.sin(f*0.06+di)*1.5;
+            const dotX=px+Math.cos(dotAngle)*orbitR;
+            const dotY=py+bob+Math.sin(dotAngle)*orbitR;
+            const dotA=0.55+Math.sin(f*0.1+di*1.5)*0.3;
+            ctx.fillStyle=`rgba(191,0,255,${dotA})`;
+            ctx.shadowColor='#bf00ff';ctx.shadowBlur=8;
+            ctx.beginPath();ctx.arc(dotX,dotY,2,0,Math.PI*2);ctx.fill();
+            ctx.shadowBlur=0;
+          }
+          // CLUSTER label
+          ctx.font="bold 7px 'Orbitron',sans-serif";
+          ctx.fillStyle=`rgba(191,0,255,${0.6+Math.sin(f*0.07)*0.3})`;
+          ctx.shadowColor='#bf00ff';ctx.shadowBlur=5;
+          ctx.textAlign='center';
+          ctx.fillText('CLUSTER',px,py+bob-cr-8);
+          ctx.textAlign='left';ctx.shadowBlur=0;
+        }
+
+        // ── NEURAL SPOTLIGHT — auto-info HUD on high-signal tokens (no click needed) ──
+        // Fires when sigScore >= 85 and token not already selected
+        if(sigScore >= 85 && !isSel && !t.bundleDetected && !t.isSerialRugger){
+          const spotAlpha = 0.15 + Math.sin(f * 0.07) * 0.05;
+          // Outer beacon ring — expands outward
+          const beaconR = cr + 20 + ((f * 0.8) % 18);
+          const beaconA = Math.max(0, 0.5 - (((f * 0.8) % 18) / 18));
+          ctx.save();
+          ctx.strokeStyle = `rgba(255,215,0,${beaconA})`;
+          ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.arc(px, py+bob, beaconR, 0, Math.PI*2); ctx.stroke();
+          // Mini HUD bubble — top-right of coin
+          const hudX = px + cr + 4;
+          const hudY = py + bob - cr - 2;
+          const hudW = 62;
+          const hudH = sigScore >= 92 ? 38 : 28;
+          // Bubble bg
+          ctx.fillStyle = `rgba(0,0,0,${0.75})`;
+          ctx.strokeStyle = sigScore >= 92 ? `rgba(255,215,0,0.7)` : `rgba(0,255,255,0.5)`;
+          ctx.lineWidth = 0.8;
+          roundRect(ctx, hudX, hudY - hudH, hudW, hudH, 3);
+          ctx.fill(); ctx.stroke();
+          // Score line
+          const scoreColor = sigScore >= 92 ? '#ffd700' : '#00ffff';
+          ctx.font = `bold 9px 'Orbitron',sans-serif`;
+          ctx.fillStyle = scoreColor;
+          ctx.shadowColor = scoreColor; ctx.shadowBlur = 8;
+          ctx.textAlign = 'left';
+          ctx.fillText(`◈ ${sigScore}`, hudX + 4, hudY - hudH + 10);
+          ctx.shadowBlur = 0;
+          // Smart money line
+          if((t.smartWalletCount || 0) > 0){
+            ctx.font = `bold 7px 'Share Tech Mono',monospace`;
+            ctx.fillStyle = '#ff9500';
+            ctx.fillText(`🧠 ${t.smartWalletCount}x`, hudX + 4, hudY - hudH + 21);
+          }
+          // Cluster line
+          if(hotClusters.current.has(t.addr)){
+            ctx.font = `bold 7px 'Share Tech Mono',monospace`;
+            ctx.fillStyle = '#bf00ff';
+            ctx.fillText(`🔗 CLUSTER`, hudX + 4, hudY - hudH + (t.smartWalletCount ? 30 : 21));
+          }
+          ctx.restore();
+        }
         if(t.isKOTH){
           ctx.font="bold 10px sans-serif";ctx.textAlign="center";
           ctx.fillStyle=`rgba(255,215,64,${0.7+Math.sin(f*0.08)*0.3})`;
@@ -809,6 +993,48 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
           ctx.font="bold 7px 'Orbitron'";ctx.textAlign="center";
           ctx.fillStyle="rgba(57,255,20,0.6)";
           ctx.fillText("✓",px,py+bob+cr+8);ctx.textAlign="left";
+        }
+
+        // ── LIVE % CHANGE LABEL — always visible, no click needed ──────────
+        // Use flash snaps to compute live 30s / 1m gain on the coin itself
+        const coinSnaps = (()=>{try{return flashSnapsRef_local?.current?.[t.addr]||[];}catch{return [];}})();
+        if(coinSnaps.length >= 2 && t.mcap > 0){
+          const now30 = Date.now()-30000;
+          const snap30 = coinSnaps.reduce((b,s)=>{
+            if(!b)return s;
+            return Math.abs(s.time-now30)<Math.abs(b.time-now30)?s:b;
+          },null);
+          if(snap30 && snap30.mcap > 0 && Date.now()-snap30.time >= 10000){
+            const pct30 = ((t.mcap - snap30.mcap) / snap30.mcap) * 100;
+            if(Math.abs(pct30) >= 1.5){
+              const isUp30 = pct30 > 0;
+              const absP = Math.abs(pct30);
+              // Color intensity based on magnitude
+              const alpha = Math.min(1, 0.6 + absP * 0.015);
+              const col = isUp30 ? `rgba(57,255,20,${alpha})` : `rgba(255,7,58,${alpha})`;
+              const label = (isUp30?"+":"")+pct30.toFixed(1)+"%";
+              ctx.font=`bold ${absP>=20?8:7}px 'Orbitron',sans-serif`;
+              ctx.textAlign="center";
+              ctx.fillStyle=col;
+              ctx.shadowColor=col;
+              ctx.shadowBlur=absP>=30?10:6;
+              // Position above coin (stacked with other labels)
+              ctx.fillText(label, px, py+bob-cr-14);
+              ctx.shadowBlur=0;ctx.textAlign="left";
+            }
+          }
+        }
+
+        // ── SMART MONEY BADGE — shows wallet count without clicking ─────────
+        if(t.hasSmartMoney && (t.smartWalletCount||0)>0){
+          const smLabel = "🧠"+(t.smartWalletCount||1);
+          ctx.font="bold 7px 'Share Tech Mono',monospace";
+          ctx.textAlign="center";
+          const smAlpha = 0.6+Math.sin(f*0.09)*0.3;
+          ctx.fillStyle=`rgba(255,149,0,${smAlpha})`;
+          ctx.shadowColor="#ff9500";ctx.shadowBlur=6;
+          ctx.fillText(smLabel, px, py+bob+cr+18);
+          ctx.shadowBlur=0;ctx.textAlign="left";
         }
 
         // Coin: image if loaded, else colored circle + initial
@@ -856,9 +1082,16 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
 
         // Name — small, above
         ctx.font="10px 'Share Tech Mono'";
-        ctx.fillStyle=isLk?NEON.yellow:isSel?NEON.cyan:`rgba(224,224,255,0.4)`;
+        ctx.fillStyle=isParked?`rgba(180,180,200,0.35)`:isLk?NEON.yellow:isSel?NEON.cyan:`rgba(224,224,255,0.4)`;
         ctx.textAlign="center";ctx.textBaseline="alphabetic";
         ctx.fillText(t.name,px,py+bob-cr-3);
+        // Parked indicator
+        if(isParked){
+          ctx.font="bold 7px 'Orbitron',sans-serif";
+          ctx.fillStyle="rgba(150,150,180,0.5)";
+          ctx.fillText("P",px+cr-1,py+bob-cr);
+          ctx.globalAlpha=1.0; // restore after parked token
+        }
         ctx.textAlign="left";ctx.textBaseline="alphabetic";
       });
       // Clean up truly dead tokens from ref only if they've been dead 2+ min
@@ -2535,25 +2768,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         }
       }
 
-      // ═══ MARKET TIDE — wave at bottom ═══
-      const tide=marketTideRef.current;
-      const aliveTokens=tokensRef.current.filter(t=>t.alive);
-      const avgHealth=aliveTokens.length>0?aliveTokens.reduce((s,t)=>s+t.health,0)/aliveTokens.length:50;
-      tide.target=avgHealth/100;
-      tide.level+=(tide.target-tide.level)*0.02;
-      const tideH=H*0.04; // max tide height
-      const tideY=H-tideH*tide.level;
-      const tideColor=tide.level>0.6?"rgba(57,255,20,":"rgba(255,7,58,";
-      for(let wx=0;wx<W;wx+=3){
-        const waveOff=Math.sin(wx*0.015+Date.now()*0.002)*tideH*0.3+Math.sin(wx*0.03+Date.now()*0.003)*tideH*0.15;
-        const wy=tideY+waveOff;
-        const a2=0.08+tide.level*0.12;
-        ctx.fillStyle=tideColor+a2+")";
-        ctx.fillRect(wx,wy,3,H-wy);
-      }
-      // Tide label
-      ctx.font="bold 7px 'Orbitron'";ctx.fillStyle=tide.level>0.6?"rgba(57,255,20,0.5)":"rgba(255,7,58,0.5)";
-      ctx.textAlign="right";ctx.fillText(tide.level>0.6?"BULL TIDE":"BEAR TIDE",W-8,H-4);ctx.textAlign="left";
+      // Tide wave removed
 
       // ═══ MULTI-CREATURE SYSTEM: Dolphins, Tiered Whales, Golden Whales ═══
       const WHALE_TIER_COLORS=["#6cb4ee","#00ccff","#39ff14","#aaff00","#ffd740","#ff9500","#ff4444","#ff00ff"];
@@ -3911,7 +4126,167 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         if(f>=mf){lm.active=false;lm.frame=0;}
       }
 
-                  // Corner brackets
+                  // ═══════════════════════════════════════════════════════════════
+      // ██ HOLDING BAY — pixel city building, drawn LAST so it covers docked coins
+      // ═══════════════════════════════════════════════════════════════
+      {
+        const bunkerCount=tokensRef.current.filter(t=>t.parked&&t.alive).length;
+        const BW=Math.floor(W*0.22);   // building width
+        const BH=Math.floor(H*0.22);   // building height from bottom
+        const BX=W-BW-2;               // right edge flush
+        const BY=H-BH;                 // bottom of canvas
+        const pulse=0.5+Math.sin(f*0.04)*0.25;
+        const pulse2=0.5+Math.sin(f*0.07+1.2)*0.25;
+        const glow=bunkerCount>0;
+        const baseC="rgba(90,40,200,";
+        const accentC="rgba(160,80,255,";
+        const winC="rgba(200,150,255,";
+
+        ctx.save();
+        ctx.imageSmoothingEnabled=false;
+
+        // ── FOUNDATION / BASE SLAB ──
+        ctx.fillStyle="rgba(12,6,28,0.97)";
+        ctx.fillRect(BX,BY,BW,BH);
+
+        // ── MAIN BUILDING SILHOUETTE (3 towers) ──
+        // Tower 1 — center, tallest
+        const t1x=BX+Math.floor(BW*0.3),t1w=Math.floor(BW*0.38),t1h=Math.floor(BH*0.78);
+        ctx.fillStyle="rgba(14,7,32,0.99)";
+        ctx.fillRect(t1x,BY-t1h+BH,t1w,t1h);
+        // Tower 2 — left, medium
+        const t2x=BX+4,t2w=Math.floor(BW*0.26),t2h=Math.floor(BH*0.55);
+        ctx.fillRect(t2x,BY-t2h+BH,t2w,t2h);
+        // Tower 3 — right, short-wide
+        const t3x=BX+Math.floor(BW*0.72),t3w=Math.floor(BW*0.26),t3h=Math.floor(BH*0.42);
+        ctx.fillRect(t3x,BY-t3h+BH,t3w,t3h);
+
+        // ── PIXEL GRID WINDOWS ── (3 towers separately)
+        const drawWindows=(tx,ty,tw,th,cols,rows)=>{
+          const pw=Math.floor((tw-4)/cols),ph=Math.floor((th-8)/rows);
+          for(let row=0;row<rows;row++){
+            for(let col=0;col<cols;col++){
+              const wx=tx+2+col*pw+1,wy=ty+4+row*ph+1,ww=pw-2,wh=ph-2;
+              const seed=(row*cols+col+f*0.02+tx*0.01)%17;
+              const lit=seed<(glow?10:6);
+              const flicker=lit&&((f+row*3+col*7)%40<2);
+              if(lit){
+                ctx.fillStyle=flicker?"rgba(255,240,180,0.9)":`rgba(180,120,255,${0.35+((row*cols+col)%5)*0.08})`;
+                ctx.fillRect(wx,wy,ww,wh);
+                // window glow
+                ctx.fillStyle=flicker?"rgba(255,230,100,0.12)":`rgba(140,80,255,0.06)`;
+                ctx.fillRect(wx-1,wy-1,ww+2,wh+2);
+              } else {
+                ctx.fillStyle="rgba(20,10,40,0.8)";
+                ctx.fillRect(wx,wy,ww,wh);
+              }
+            }
+          }
+        };
+        // Tower 1 windows (center) — 5 cols 7 rows
+        drawWindows(t1x,BY-t1h+BH,t1w,t1h,5,7);
+        // Tower 2 windows (left) — 3 cols 5 rows
+        drawWindows(t2x,BY-t2h+BH,t2w,t2h,3,5);
+        // Tower 3 windows (right) — 3 cols 4 rows
+        drawWindows(t3x,BY-t3h+BH,t3w,t3h,3,4);
+
+        // ── ROOFTOP ANTENNA on center tower ──
+        const antX=t1x+Math.floor(t1w/2);
+        const antBaseY=BY-t1h+BH;
+        ctx.strokeStyle=`rgba(160,80,255,0.6)`;ctx.lineWidth=1;
+        ctx.beginPath();ctx.moveTo(antX,antBaseY);ctx.lineTo(antX,antBaseY-18);ctx.stroke();
+        // Antenna blinking beacon
+        const beaconOn=(f%30)<18;
+        ctx.fillStyle=beaconOn?`rgba(255,80,80,${0.6+pulse*0.4})`:`rgba(120,30,30,0.4)`;
+        ctx.beginPath();ctx.arc(antX,antBaseY-18,3,0,Math.PI*2);ctx.fill();
+        if(beaconOn){ctx.shadowColor="#ff4040";ctx.shadowBlur=8;ctx.fill();ctx.shadowBlur=0;}
+        // Antenna cross bar
+        ctx.strokeStyle=`rgba(140,70,220,0.4)`;
+        ctx.beginPath();ctx.moveTo(antX-6,antBaseY-12);ctx.lineTo(antX+6,antBaseY-12);ctx.stroke();
+
+        // ── TOWER OUTLINES — pixel border ──
+        ctx.strokeStyle=glow?`rgba(130,60,255,${0.45+pulse*0.2})`:`rgba(70,30,140,0.3)`;
+        ctx.lineWidth=1;
+        ctx.strokeRect(t1x,BY-t1h+BH,t1w,t1h);
+        ctx.strokeRect(t2x,BY-t2h+BH,t2w,t2h);
+        ctx.strokeRect(t3x,BY-t3h+BH,t3w,t3h);
+
+        // ── LEDGE / FLOOR LINES on center tower ──
+        for(let fl=1;fl<=3;fl++){
+          const fy=BY-t1h+BH+Math.floor((t1h/4)*fl);
+          ctx.strokeStyle=`rgba(100,50,200,0.2)`;ctx.lineWidth=1;
+          ctx.beginPath();ctx.moveTo(t1x,fy);ctx.lineTo(t1x+t1w,fy);ctx.stroke();
+        }
+
+        // ── DOCK COUNT DISPLAY — above sign ──
+        const dockY=H-28;
+        ctx.font="9px 'Share Tech Mono',monospace";
+        ctx.textAlign="center";
+        if(bunkerCount>0){
+          ctx.fillStyle=`rgba(160,100,255,${0.7+pulse*0.3})`;
+          ctx.shadowColor="#8030ee";ctx.shadowBlur=6;
+          ctx.fillText(`${bunkerCount} DOCKED`,BX+BW/2,dockY);
+          ctx.shadowBlur=0;
+          // Activity indicator dots row
+          const dotRowY=dockY+5,dotSpacing=8,dotTotal=Math.min(bunkerCount,12);
+          const dotStartX=BX+BW/2-(dotTotal*dotSpacing)/2;
+          for(let di=0;di<dotTotal;di++){
+            const dotOn=(f+di*5)%16<10;
+            ctx.fillStyle=dotOn?`rgba(180,100,255,0.9)`:`rgba(50,20,100,0.5)`;
+            ctx.fillRect(dotStartX+di*dotSpacing,dotRowY,5,5);
+            if(dotOn){ctx.shadowColor="#9040ff";ctx.shadowBlur=4;ctx.fillRect(dotStartX+di*dotSpacing,dotRowY,5,5);ctx.shadowBlur=0;}
+          }
+        } else {
+          ctx.fillStyle="rgba(60,30,100,0.4)";
+          ctx.fillText("-- EMPTY --",BX+BW/2,dockY);
+        }
+
+        // ── NEON SIGN BOARD — bottom of building ──
+        const signW=Math.floor(BW*0.84),signH=18;
+        const signX=BX+Math.floor(BW*0.08),signY=H-signH-2;
+        ctx.fillStyle="rgba(8,4,24,0.96)";ctx.fillRect(signX,signY,signW,signH);
+        // Sign border — animated neon
+        ctx.strokeStyle=glow?`rgba(180,90,255,${0.6+pulse*0.35})`:`rgba(80,40,160,0.4)`;
+        ctx.lineWidth=2;ctx.strokeRect(signX,signY,signW,signH);
+        // Sign text
+        ctx.font="bold 8px 'Orbitron',sans-serif";
+        ctx.textAlign="center";
+        ctx.fillStyle=glow?`rgba(220,160,255,${0.85+pulse2*0.15})`:`rgba(120,70,200,0.6)`;
+        ctx.shadowColor="#9040ff";ctx.shadowBlur=glow?8:3;
+        ctx.fillText("▣ HOLDING BAY",signX+signW/2,signY+12);
+        ctx.shadowBlur=0;
+
+        // ── BUILDING EDGE GLOW when active ──
+        if(glow){
+          const grad=ctx.createLinearGradient(BX,0,BX+BW,0);
+          grad.addColorStop(0,"rgba(100,40,220,0)");
+          grad.addColorStop(0.1,`rgba(120,50,255,${0.08+pulse*0.06})`);
+          grad.addColorStop(0.9,`rgba(120,50,255,${0.08+pulse*0.06})`);
+          grad.addColorStop(1,"rgba(100,40,220,0)");
+          ctx.fillStyle=grad;
+          ctx.fillRect(BX,BY-t1h+BH-20,BW,t1h+20);
+          // Left edge glow line
+          ctx.strokeStyle=`rgba(140,60,255,${0.3+pulse*0.2})`;ctx.lineWidth=2;
+          ctx.beginPath();ctx.moveTo(BX,BY-t1h+BH);ctx.lineTo(BX,H);ctx.stroke();
+        }
+
+        // ── PIXEL GROUND STRIP at very bottom ──
+        ctx.fillStyle="rgba(30,12,60,0.95)";
+        ctx.fillRect(BX,H-6,BW,6);
+        ctx.fillStyle=`rgba(100,50,200,${0.4+pulse*0.2})`;
+        ctx.fillRect(BX,H-4,BW,2); // neon ground line
+
+        // ── SCAN LINES over entire building ──
+        for(let sl=BY-t1h+BH-20;sl<H;sl+=4){
+          ctx.fillStyle="rgba(80,30,160,0.025)";
+          ctx.fillRect(BX,sl,BW,2);
+        }
+
+        ctx.restore();
+        ctx.textAlign="left";
+      }
+
+      // Corner brackets
       const bL=30;ctx.strokeStyle="rgba(255,0,255,0.1)";ctx.lineWidth=1;
       [[5,bL+5,5,5,bL+5,5],[W-bL-5,5,W-5,5,W-5,bL+5],[5,H-bL-5,5,H-5,bL+5,H-5],[W-bL-5,H-5,W-5,H-5,W-5,H-bL-5]]
         .forEach(([x1,y1,x2,y2,x3,y3])=>{ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.lineTo(x3,y3);ctx.stroke()});
@@ -3935,7 +4310,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
       // If crashing repeatedly, kill J-Ai-C (most likely culprit)
       if(crashCount>=3){
         console.warn("[BATTLEFIELD] ⚠ 3+ crashes in 10s — disabling J-Ai-C Dreadnought");
-        const jcr=jcRef.current;jcr.active=false;jcr.bills=[];jcr.phase="idle";
+        const jcr=jaycShipRef.current;jcr.active=false;jcr.bills=[];jcr.phase="idle";
         crashCount=0;
       }
      }
@@ -3972,7 +4347,7 @@ function KillFeed({events,onSelectByName}){
   const queueRef=useRef([]);
   const timerRef=useRef(null);
   const processedRef=useRef(new Set());
-  const DISPLAY_MS=7000;
+  const DISPLAY_MS=14000;
 
   const showNext=useCallback(()=>{
     if(queueRef.current.length===0){setCurrent(null);timerRef.current=null;return;}
@@ -4025,12 +4400,12 @@ function IntelPanel({token,onLock,onClose}){
   if(!token)return null;
   const stats=[
     {l:"MCAP",v:"$"+formatNum(token.mcap),c:NEON.cyan},{l:"VOL",v:"$"+formatNum(token.vol),c:NEON.yellow},
-    {l:"ATH",v:"$"+formatNum(token.athMcap||token.mcap),c:"#ffd740"},
+    {l:"ATH",v:"$"+formatNum(token.athMcap||token.mcap||0),c:"#ffd740"},
     {l:"START",v:"$"+formatNum(token.startMcap||0),c:NEON.dimText},
-    {l:"HOLDERS",v:token.holders,c:token.holders>100?NEON.green:NEON.red},
-    {l:"DEV%",v:token.devWallet.toFixed(1)+"%",c:token.devWallet>15?NEON.red:NEON.green},
-    {l:"B/S",v:`${token.buys}/${token.sells}`,c:NEON.text},
-    {l:"QUAL",v:token.qualScore+"/8",c:NEON.green},
+    {l:"HOLDERS",v:token.holders||0,c:(token.holders||0)>100?NEON.green:NEON.red},
+    {l:"DEV%",v:(token.devWallet||0).toFixed(1)+"%",c:(token.devWallet||0)>15?NEON.red:NEON.green},
+    {l:"B/S",v:`${token.buys||0}/${token.sells||0}`,c:NEON.text},
+    {l:"QUAL",v:(token.qualScore||0)+"/8",c:NEON.green},
   ];
   const edgeStats=[
     {l:"👻 FRESH",v:(token.freshPct||0)+"%",c:(token.freshPct||0)>75?NEON.red:(token.freshPct||0)<50?NEON.green:NEON.yellow},
@@ -4137,11 +4512,24 @@ function TargetLockList({lockedTokens,onRemove,onSelect}){
 }
 
 // ═══════════════ WAR LOG ═══════════════
-function WarLog({events}){
+function WarLog({events, clusterAlerts=[]}){
   function timeAgo(ts){const s=Math.floor((Date.now()-ts)/1000);if(s<60)return`${s}s ago`;return`${Math.floor(s/60)}m ago`}
   return(
     <div style={{display:"flex",flexDirection:"column",gap:1,padding:"4px 6px"}}>
-      {events.length===0&&<div style={{color:NEON.dimText,fontSize:12,textAlign:"center",padding:20,fontStyle:"italic"}}>MONITORING...</div>}
+      {clusterAlerts.length > 0 && <div style={{marginBottom:6}}>
+        <div style={{fontSize:9,color:"#bf00ff",letterSpacing:2,fontFamily:"'Orbitron'",marginBottom:4,paddingBottom:3,borderBottom:"1px solid rgba(191,0,255,0.15)"}}>🕸 COORDINATED CLUSTERS</div>
+        {clusterAlerts.slice(0,5).map((ca,i) => (
+          <div key={ca.id} style={{padding:"5px 8px",borderRadius:4,fontSize:11,lineHeight:1.4,
+            background:"rgba(191,0,255,0.06)",borderLeft:"2px solid rgba(191,0,255,0.4)",marginBottom:3}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span style={{color:"#bf00ff",fontWeight:700}}>🕸 {ca.walletCount}w CLUSTER — {ca.cobuys} co-buys</span>
+              <span style={{fontSize:10,color:"#5a5a7a"}}>{Math.floor((Date.now()-ca.time)/1000)}s ago</span>
+            </div>
+            <div style={{color:"#e0e0ff",fontSize:10,opacity:0.7}}>{ca.tokens.slice(0,3).map(t=>t.slice(0,8)).join(', ')}</div>
+          </div>
+        ))}
+      </div>}
+      {events.length===0&&clusterAlerts.length===0&&<div style={{color:NEON.dimText,fontSize:12,textAlign:"center",padding:20,fontStyle:"italic"}}>MONITORING...</div>}
       {events.map((e,i)=>(
         <div key={e.id} style={{padding:"8px 10px",borderRadius:5,fontSize:12,lineHeight:1.4,
           background:e.priority==="HIGH"?`${e.color}08`:"transparent",
@@ -4240,8 +4628,349 @@ function AlienHUD({aliens}){
 }
 
 // ═══════════════ MAIN ═══════════════
+// ═══════════════════════════════════════════════════════
+// LEADERBOARD PANEL — Historical DB-backed leaderboards
+// ═══════════════════════════════════════════════════════
+function LeaderboardPanel({ SB_URL, SB_KEY, onSelectToken, onSelectWallet, onKill, NEON, formatNum }) {
+  const [section, setSection] = useState("COINS");
+  const [timeframe, setTimeframe] = useState("ALL");
+  const [category, setCategory] = useState(null);
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [deployerDetail, setDeployerDetail] = useState(null);
+  const [killedCoins, setKilledCoins] = useState([]); // flash killed coins briefly
+  const prevAddrSet = useRef(new Set());
+
+  const SECTIONS = ["COINS","WALLETS","DEPLOYERS","HUNTERS"];
+  const TIMEFRAMES = ["15M","1H","1D","ALL"];
+  const CATEGORIES = {
+    COINS: [
+      {id:"mcap",label:"💰 Highest MCap",color:"#ffd740"},
+      {id:"holders",label:"👥 Most Holders",color:"#00ffff"},
+      {id:"volume",label:"📊 Most Volume",color:"#39ff14"},
+    ],
+    WALLETS: [
+      {id:"wins",label:"🏆 Most Wins",color:"#ffd740"},
+      {id:"pnl",label:"💎 Highest PNL",color:"#39ff14"},
+      {id:"losers",label:"💀 Biggest Losers",color:"#ff073a"},
+      {id:"single",label:"⚡ Biggest Single Win",color:"#ff9500"},
+      {id:"trades",label:"🔄 Most Trades",color:"#00ffff"},
+    ],
+    DEPLOYERS: [
+      {id:"migrated",label:"🌉 Most Migrated",color:"#39ff14"},
+      {id:"100k",label:"🚀 Most to 100K+",color:"#ffd740"},
+      {id:"rugs",label:"💀 Most Rugs",color:"#ff073a"},
+      {id:"deploys",label:"📦 Most Deploys",color:"#00ffff"},
+    ],
+  };
+
+  const timeMs = { "15M": 900000, "1H": 3600000, "1D": 86400000, "ALL": 0 };
+
+  const fetchData = useCallback(async (sec, cat, tf, silent=false) => {
+    if (!cat) return;
+    if (!silent) { setLoading(true); setData([]); }
+    try {
+      const since = tf !== "ALL" ? Date.now() - timeMs[tf] : 0;
+      const sinceISO = (since > 0) ? new Date(since).toISOString() : null;
+
+      if (sec === "COINS") {
+        const orderMap = { mcap:"peak_mcap.desc", holders:"holders.desc", volume:"volume.desc" };
+        let url = `${SB_URL}/rest/v1/token_history?order=${orderMap[cat]}&limit=50`;
+        if (since > 0) url += `&first_seen=gte.${since}`;
+        const r = await fetch(url, { headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` } });
+        const json = await r.json();
+        const newRows = Array.isArray(json) ? json : [];
+
+        // Detect coins ejected from top 50 — award kill XP
+        if (silent && newRows.length > 0 && onKill) {
+          const newAddrs = new Set(newRows.map(r => r.addr));
+          const ejected = [...prevAddrSet.current].filter(a => !newAddrs.has(a));
+          if (ejected.length > 0) {
+            ejected.forEach(addr => onKill(addr));
+            setKilledCoins(ejected);
+            setTimeout(() => setKilledCoins([]), 2000);
+          }
+          prevAddrSet.current = newAddrs;
+        } else if (!silent) {
+          prevAddrSet.current = new Set(newRows.map(r => r.addr));
+        }
+
+        setData(newRows);
+
+      } else if (sec === "WALLETS") {
+        const orderMap = {
+          wins: "wins.desc",
+          pnl: "total_pnl.desc",
+          losers: "total_pnl.asc",
+          trades: "wins.desc", // fallback, will re-sort client side
+          single: "big_wins.desc", // approximation, re-sort client side
+        };
+        let url = `${SB_URL}/rest/v1/wallet_scores?order=${orderMap[cat]||"wins.desc"}&limit=50`;
+        if (sinceISO) url += `&updated_at=gte.${sinceISO}`;
+        const r = await fetch(url, { headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` } });
+        let rows = await r.json();
+        if (!Array.isArray(rows)) { setData([]); setLoading(false); return; }
+        if (cat === "trades") rows.sort((a,b)=>((b.wins||0)+(b.losses||0)+(b.holds||0))-((a.wins||0)+(a.losses||0)+(a.holds||0)));
+        else if (cat === "single") {
+          rows = rows.map(r => {
+            const best = (r.trades||[]).filter(t=>t.type==="WIN").reduce((mx,t)=>Math.max(mx,t.pnl||0),0);
+            return { ...r, bestSingle: best };
+          }).sort((a,b)=>(b.bestSingle||0)-(a.bestSingle||0));
+        }
+        setData(rows.slice(0,50));
+
+      } else if (sec === "DEPLOYERS") {
+        let url = `${SB_URL}/rest/v1/token_history?select=deployer,name,addr,peak_mcap,graduated,rug,first_seen&limit=2000`;
+        if (since > 0) url += `&first_seen=gte.${since}`;
+        const r = await fetch(url, { headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` } });
+        const json = await r.json();
+        const tokens = (Array.isArray(json) ? json : []).filter(t => t.deployer);
+        // Group by deployer
+        const map = {};
+        tokens.forEach(t => {
+          if (!t.deployer) return;
+          if (!map[t.deployer]) map[t.deployer] = { deployer: t.deployer, deploys: 0, migrated: 0, to100k: 0, rugs: 0, tokens: [] };
+          map[t.deployer].deploys++;
+          if (t.graduated) map[t.deployer].migrated++;
+          if ((t.peak_mcap||0) >= 100000) map[t.deployer].to100k++;
+          if (t.rug) map[t.deployer].rugs++;
+          map[t.deployer].tokens.push(t);
+        });
+        let rows = Object.values(map);
+        if (cat === "migrated") rows.sort((a,b)=>b.migrated-a.migrated);
+        else if (cat === "100k") rows.sort((a,b)=>b.to100k-a.to100k);
+        else if (cat === "rugs") rows.sort((a,b)=>b.rugs-a.rugs);
+        else if (cat === "deploys") rows.sort((a,b)=>b.deploys-a.deploys);
+        setData(rows.slice(0, 50));
+      }
+    } catch(e) { console.warn("[LB] fetch failed:", e.message); }
+    if (!silent) setLoading(false);
+  }, [SB_URL, SB_KEY]);
+
+  useEffect(() => {
+    if (category) fetchData(section, category, timeframe);
+  }, [section, category, timeframe]);
+
+  // Auto-refresh every 3s while a category is selected
+  useEffect(() => {
+    if (!category || section === "HUNTERS") return;
+    const iv = setInterval(() => fetchData(section, category, timeframe, true), 3000);
+    return () => clearInterval(iv);
+  }, [section, category, timeframe]);
+
+  useEffect(() => {
+    setCategory(null);
+    setData([]);
+    setDeployerDetail(null);
+  }, [section]);
+
+  const cats = CATEGORIES[section] || [];
+  const selCat = cats.find(c=>c.id===category);
+
+  const fmtAddr = a => a ? `${a.slice(0,4)}...${a.slice(-4)}` : "???";
+  const fmtSol = v => { const n = v||0; return n >= 0 ? `+${n.toFixed(2)}` : n.toFixed(2); };
+
+  // Deployer detail view
+  if (deployerDetail) {
+    return (
+      <div style={{padding:"6px",height:"100%",overflowY:"auto"}}>
+        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+          <button onClick={()=>setDeployerDetail(null)} style={{background:"none",border:`1px solid ${NEON.cyan}40`,
+            color:NEON.cyan,padding:"2px 8px",borderRadius:3,cursor:"pointer",fontSize:10}}>← BACK</button>
+          <span style={{fontSize:11,fontWeight:900,color:NEON.cyan,fontFamily:"'Orbitron'"}}>{fmtAddr(deployerDetail.deployer)}</span>
+        </div>
+        <div style={{display:"flex",gap:6,marginBottom:8,flexWrap:"wrap"}}>
+          {[["DEPLOYS",deployerDetail.deploys,"#00ffff"],["MIGRATED",deployerDetail.migrated,"#39ff14"],
+            ["100K+",deployerDetail.to100k,"#ffd740"],["RUGS",deployerDetail.rugs,"#ff073a"]].map(([k,v,c])=>(
+            <div key={k} style={{background:`${c}10`,border:`1px solid ${c}30`,borderRadius:4,padding:"4px 8px",textAlign:"center"}}>
+              <div style={{fontSize:14,fontWeight:900,color:c,fontFamily:"'Orbitron'"}}>{v}</div>
+              <div style={{fontSize:8,color:NEON.dimText}}>{k}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{fontSize:10,color:NEON.dimText,marginBottom:4}}>ALL TOKENS</div>
+        {(deployerDetail.tokens||[]).sort((a,b)=>(b.peak_mcap||0)-(a.peak_mcap||0)).map((t,i)=>(
+          <div key={t.addr} onClick={()=>onSelectToken(t.addr,{name:t.name,mcap:t.peak_mcap||0,peakMcap:t.peak_mcap||0,graduated:t.graduated,alive:!t.death_time,platform:t.platform||"PumpFun",qualScore:0,devWallet:0,buys:0,sells:0,holders:t.holders||0,vol:t.volume||0,threat:t.rug?"RUG":t.graduated?"MIGRATED":"HISTORICAL",threatColor:t.rug?"#ff073a":t.graduated?"#39ff14":"#5a5a7a",qualChecks:[]})}
+            style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+              padding:"3px 5px",marginBottom:1,borderRadius:3,cursor:"pointer",
+              background:i%2===0?"rgba(255,255,255,0.02)":"transparent",
+              borderLeft:`2px solid ${t.rug?"#ff073a":t.graduated?"#39ff14":"#333"}`}}>
+            <div style={{display:"flex",alignItems:"center",gap:5}}>
+              <span style={{fontSize:9,color:t.rug?"#ff073a":t.graduated?"#39ff14":NEON.dimText}}>
+                {t.rug?"💀":t.graduated?"🌉":"●"}</span>
+              <span style={{fontSize:11,fontWeight:700,color:NEON.text}}>{t.name}</span>
+            </div>
+            <span style={{fontSize:10,color:"#ffd740",fontFamily:"'Share Tech Mono'"}}>${formatNum(t.peak_mcap||0)}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
+      {/* Section tabs */}
+      <div style={{display:"flex",borderBottom:`1px solid ${NEON.panelBorder}`,flexShrink:0,alignItems:"center"}}>
+        {SECTIONS.map(s=>(
+          <button key={s} onClick={()=>setSection(s)} style={{flex:1,padding:"5px 2px",
+            background:section===s?"rgba(255,0,255,0.15)":"transparent",
+            border:"none",borderBottom:section===s?`2px solid ${NEON.magenta}`:"2px solid transparent",
+            color:section===s?NEON.magenta:NEON.dimText,cursor:"pointer",
+            fontSize:9,fontWeight:900,fontFamily:"'Orbitron'",letterSpacing:0.5}}>
+            {s}
+          </button>
+        ))}
+        {category&&section!=="HUNTERS"&&<span style={{fontSize:8,color:"#39ff14",opacity:0.7,paddingRight:6,whiteSpace:"nowrap",animation:"pulse 3s infinite"}}>⟳ LIVE</span>}
+      </div>
+
+      {/* Timeframe — hide for hunters */}
+      {section!=="HUNTERS"&&<div style={{display:"flex",gap:2,padding:"4px 6px",borderBottom:`1px solid ${NEON.panelBorder}30`,flexShrink:0}}>
+        {TIMEFRAMES.map(tf=>(
+          <button key={tf} onClick={()=>setTimeframe(tf)} style={{flex:1,padding:"3px 0",
+            background:timeframe===tf?"rgba(0,255,255,0.15)":"rgba(255,255,255,0.03)",
+            border:`1px solid ${timeframe===tf?NEON.cyan:"#333"}`,borderRadius:3,
+            color:timeframe===tf?NEON.cyan:NEON.dimText,cursor:"pointer",
+            fontSize:9,fontFamily:"'Share Tech Mono'"}}>
+            {tf}
+          </button>
+        ))}
+      </div>}
+
+      {/* Category buttons — hide for hunters */}
+      {section!=="HUNTERS"&&<div style={{padding:"4px 6px",borderBottom:`1px solid ${NEON.panelBorder}30`,flexShrink:0}}>
+        {cats.map(c=>(
+          <button key={c.id} onClick={()=>setCategory(c.id)} style={{
+            display:"block",width:"100%",textAlign:"left",padding:"4px 8px",marginBottom:2,
+            background:category===c.id?`${c.color}18`:"rgba(255,255,255,0.02)",
+            border:`1px solid ${category===c.id?c.color:"#333"}`,borderRadius:3,
+            color:category===c.id?c.color:NEON.dimText,cursor:"pointer",
+            fontSize:10,fontWeight:category===c.id?900:400,fontFamily:category===c.id?"'Orbitron'":"inherit",
+            letterSpacing:category===c.id?0.5:0}}>
+            {c.label}
+          </button>
+        ))}
+      </div>}
+
+      {/* HUNTERS leaderboard */}
+      {section==="HUNTERS"&&<HunterLeaderboard NEON={NEON} formatNum={formatNum}/>}
+
+      {/* Results — only for non-hunters */}
+      {section!=="HUNTERS"&&<div style={{flex:1,overflowY:"auto",padding:"4px 6px"}}>
+        {!category&&<div style={{color:NEON.dimText,fontSize:11,textAlign:"center",padding:20,fontStyle:"italic"}}>
+          SELECT A CATEGORY ABOVE
+        </div>}
+        {loading&&<div style={{color:NEON.cyan,fontSize:11,textAlign:"center",padding:20}}>
+          ⟳ LOADING...
+        </div>}
+        {!loading&&category&&data.length===0&&<div style={{color:NEON.dimText,fontSize:11,textAlign:"center",padding:20,fontStyle:"italic"}}>
+          NO DATA FOR THIS TIMEFRAME
+        </div>}
+        {!loading&&data.map((row,i)=>{
+          const rank = i+1;
+          const rankColor = rank===1?"#ffd740":rank===2?"#aaa":rank===3?"#cd7f32":NEON.dimText;
+          
+          if (section==="COINS") {
+            const val = category==="mcap"?`$${formatNum(row.peak_mcap||0)}`:
+                        category==="holders"?`${row.holders||0} w`:
+                        `$${formatNum(row.volume||0)}`;
+            const valColor = selCat?.color||NEON.yellow;
+            const isKilled = killedCoins.includes(row.addr);
+            return (
+              <div key={row.addr} onClick={()=>onSelectToken(row.addr, {
+              name: row.name,
+              mcap: row.peak_mcap || 0,
+              peakMcap: row.peak_mcap || 0,
+              holders: row.holders || 0,
+              vol: row.volume || 0,
+              graduated: row.graduated,
+              alive: !row.death_time,
+              platform: row.platform || "PumpFun",
+              qualScore: 0,
+              devWallet: 0,
+              buys: 0, sells: 0,
+              threat: row.rug ? "RUG" : row.graduated ? "MIGRATED" : "HISTORICAL",
+              threatColor: row.rug ? "#ff073a" : row.graduated ? "#39ff14" : "#5a5a7a",
+              qualChecks: [],
+            })}
+                style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+                  padding:"4px 5px",marginBottom:1,borderRadius:3,cursor:"pointer",
+                  background:isKilled?"rgba(255,7,58,0.15)":rank===1?`${valColor}08`:"transparent",
+                  borderLeft:`2px solid ${isKilled?"#ff073a":rank<=3?rankColor:"#333"}`,
+                  opacity:isKilled?0.5:1,
+                  transition:"all 0.3s"}}
+                onMouseEnter={e=>e.currentTarget.style.background=`${valColor}10`}
+                onMouseLeave={e=>e.currentTarget.style.background=rank===1?`${valColor}08`:"transparent"}>
+                <div style={{display:"flex",alignItems:"center",gap:5}}>
+                  <span style={{fontSize:10,fontWeight:900,color:rankColor,width:16,textAlign:"right",fontFamily:"'Orbitron'"}}>{rank}</span>
+                  <span style={{fontSize:11,fontWeight:700,color:NEON.text}}>{row.name||"???"}</span>
+                  {row.graduated&&<span style={{fontSize:8,color:"#39ff14",background:"rgba(57,255,20,0.1)",padding:"0 3px",borderRadius:2}}>RAY</span>}
+                  {row.rug&&<span style={{fontSize:8,color:"#ff073a",background:"rgba(255,7,58,0.1)",padding:"0 3px",borderRadius:2}}>RUG</span>}
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:5}}>
+                  <span style={{fontSize:10,color:valColor,fontFamily:"'Share Tech Mono'"}}>{val}</span>
+                </div>
+              </div>
+            );
+          }
+
+          if (section==="WALLETS") {
+            const totalTrades = (row.wins||0)+(row.losses||0)+(row.holds||0);
+            const winRate = totalTrades>0?Math.round((row.wins||0)/totalTrades*100):0;
+            const val = category==="wins"?`${row.wins||0}W ${winRate}%`:
+                        category==="pnl"||category==="losers"?`${fmtSol(row.total_pnl||0)} SOL`:
+                        category==="single"?`+${((row.bestSingle)||0).toFixed(2)} SOL`:
+                        `${totalTrades} trades`;
+            const valColor = category==="losers"?"#ff073a":selCat?.color||NEON.yellow;
+            return (
+              <div key={row.addr} onClick={()=>onSelectWallet(row.addr)}
+                style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+                  padding:"4px 5px",marginBottom:1,borderRadius:3,cursor:"pointer",
+                  background:rank===1?`${valColor}08`:"transparent",
+                  borderLeft:`2px solid ${rank<=3?rankColor:"#333"}`}}
+                onMouseEnter={e=>e.currentTarget.style.background=`${valColor}10`}
+                onMouseLeave={e=>e.currentTarget.style.background=rank===1?`${valColor}08`:"transparent"}>
+                <div style={{display:"flex",alignItems:"center",gap:5}}>
+                  <span style={{fontSize:10,fontWeight:900,color:rankColor,width:16,textAlign:"right",fontFamily:"'Orbitron'"}}>{rank}</span>
+                  <span style={{fontSize:10,color:NEON.cyan,fontFamily:"'Share Tech Mono'",cursor:"pointer"}}>{fmtAddr(row.addr)}</span>
+                </div>
+                <span style={{fontSize:10,fontWeight:700,color:valColor,fontFamily:"'Share Tech Mono'"}}>{val}</span>
+              </div>
+            );
+          }
+
+          if (section==="DEPLOYERS") {
+            const val = category==="migrated"?`${row.migrated} migrated`:
+                        category==="100k"?`${row.to100k} × 100K+`:
+                        category==="rugs"?`${row.rugs} rugs`:
+                        `${row.deploys} deploys`;
+            const valColor = category==="rugs"?"#ff073a":selCat?.color||NEON.yellow;
+            return (
+              <div key={row.deployer} onClick={()=>setDeployerDetail(row)}
+                style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+                  padding:"4px 5px",marginBottom:1,borderRadius:3,cursor:"pointer",
+                  background:rank===1?`${valColor}08`:"transparent",
+                  borderLeft:`2px solid ${rank<=3?rankColor:"#333"}`}}
+                onMouseEnter={e=>e.currentTarget.style.background=`${valColor}10`}
+                onMouseLeave={e=>e.currentTarget.style.background=rank===1?`${valColor}08`:"transparent"}>
+                <div style={{display:"flex",alignItems:"center",gap:5}}>
+                  <span style={{fontSize:10,fontWeight:900,color:rankColor,width:16,textAlign:"right",fontFamily:"'Orbitron'"}}>{rank}</span>
+                  <span style={{fontSize:10,color:NEON.cyan,fontFamily:"'Share Tech Mono'"}}>{fmtAddr(row.deployer)}</span>
+                  <span style={{fontSize:8,color:NEON.dimText}}>{row.deploys}d</span>
+                </div>
+                <span style={{fontSize:10,fontWeight:700,color:valColor,fontFamily:"'Share Tech Mono'"}}>{val}</span>
+              </div>
+            );
+          }
+          return null;
+        })}
+      </div>}
+    </div>
+  );
+}
+
 export default function DegenCommandCenter(){
   const [tokens,setTokens]=useState([]);const [radarPings,setRadarPings]=useState([]);
+  const [killStreak,setKillStreak]=useState(0);
   const [dbStatus,setDbStatus]=useState({msg:"",type:"info",ts:0});
   const [lockedTokens,setLockedTokens]=useState([]);const [scanLine,setScanLine]=useState(0);
   const [totalScanned,setTotalScanned]=useState(0);const [deployed,setDeployed]=useState(0);
@@ -4250,6 +4979,7 @@ export default function DegenCommandCenter(){
   // ═══ NEW FEATURE STATE ═══
   const correspondentRef=useRef({queue:[],_lastId:0});
   const [corrDisplay,setCorrDisplay]=useState({visible:false,msg:"",mood:"idle"});
+  const pushMsg=(msg,mood)=>{const cr=correspondentRef.current;cr.queue.push({msg,mood});if(cr.queue.length>4)cr.queue.shift();};
   const comboRef=useRef({count:0,lastEvent:0,peak:0});
   const [comboDisplay,setComboDisplay]=useState(0);
   const deployerRepRef=useRef({}); // {deployer_addr: {launches:N,rugs:N,runners:N,tokens:[]}}
@@ -4260,6 +4990,357 @@ export default function DegenCommandCenter(){
   const [filter,setFilter]=useState("ALL");const [selectedToken,setSelectedToken]=useState(null);
   const [radarTab,setRadarTab]=useState("RADAR");
   const selectToken=(t)=>{setSelectedToken(t);};
+  const enrichAndSelect = useCallback(async (addr, stub) => {
+    console.log("[enrichAndSelect] addr=", addr, "stub=", stub?.name);
+    setSelectedToken({...stub, addr, _loading: true});
+    try {
+      const live = await fetchTokenByAddress(addr);
+      console.log("[enrichAndSelect] live=", live);
+      const peakMcap = stub.peakMcap || stub.mcap || 0;
+      const isDead = !live || (live.mcap||0) < 1000 || ((live.mcap||0) < peakMcap * 0.05 && peakMcap > 5000);
+      const wasAlive = stub.alive !== false;
+
+      if (isDead && wasAlive) {
+        // KILL CONFIRMED — award XP
+        const xp = awardKillXP(stub.name||"???", peakMcap, killStreak+1);
+        pushMsg(`💀 ${stub.name||"???"} CONFIRMED DEAD — +${xp} KILL XP${killStreak>=2?" 🔥 STREAK x"+(killStreak+1):""}`, "sus");
+        // Write death to Supabase
+        const SB_URL="https://yrmjphhfgduysoftnuxv.supabase.co";
+        const SB_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlybWpwaGhmZ2R1eXNvZnRudXh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3MzI5MzAsImV4cCI6MjA4ODMwODkzMH0.scHhvTGiABJDybgbjgjilw8XuxOfmWPsqo4iytMZmio";
+        fetch(`${SB_URL}/rest/v1/token_history?on_conflict=addr`, {
+          method:"POST",
+          headers:{apikey:SB_KEY,Authorization:`Bearer ${SB_KEY}`,"Content-Type":"application/json",Prefer:"resolution=merge-duplicates"},
+          body:JSON.stringify([{addr,name:stub.name||"???",peak_mcap:peakMcap,death_time:Date.now(),
+            graduated:stub.graduated||false,platform:stub.platform||"PumpFun",
+            holders:live?.holders||stub.holders||0,volume:live?.vol||stub.vol||0,
+            rug:peakMcap<20000,updated_at:new Date().toISOString()}]),
+        });
+        setSelectedToken({...stub,addr,alive:false,health:0,mcap:live?.mcap||0,
+          threat:"DEAD",threatColor:"#5a5a7a",qualChecks:[],devWallet:0,_loading:false,_killed:true,_xp:xp});
+      } else if (live) {
+        // Alive — PATCH current mcap so leaderboard reflects real position (not ATH)
+        const SB_URL="https://yrmjphhfgduysoftnuxv.supabase.co";
+        const SB_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlybWpwaGhmZ2R1eXNvZnRudXh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3MzI5MzAsImV4cCI6MjA4ODMwODkzMH0.scHhvTGiABJDybgbjgjilw8XuxOfmWPsqo4iytMZmio";
+        const currentMcap = live.mcap || 0;
+        // Use PATCH with addr filter to force-overwrite peak_mcap (upsert merge-duplicates keeps ATH)
+        // Only update holders/volume if DexScreener actually returned them (it doesn't return holders)
+        const patchBody = {
+          peak_mcap: currentMcap,
+          name: live.name||stub.name,
+          graduated: stub.graduated||live.platform!=="pump",
+          platform: live.platform||stub.platform||"PumpFun",
+          updated_at: new Date().toISOString(),
+          ...(live.vol > 0 ? {volume: live.vol} : {}),
+        };
+        fetch(`${SB_URL}/rest/v1/token_history?addr=eq.${encodeURIComponent(addr)}`, {
+          method:"PATCH",
+          headers:{apikey:SB_KEY,Authorization:`Bearer ${SB_KEY}`,"Content-Type":"application/json"},
+          body:JSON.stringify(patchBody),
+        }).catch(()=>{
+          // Row might not exist yet — fallback to INSERT, use stub holders as best guess
+          fetch(`${SB_URL}/rest/v1/token_history?on_conflict=addr`, {
+            method:"POST",
+            headers:{apikey:SB_KEY,Authorization:`Bearer ${SB_KEY}`,"Content-Type":"application/json",Prefer:"resolution=merge-duplicates"},
+            body:JSON.stringify([{addr,name:live.name||stub.name,peak_mcap:currentMcap,
+              graduated:stub.graduated||live.platform!=="pump",platform:live.platform||stub.platform||"PumpFun",
+              holders:stub.holders||0,volume:live.vol||stub.vol||0,updated_at:new Date().toISOString()}]),
+          });
+        });
+        setSelectedToken({...stub,...live,addr,
+          migrated:false, graduated:false,
+          peakMcap:currentMcap,
+          athMcap:Math.max(peakMcap,currentMcap),
+          alive:true,threat:stub.threat||"HISTORICAL",threatColor:stub.threatColor||"#5a5a7a",
+          qualChecks:[],devWallet:0,_loading:false,_scanned:Date.now()});
+      } else {
+        setSelectedToken(prev=>prev?.addr===addr?{...prev,_loading:false}:prev);
+      }
+    } catch(e) {
+      setSelectedToken(prev=>prev?.addr===addr?{...prev,_loading:false}:prev);
+    }
+  }, [killStreak]);
+
+  // ─── BACKGROUND MAINTENANCE SYSTEM ───────────────────────────────────────────
+  // Runs on two timers:
+  //   30s — token scan: batch DexScreener → update mcap/vol → kill dead coins → resolve open HOLDs → reposition leaderboard
+  //   5min — prune pass: delete stale dead tokens, empty wallets, old alerts
+  useEffect(() => {
+    const SB_URL = "https://yrmjphhfgduysoftnuxv.supabase.co";
+    const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlybWpwaGhmZ2R1eXNvZnRudXh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3MzI5MzAsImV4cCI6MjA4ODMwODkzMH0.scHhvTGiABJDybgbjgjilw8XuxOfmWPsqo4iytMZmio";
+    const hdrs    = { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`, "Content-Type": "application/json" };
+    const delHdrs = { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`, "Content-Type": "application/json", Prefer: "return=minimal" };
+    const patch = (table, filter, body) => fetch(`${SB_URL}/rest/v1/${table}?${filter}`, { method:"PATCH", headers:hdrs, body:JSON.stringify(body) });
+    const del   = async (table, filter) => {
+      const r = await fetch(`${SB_URL}/rest/v1/${table}?${filter}`, { method:"DELETE", headers:delHdrs });
+      if (!r.ok) {
+        const txt = await r.text();
+        console.warn(`[MAINT] ❌ DELETE ${table}?${filter} → ${r.status}: ${txt}`);
+      }
+      return r;
+    };
+
+    // Batch delete by addr list — one request per 100 rows instead of one per row
+    const delBatch = async (table, addrs) => {
+      if (!addrs.length) return 0;
+      const BATCH = 100;
+      let deleted = 0;
+      for (let i = 0; i < addrs.length; i += BATCH) {
+        const chunk = addrs.slice(i, i + BATCH);
+        const inList = chunk.map(a => encodeURIComponent(a)).join(",");
+        const r = await fetch(`${SB_URL}/rest/v1/${table}?addr=in.(${inList})`, { method:"DELETE", headers:delHdrs });
+        if (r.ok) {
+          deleted += chunk.length;
+        } else {
+          const txt = await r.text();
+          console.warn(`[MAINT] ❌ delBatch ${table} chunk ${i/BATCH} → ${r.status}: ${txt}`);
+        }
+        if (i + BATCH < addrs.length) await new Promise(r => setTimeout(r, 200));
+      }
+      return deleted;
+    };
+
+    // ── TOKEN SCAN (every 30s) ──────────────────────────────────────────────────
+    const runTokenScan = async () => {
+      try {
+        // Fetch top 100 alive tokens
+        const res = await fetch(
+          `${SB_URL}/rest/v1/token_history?select=addr,name,peak_mcap,holders,volume&order=peak_mcap.desc&limit=100&death_time=is.null`,
+          { headers: hdrs }
+        );
+        if (!res.ok) return;
+        const rows = await res.json();
+        if (!Array.isArray(rows) || rows.length === 0) return;
+
+        console.log(`[MAINT] 🔄 Scanning ${rows.length} tokens...`);
+
+        // Batch DexScreener — 30 per call
+        const results = {};
+        const addrs = rows.map(r => r.addr).filter(Boolean);
+        for (let i = 0; i < addrs.length; i += 30) {
+          try {
+            const batch = await fetchTokensBatch(addrs.slice(i, i + 30));
+            Object.assign(results, batch);
+          } catch(e) { /* skip */ }
+          if (i + 30 < addrs.length) await new Promise(r => setTimeout(r, 400));
+        }
+
+        const killedAddrs = [];
+        let updated = 0, killed = 0;
+
+        for (const row of rows) {
+          const live = results[row.addr];
+          const currentMcap = live?.mcap || 0;
+          const peakMcap = row.peak_mcap || 0;
+          const isDead = !live || currentMcap < 1000 || (peakMcap > 5000 && currentMcap < peakMcap * 0.05);
+
+          if (isDead) {
+            patch("token_history", `addr=eq.${encodeURIComponent(row.addr)}`,
+              { death_time: Date.now(), updated_at: new Date().toISOString() });
+            killedAddrs.push(row.addr);
+            killed++;
+          } else {
+            patch("token_history", `addr=eq.${encodeURIComponent(row.addr)}`, {
+              peak_mcap: currentMcap,
+              updated_at: new Date().toISOString(),
+              ...(live.vol > 0 ? { volume: live.vol } : {}),
+            });
+            updated++;
+          }
+        }
+
+        // ── HOLD RESOLUTION: close open wallet HOLDs on killed coins ──────────
+        if (killedAddrs.length > 0) {
+          try {
+            const wsRes = await fetch(
+              `${SB_URL}/rest/v1/wallet_scores?select=addr,wins,losses,holds,total_pnl,trades,win_addrs,loss_addrs,total_bought,total_sold,big_wins`,
+              { headers: hdrs }
+            );
+            if (wsRes.ok) {
+              const wallets = await wsRes.json();
+              const killedSet = new Set(killedAddrs);
+              let walletUpdates = 0;
+
+              for (const w of wallets) {
+                const trades = Array.isArray(w.trades) ? w.trades : [];
+                const openHolds = trades.filter(tr => tr.type === "HOLD" && killedSet.has(tr.addr));
+                if (openHolds.length === 0) continue;
+
+                // Force each open HOLD on a killed coin to LOSS
+                const updatedTrades = trades.map(tr => {
+                  if (tr.type !== "HOLD" || !killedSet.has(tr.addr)) return tr;
+                  return { ...tr, type: "LOSS", pnl: -(tr.sol || 0) }; // full loss = bought in, never got out
+                });
+
+                const newLosses = (w.losses || 0) + openHolds.length;
+                const lossAdded  = openHolds.reduce((s, tr) => s + (tr.sol || 0), 0);
+                const newPnl     = (w.total_pnl || 0) - lossAdded;
+                const lossAddrs  = [...(w.loss_addrs || []), ...openHolds.map(tr => tr.addr)];
+                const newHolds   = Math.max(0, (w.holds || 0) - openHolds.length);
+
+                patch("wallet_scores", `addr=eq.${encodeURIComponent(w.addr)}`, {
+                  losses: newLosses,
+                  holds: newHolds,
+                  total_pnl: newPnl,
+                  loss_addrs: [...new Set(lossAddrs)],
+                  trades: updatedTrades.slice(-50),
+                  updated_at: new Date().toISOString(),
+                });
+                walletUpdates++;
+              }
+              if (walletUpdates > 0)
+                console.log(`[MAINT] 💀 Resolved ${killedAddrs.length} kills → ${walletUpdates} wallet HOLDs closed as LOSS`);
+            }
+          } catch(e) { console.warn("[MAINT] HOLD resolution failed:", e.message); }
+        }
+
+        console.log(`[MAINT] ✅ Tokens: ${updated} updated, ${killed} killed`);
+      } catch(e) { console.warn("[MAINT] Token scan failed:", e.message); }
+    };
+
+    // ── PRUNE PASS (every 5 min) ────────────────────────────────────────────────
+    // Strategy: push as many rules as possible to server-side DELETE filters.
+    // Only fetch rows when we need client-side computation (win rate).
+    const runPrune = async () => {
+      try {
+        const now = Date.now();
+        console.log("[MAINT] 🧹 Prune pass starting...");
+        const m7   = new Date(now - 420000).toISOString();    // 7 min ago
+        const h2   = new Date(now - 7200000).toISOString();   // 2h ago
+        const h24  = new Date(now - 86400000).toISOString();  // 24h ago
+        const d7   = new Date(now - 604800000).toISOString(); // 7 days ago
+        let pruned = 0;
+
+        // ── TOKEN PURGE — server-side filtered fetches, then batch delete ────────
+        // Only fetch tokens that COULD qualify for pruning — never fetch the whole table
+        const tokensToPurge = [];
+
+        // Rule 1: peak <= $4K and first_seen > 7min ago (alive duds)
+        try {
+          const r1 = await fetch(
+            `${SB_URL}/rest/v1/token_history?select=addr&peak_mcap=lte.4000&first_seen=lt.${m7}`,
+            { headers: hdrs }
+          );
+          if (r1.ok) { const rows = await r1.json(); rows.forEach(r => tokensToPurge.push(r.addr)); }
+        } catch(e) { /* skip */ }
+
+        // Rule 2: dead, peak < $10K, died 24h+ ago
+        try {
+          const r2 = await fetch(
+            `${SB_URL}/rest/v1/token_history?select=addr&death_time=lt.${h24}&peak_mcap=lt.10000&death_time=not.is.null`,
+            { headers: hdrs }
+          );
+          if (r2.ok) { const rows = await r2.json(); rows.forEach(r => tokensToPurge.push(r.addr)); }
+        } catch(e) { /* skip */ }
+
+        // Rule 3: dead, any peak, 7+ days ago
+        try {
+          const r3 = await fetch(
+            `${SB_URL}/rest/v1/token_history?select=addr&death_time=lt.${d7}&death_time=not.is.null`,
+            { headers: hdrs }
+          );
+          if (r3.ok) { const rows = await r3.json(); rows.forEach(r => tokensToPurge.push(r.addr)); }
+        } catch(e) { /* skip */ }
+
+        const uniqueTokens = [...new Set(tokensToPurge)];
+        if (uniqueTokens.length > 0) {
+          const tokenPruned = await delBatch("token_history", uniqueTokens);
+          pruned += tokenPruned;
+          console.log(`[MAINT] 🗑 Pruned ${tokenPruned} tokens`);
+        } else {
+          console.log("[MAINT] 🪙 No tokens met prune criteria");
+        }
+
+        // ── WALLET PURGE — direct server-side DELETEs for simple rules ──────────
+        // Rules that map cleanly to column filters: delete without fetching rows
+        let walletPruned = 0;
+
+        // Rule 1: <0.25 SOL ever spent — dust wallets (direct delete)
+        try {
+          const r = await fetch(`${SB_URL}/rest/v1/wallet_scores?total_bought=lt.0.25`, { method: "DELETE", headers: delHdrs });
+          if (r.ok) console.log("[MAINT] 👛 Rule1 dust wallets deleted");
+        } catch(e) { /* skip */ }
+
+        // Rule 2: 0 wins, updated 2h+ ago (never proved themselves)
+        try {
+          const r = await fetch(`${SB_URL}/rest/v1/wallet_scores?wins=eq.0&losses=eq.0&updated_at=lt.${h2}`, { method: "DELETE", headers: delHdrs });
+          if (r.ok) console.log("[MAINT] 👛 Rule2 zero-activity wallets deleted");
+        } catch(e) { /* skip */ }
+
+        // Rule 4: exactly 1 loss, 0 wins, 0 holds — one-and-done loser
+        try {
+          const r = await fetch(`${SB_URL}/rest/v1/wallet_scores?wins=eq.0&losses=eq.1&holds=eq.0`, { method: "DELETE", headers: delHdrs });
+          if (r.ok) console.log("[MAINT] 👛 Rule4 one-loss wallets deleted");
+        } catch(e) { /* skip */ }
+
+        // Rule 5: 3+ losses, 0 wins — pure rug chaser
+        try {
+          const r = await fetch(`${SB_URL}/rest/v1/wallet_scores?wins=eq.0&losses=gte.3`, { method: "DELETE", headers: delHdrs });
+          if (r.ok) console.log("[MAINT] 👛 Rule5 zero-win rug chasers deleted");
+        } catch(e) { /* skip */ }
+
+        // Rule 7: 0 wins, inactive 24h+ — stale ghost
+        try {
+          const r = await fetch(`${SB_URL}/rest/v1/wallet_scores?wins=eq.0&updated_at=lt.${h24}`, { method: "DELETE", headers: delHdrs });
+          if (r.ok) console.log("[MAINT] 👛 Rule7 stale ghosts deleted");
+        } catch(e) { /* skip */ }
+
+        // Rules 3 & 6 require win rate calculation — fetch only wallets with 7+ trades
+        // and do client-side check. Much smaller fetch than the full table.
+        try {
+          const res = await fetch(
+            `${SB_URL}/rest/v1/wallet_scores?select=addr,wins,losses,total_pnl&wins=gte.1`,
+            { headers: hdrs }
+          );
+          if (res.ok) {
+            const wallets = await res.json();
+            const toPurge = [];
+            for (const w of wallets) {
+              const wins = w.wins || 0;
+              const losses = w.losses || 0;
+              const total = wins + losses;
+              const winRate = total > 0 ? wins / total : 0;
+              const pnl = w.total_pnl || 0;
+              // Rule 3: 7+ trades and win rate under 60%
+              if (total >= 7 && winRate < 0.60) { toPurge.push(w.addr); continue; }
+              // Rule 6: deeply negative PNL with under 40% win rate
+              if (pnl < -3 && winRate < 0.40) { toPurge.push(w.addr); continue; }
+            }
+            if (toPurge.length > 0) {
+              walletPruned = await delBatch("wallet_scores", toPurge);
+              console.log(`[MAINT] 👛 Rules 3&6 purged ${walletPruned} chronic losers`);
+            }
+          }
+        } catch(e) { console.warn("[MAINT] Rules 3&6 fetch failed:", e.message); }
+
+        // Delete smart_alerts older than 7 days
+        try {
+          fetch(`${SB_URL}/rest/v1/smart_alerts?created_at=lt.${d7}`, { method: "DELETE", headers: delHdrs });
+        } catch(e) { /* skip */ }
+
+        pruned += walletPruned;
+        console.log(`[MAINT] 🧹 Prune pass complete`);
+      } catch(e) { console.warn("[MAINT] Prune failed:", e.message); }
+    };
+
+        // Run token scan immediately, then every 30s
+    runTokenScan();
+    const scanIv = setInterval(runTokenScan, 30000);
+
+    // Run prune immediately (retroactive cleanup), then every 5min
+    runPrune();
+    const pruneDelay = setTimeout(() => {
+      const pruneIv = setInterval(runPrune, 300000);
+      pruneIv_ref = pruneIv;
+    }, 300000);
+
+    let pruneIv_ref = null;
+    return () => {
+      clearInterval(scanIv);
+      clearTimeout(pruneDelay);
+      if (pruneIv_ref) clearInterval(pruneIv_ref);
+    };
+  }, []); // eslint-disable-line
+
   const addLockHistoryEvent=(addr,name,type,reason,data={})=>{
     setLockHistory(prev=>{
       const existing=prev.find(h=>h.addr===addr);
@@ -4270,7 +5351,23 @@ export default function DegenCommandCenter(){
       return[{addr,name,events:[evt]},...prev].slice(0,200);
     });
   };
-  const clickAddr=(addr,stub=null)=>{const t=tokens.find(x=>x.addr===addr);if(t){setSelectedToken(t);}else if(stub){setSelectedToken({...stub,addr,alive:false,health:0,threat:"DEAD",threatColor:"#5a5a7a",qualChecks:[],devWallet:0,buys:stub.buys||0,sells:stub.sells||0});}};
+  const clickAddr=(addr,stub=null)=>{
+    const t=tokens.find(x=>x.addr===addr);
+    if(t && !t.migrated){
+      // Pure PumpFun live token — already streaming, just show it
+      // But if it's stale (no helius feed), trigger a dex scan too
+      if(t.isStale || (t.staleSec||0) > 60){
+        enrichAndSelect(addr, {...t, ...stub});
+      } else {
+        setSelectedToken(t);
+      }
+    } else if(t && t.migrated){
+      // Migrated token — always refresh from DexScreener
+      enrichAndSelect(addr, {...t, ...stub});
+    } else if(stub){
+      enrichAndSelect(addr, {...stub, alive:false, health:0, qualChecks:[], devWallet:0});
+    }
+  };
   const selectByName=(name,stub=null)=>{const t=tokens.find(x=>x.name===name);if(t){setSelectedToken(t);}else if(stub){setSelectedToken({...stub,alive:false,health:0,threat:"DEAD",threatColor:"#5a5a7a",qualChecks:[],devWallet:0,buys:stub.buys||0,sells:stub.sells||0});}};
   const viewWalletDetail=(walletAddr)=>{setLeftTab("REPORT");setSelectedWallet(walletAddr);setReportView("detail");};
   const [leftTab,setLeftTab]=useState("SCANNER");
@@ -4279,6 +5376,55 @@ export default function DegenCommandCenter(){
   const [migrations,setMigrations]=useState([]);
   const [rightTab,setRightTab]=useState("LOCKS");
   const [graveyard,setGraveyard]=useState([]);
+  // ── HUNTER XP ──
+  const [hunterXP,setHunterXP]=useState(()=>{try{return parseInt(localStorage.getItem("hunter_xp")||"0")}catch{return 0}});
+  const [hunterKills,setHunterKills]=useState(()=>{try{return parseInt(localStorage.getItem("hunter_kills")||"0")}catch{return 0}});
+  const [killPopups,setKillPopups]=useState([]); // [{id,xp,name,x,y}]
+  const killStreakTimer=useRef(null);
+  const HUNTER_RANKS=[
+    {min:0,label:"ROOKIE",icon:"🔍",color:"#5a5a7a"},
+    {min:50,label:"SCOUT",icon:"🎯",color:"#00ffff"},
+    {min:200,label:"HUNTER",icon:"🏹",color:"#39ff14"},
+    {min:500,label:"ASSASSIN",icon:"⚔️",color:"#ffd740"},
+    {min:1200,label:"GRIM REAPER",icon:"💀",color:"#ff073a"},
+  ];
+  const hunterRank=HUNTER_RANKS.slice().reverse().find(r=>hunterXP>=r.min)||HUNTER_RANKS[0];
+  const awardKillXP=(coinName,peakMcap,streakCount)=>{
+    const base=Math.min(500,Math.max(10,Math.floor((peakMcap||0)/1000)));
+    const mult=streakCount>=5?3:streakCount>=3?2:1;
+    const xp=base*mult;
+    const id=Date.now()+Math.random();
+    setHunterXP(p=>{const n=p+xp;try{localStorage.setItem("hunter_xp",n)}catch{};return n;});
+    setHunterKills(p=>{const n=p+1;try{localStorage.setItem("hunter_kills",n)}catch{};return n;});
+    setKillPopups(p=>[...p,{id,xp,name:coinName,mult,x:0.3+Math.random()*0.4,y:0.3+Math.random()*0.4}]);
+    setTimeout(()=>setKillPopups(p=>p.filter(k=>k.id!==id)),2500);
+    if(killStreakTimer.current)clearTimeout(killStreakTimer.current);
+    killStreakTimer.current=setTimeout(()=>setKillStreak(0),8000);
+    setKillStreak(p=>p+1);
+    return xp;
+  };
+  // ── CHEST SYSTEM ──
+  const {chests,openChest}=useChestSystem();
+  const [chestPopup,setChestPopup]=useState(null);
+  const handleChestOpen=(chestId)=>{
+    openChest(chestId,(item,xpGain,rarity)=>{
+      setHunterXP(p=>{const n=p+xpGain;try{localStorage.setItem("hunter_xp",n)}catch{};return n;});
+      const id=Date.now();
+      setChestPopup({id,item,xpGain,rarity});
+      setTimeout(()=>setChestPopup(null),4000);
+      // Add to hunter profile inventory in localStorage (HunterPanel will sync to Supabase)
+      try{
+        const raw=localStorage.getItem("degen_hunter_v2");
+        if(raw){
+          const profile=JSON.parse(raw);
+          const inv=[...(profile.inventory||[]),item.id].slice(-100);
+          const updated={...profile,inventory:inv};
+          localStorage.setItem("degen_hunter_v2",JSON.stringify(updated));
+        }
+      }catch{}
+      pushMsg(`🎁 ${RARITIES[rarity]?.label} CHEST — Found ${item.icon} ${item.name} +${xpGain}XP`,"hype");
+    });
+  };
   const [lockHistory,setLockHistory]=useState([]);
   const lockHistoryRef=useRef([]);
   useEffect(()=>{lockHistoryRef.current=lockHistory},[lockHistory]);
@@ -4297,6 +5443,42 @@ export default function DegenCommandCenter(){
   const lockOutcomesRef=useRef([]);
   // predictions + signals removed in v102c
   const mainTokensRef=useRef([]);
+  const hotClusterRef=useRef(new Set()); // synced from intel for canvas access
+  useEffect(()=>{ hotClusterRef.current = intel?.hotClusterTokens || new Set(); }, [intel?.hotClusterTokens]);
+
+  // ── Wire intel signalBoost into useLiveData externalBoostRef (closes the neural feedback loop) ──
+  useEffect(() => {
+    if (!intel?.signalBoost || !live?.externalBoostRef) return;
+    live.externalBoostRef.current = intel.signalBoost;
+  }, [intel?.signalBoost, live?.externalBoostRef]);
+
+  // ── Tag tokens with _hotCluster flag so canvas + neural signal can see it ──
+  useEffect(() => {
+    if (!intel?.hotClusterTokens) return;
+    const hotSet = intel.hotClusterTokens;
+    if (!hotSet.size) return;
+    // We don't setTokens here (too expensive) — canvas reads hotClusterRef directly
+    // But we do need _hotCluster for neural signal score in useLiveData
+    // The externalBoostRef handles this — tokens with boost > 12 from cluster get the bonus
+  }, [intel?.hotClusterTokens]);
+
+  // ── Fire kill feed when new hot cluster detected buying a live token ──
+  const firedClusterAlertsRef = useRef(new Set());
+  useEffect(()=>{
+    if(!intel?.clusterAlerts?.length) return;
+    const recent = intel.clusterAlerts.filter(ca => Date.now() - ca.time < 8000);
+    for(const ca of recent){
+      if(firedClusterAlertsRef.current.has(ca.id)) continue;
+      firedClusterAlertsRef.current.add(ca.id);
+      // Find the live token being bought by the cluster
+      const tokenName = ca.tokens?.[0] ? (tokens.find(t=>t.addr===ca.tokens[0])?.name || ca.tokens[0].slice(0,8)) : '?';
+      addKillFeed?.({
+        type:'cluster',
+        text:`🕸 CLUSTER STRIKE — ${ca.walletCount}w/${ca.cobuys} co-buys → ${tokenName} [str:${ca.strength}]`,
+        color:'#bf00ff',
+      });
+    }
+  },[intel?.clusterAlerts]);
   const [killFeed,setKillFeed]=useState([
     {type:"system",text:"◈ COMMAND CENTER ONLINE — BATTLEFIELD ACTIVE ◈",_startup:true}]);
   const existingNames=useRef([]);
@@ -4348,6 +5530,14 @@ export default function DegenCommandCenter(){
     onMarkDirty: (addr) => supabase.markDirty(addr),
     onSmartAlert: (alert) => supabase.logSmartAlert(alert),
     onUpsertToken: (token) => supabase.upsertToken(token),
+  });
+
+  // ── INTELLIGENCE ENGINE ─────────────────────────────────────────────────────
+  const intel = useIntelligence({
+    walletScoresRef: live.walletScoresRef,
+    tokens: live.tokens,
+    tradeDataRef: live.tradeDataRef,
+    deployerHistoryRef: live.deployerHistoryRef,
   });
 
   // Once live is ready, expose its walletScoresRef to supabase
@@ -4407,7 +5597,7 @@ export default function DegenCommandCenter(){
             id: row.addr+"_db_"+Date.now(), addr: row.addr, name: row.name, fullName: row.name,
             platform: row.graduated?"Raydium":(row.platform||"PumpFun"), mcap: liveMcap,
             vol: pair?.volume?.h24||0, priceUsd: parseFloat(pair?.priceUsd||0),
-            liquidity: pair?.liquidity?.usd||0, holders:0, devWallet:0,
+            liquidity: pair?.liquidity?.usd||0, holders:row.holders||0, devWallet:0,
             buys: pair?.txns?.h1?.buys||0, sells: pair?.txns?.h1?.sells||0,
             riskScore:50, qualified:true, qualScore:5, qualChecks:[],
             threat:"ACTIVE", threatColor:"#39ff14", bundleDetected:false, bundleSize:0,
@@ -4418,7 +5608,7 @@ export default function DegenCommandCenter(){
             bobOffset:Math.random()*Math.PI*2, initials:row.name.slice(0,2).toUpperCase(),
             coinColor:pick(CC), timestamp:row.first_seen||Date.now(),
             deployer:"", imageUri:"", migrated:row.graduated||false,
-            fromDB:true, peakMcap:row.peak_mcap||liveMcap,
+            fromDB:true, peakMcap:row.peak_mcap||liveMcap, sessionLoadTime:Date.now(),
           });
         } catch(e) { /* skip */ }
       }
@@ -5118,6 +6308,23 @@ export default function DegenCommandCenter(){
         if((t.smartWalletCount||0)>=3)lockScore+=1;
         if(t.narrativeMatch)lockScore+=1;
 
+        // ═══ NEURAL WEB BOOST (intelligence → lock score feedback loop) ═══
+        const intelBoost = intel?.signalBoost?.[t.addr]?.boost || 0;
+        if(intelBoost >= 25) lockScore += 5;      // elite cluster signal
+        else if(intelBoost >= 15) lockScore += 3;
+        else if(intelBoost >= 8) lockScore += 2;
+        else if(intelBoost >= 3) lockScore += 1;
+        if(intel?.hotClusterTokens?.has(t.addr)) lockScore += 4; // active coordinated buy
+        // Token DNA similarity to past winners
+        const tdna = intel?.tokenDNA?.[t.addr];
+        if(tdna && tdna.score >= 75) lockScore += 3;
+        else if(tdna && tdna.score >= 60) lockScore += 2;
+        else if(tdna && tdna.score >= 45) lockScore += 1;
+        // Dev track record bonus
+        const devFlag = intel?.devFlags?.[t.deployer];
+        if(devFlag && devFlag.tier === 'PROVEN') lockScore += 2;
+        if(devFlag && devFlag.tier === 'EXPERIENCED') lockScore += 1;
+
         // ═══ RED FLAGS ═══
         if(t.bundleDetected)lockScore-=3;
 
@@ -5238,9 +6445,12 @@ export default function DegenCommandCenter(){
         ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-track{background:transparent}
         ::-webkit-scrollbar-thumb{background:rgba(255,0,255,0.12);border-radius:4px}
         @keyframes blink{0%,100%{opacity:1}50%{opacity:0.3}}
+        @keyframes neuralPop{0%{opacity:0;transform:translateX(-50%) translateY(-8px) scale(0.95)}100%{opacity:1;transform:translateX(-50%) translateY(0) scale(1)}}
         @keyframes scanDown{0%{top:-10%}100%{top:110%}}
 @keyframes pulse{0%,100%{opacity:0.8;transform:scale(1)}50%{opacity:1;transform:scale(1.05)}}
 @keyframes slideIn{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:translateX(0)}}
+@keyframes floatUp{0%{opacity:0;transform:translate(-50%,-50%) scale(0.5)}15%{opacity:1;transform:translate(-50%,-70%) scale(1.1)}80%{opacity:1;transform:translate(-50%,-120%) scale(1)}100%{opacity:0;transform:translate(-50%,-160%) scale(0.9)}}
+@keyframes chestBob{0%,100%{transform:translate(-50%,-50%) scale(1)}50%{transform:translate(-50%,-60%) scale(1.05)}}
         @keyframes marqueeScroll{0%{transform:translateX(100%)}15%{transform:translateX(0)}85%{transform:translateX(0)}100%{transform:translateX(-100%)}}
         @keyframes newToken{from{background:rgba(255,7,58,0.06)}to{background:transparent}}
         @keyframes promoted{from{background:rgba(57,255,20,0.1)}to{background:transparent}}
@@ -5277,55 +6487,105 @@ export default function DegenCommandCenter(){
           <h1 style={{fontFamily:"'Orbitron',sans-serif",fontSize:16,fontWeight:900,lineHeight:1.2,
             background:`linear-gradient(90deg,${NEON.magenta},${NEON.pink},${NEON.cyan})`,
             WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",letterSpacing:3}}>◈ DEGEN COMMAND CENTER</h1>
-          <div style={{fontSize:11,color:NEON.dimText,letterSpacing:2,marginTop:1}}>🌸 SOLANA BATTLEFIELD v7.0 🌸</div>
+          {(()=>{
+            const rankIdx=HUNTER_RANKS.indexOf(hunterRank);
+            const nextRank=HUNTER_RANKS[rankIdx+1];
+            const xpInRank=hunterXP-(hunterRank.min||0);
+            const xpNeeded=nextRank?(nextRank.min-hunterRank.min):xpInRank||1;
+            const rankPct=Math.min(100,Math.round((xpInRank/xpNeeded)*100));
+            return(
+            <div style={{display:"flex",alignItems:"center",gap:6,marginTop:2,width:"100%",minWidth:220}}>
+              <span style={{fontSize:13,flexShrink:0}}>{hunterRank.icon}</span>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:1}}>
+                  <span style={{fontSize:9,fontWeight:900,color:hunterRank.color,fontFamily:"'Orbitron',sans-serif",letterSpacing:1}}>{hunterRank.label}</span>
+                  <span style={{fontSize:8,color:NEON.dimText,fontFamily:"'Share Tech Mono'"}}>{hunterXP}XP · {hunterKills}💀{killStreak>=3?` 🔥×${killStreak}`:""}</span>
+                  {nextRank&&<span style={{fontSize:7,color:NEON.dimText,marginLeft:"auto",fontFamily:"'Share Tech Mono'"}}>{nextRank.icon}{nextRank.label} {rankPct}%</span>}
+                </div>
+                <div style={{width:"100%",height:3,background:"rgba(255,255,255,0.06)",borderRadius:2,overflow:"hidden"}}>
+                  <div style={{width:`${rankPct}%`,height:"100%",background:`linear-gradient(90deg,${hunterRank.color}80,${hunterRank.color})`,
+                    borderRadius:2,transition:"width 0.5s ease",boxShadow:`0 0 4px ${hunterRank.color}`}}/>
+                </div>
+              </div>
+            </div>);
+          })()}
         </div>
-        {/* ═══ CORRESPONDENT MARQUEE — expands when active ═══ */}
-        <div style={{flex:1,margin:"0 14px",height:corrDisplay.visible?52:32,overflow:"hidden",position:"relative",
-          background:corrDisplay.visible?"rgba(14,6,0,0.97)":"rgba(20,8,0,0.7)",
-          border:`1px solid ${corrDisplay.visible?(corrDisplay.mood==="alarm"?"rgba(255,50,50,0.5)":corrDisplay.mood==="hype"?"rgba(57,255,20,0.4)":corrDisplay.mood==="sus"?"rgba(255,215,0,0.35)":"rgba(255,106,0,0.4)"):"rgba(255,106,0,0.15)"}`,
-          borderRadius:4,transition:"height 0.3s ease, background 0.3s ease, border-color 0.3s ease",
-          boxShadow:corrDisplay.visible?`0 0 20px ${corrDisplay.mood==="alarm"?"rgba(255,50,50,0.15)":corrDisplay.mood==="hype"?"rgba(57,255,20,0.1)":"rgba(255,106,0,0.12)"}`:undefined}}>
-          {/* Scan lines */}
-          <div style={{position:"absolute",inset:0,
-            background:"repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(255,106,0,0.015) 2px,rgba(255,106,0,0.015) 4px)",
-            pointerEvents:"none",zIndex:2}}/>
-          {/* Claude ◈ icon left */}
-          <div style={{position:"absolute",left:0,top:0,bottom:0,width:corrDisplay.visible?44:32,
-            background:"linear-gradient(180deg,rgba(255,100,0,0.08),rgba(40,10,0,0.2))",
-            borderRight:"1px solid rgba(255,100,0,0.15)",
-            display:"flex",alignItems:"center",justifyContent:"center",zIndex:3,transition:"width 0.3s"}}>
-            <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1}}>
-              <div style={{fontSize:corrDisplay.visible?20:15,lineHeight:1,transition:"font-size 0.3s",
-                color:corrDisplay.visible?(corrDisplay.mood==="hype"?"#39ff14":corrDisplay.mood==="alarm"?"#ff4040":corrDisplay.mood==="sus"?"#ffd740":"#ff6a00"):"rgba(255,106,0,0.5)",
-                textShadow:corrDisplay.visible?`0 0 12px currentColor`:undefined,
-                fontWeight:900}}>◈</div>
-              <div style={{fontSize:6,letterSpacing:1,fontFamily:"'Orbitron',sans-serif",
-                color:corrDisplay.visible?"rgba(255,106,0,0.7)":"rgba(255,106,0,0.25)",
-                transition:"all 0.3s"}}>CLAUDE</div>
-            </div>
-          </div>
-          {/* Message area */}
-          <div style={{position:"absolute",left:corrDisplay.visible?46:34,right:4,top:0,bottom:0,display:"flex",flexDirection:"column",justifyContent:"center",
-            padding:"3px 6px",overflow:"hidden"}}>
-            {corrDisplay.visible?<>
-              <div style={{fontSize:9,color:"#ff6a00",fontWeight:700,letterSpacing:2,fontFamily:"'Orbitron',sans-serif",lineHeight:1,marginBottom:3}}>
-                {corrDisplay.mood==="alarm"?"⚠ ALERT":corrDisplay.mood==="sus"?"◉ INTEL":corrDisplay.mood==="rip"?"☠ REPORT":corrDisplay.mood==="hype"?"◈ SIGNAL":"◈ CLAUDE"}</div>
-              <div style={{fontSize:13,color:"#e0e0ff",lineHeight:1.3,fontFamily:"'Share Tech Mono',monospace",
-                overflow:"hidden",whiteSpace:"nowrap",fontWeight:600,letterSpacing:0.5,
-                animation:"marqueeScroll 40s linear"}}>{corrDisplay.msg}</div>
-            </>:<>
-              <div style={{fontSize:7,color:"rgba(255,106,0,0.3)",fontWeight:700,letterSpacing:2,fontFamily:"'Orbitron',sans-serif",lineHeight:1}}>◈ STANDBY</div>
-              <div style={{fontSize:10,color:"rgba(255,106,0,0.12)",fontFamily:"'Share Tech Mono',monospace",lineHeight:1.2,
-                letterSpacing:1,overflow:"hidden",whiteSpace:"nowrap"}}>
-                {"░▒▓█▓▒░".repeat(8).split("").map((c,i)=><span key={i} style={{opacity:0.2+Math.random()*0.3}}>{c}</span>)}</div>
-            </>}
-          </div>
-        </div>
-        <div style={{display:"flex",gap:14,alignItems:"center",flexShrink:0}}>
+                <div style={{display:"flex",gap:14,alignItems:"center",flexShrink:0}}>
           {[{l:"SCANNED",v:totalScanned,c:NEON.cyan},{l:"DEPLOYED",v:deployed,c:NEON.green},
             {l:"REJECTED",v:rejected,c:NEON.red},{l:"QUAL%",v:qualRate+"%",c:parseInt(qualRate)>40?NEON.green:NEON.orange},
-            {l:"LOCKED",v:lockedTokens.length,c:NEON.yellow}].map(s=>(
+            {l:"LOCKED",v:lockedTokens.length,c:NEON.yellow},
+            ].map(s=>(
             <StatChip key={s.l} label={s.l} value={s.v} color={s.c}/>))}
+          {/* ── MARKET TEMPERATURE GAUGE ── */}
+          {intel && intel.marketTemp && (() => {
+            const mt = intel.marketTemp;
+            return (
+              <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1,
+                background:`${mt.color}10`,border:`1px solid ${mt.color}30`,
+                borderRadius:6,padding:"3px 8px",minWidth:72,cursor:"default"}}
+                title={`Market Temp: ${mt.score}/100 | Migrations: ${mt.factors.migrations} | Smart Wallets: ${mt.factors.smartWallets} | Bundles: ${mt.factors.bundleRate}`}>
+                <div style={{fontSize:8,color:NEON.dimText,letterSpacing:1.5,fontFamily:"'Orbitron'"}}>MKT TEMP</div>
+                <div style={{fontSize:12,color:mt.color,fontWeight:900,letterSpacing:1,fontFamily:"'Orbitron'"}}>{mt.emoji} {mt.label}</div>
+                <div style={{width:"100%",height:3,background:"rgba(255,255,255,0.06)",borderRadius:2,overflow:"hidden"}}>
+                  <div style={{width:`${mt.score}%`,height:"100%",background:`linear-gradient(90deg,${mt.color}88,${mt.color})`,
+                    borderRadius:2,transition:"width 1s ease"}}/>
+                </div>
+              </div>
+            );
+          })()}
+          {/* ── LIVE FLASH STRIP + NEURAL SURFACE: top movers + high-signal tokens ── */}
+          {(()=>{
+            const top30 = live.flashBoard30s?.[0];
+            const top1m = live.flashBoard1m?.[0];
+            const top5m = live.flashBoard5m?.[0];
+            // Top neural signal (not already in flash)
+            const topSig = (() => {
+              const flashAddrs = new Set([top30?.addr, top1m?.addr, top5m?.addr].filter(Boolean));
+              return tokens.filter(t=>t.alive&&t.qualified)
+                .map(t=>({t, sig: (live.signalScoresRef?.current?.[t.addr]||0) + (intel?.signalBoost?.[t.addr]?.boost||0)}))
+                .filter(x => x.sig >= 80 && !flashAddrs.has(x.t.addr))
+                .sort((a,b)=>b.sig-a.sig)[0];
+            })();
+            const hasAny = top30 || top1m || top5m || topSig;
+            if (!hasAny) return null;
+            return(
+              <div style={{display:"flex",flexDirection:"column",gap:1,padding:"3px 6px",
+                background:"rgba(255,7,58,0.05)",border:"1px solid rgba(255,7,58,0.18)",borderRadius:6,minWidth:140}}>
+                <div style={{fontSize:7,color:"#ff073a",letterSpacing:1.5,fontFamily:"'Orbitron'",marginBottom:1}}>⚡ LIVE FLASH</div>
+                {top30&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:4,cursor:"pointer"}}
+                  onClick={()=>{const t=tokens.find(tk=>tk.addr===top30.addr);if(t)selectToken(t);}}>
+                  <span style={{fontSize:7,color:"#ff073a",fontFamily:"'Orbitron'",minWidth:14}}>30s</span>
+                  <span style={{fontSize:9,fontWeight:900,color:NEON.text,maxWidth:52,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{top30.name}</span>
+                  <span style={{fontSize:9,fontWeight:900,color:top30.gain>0?NEON.green:"#ff073a",fontFamily:"'Orbitron'"}}>
+                    {top30.gain>0?"+":""}{top30.gain.toFixed(1)}%</span>
+                  {top30.hasSmartMoney&&<span style={{fontSize:7,color:"#ff9500"}}>🧠</span>}
+                </div>}
+                {top1m&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:4,cursor:"pointer"}}
+                  onClick={()=>{const t=tokens.find(tk=>tk.addr===top1m.addr);if(t)selectToken(t);}}>
+                  <span style={{fontSize:7,color:"#ff6600",fontFamily:"'Orbitron'",minWidth:14}}>1m</span>
+                  <span style={{fontSize:9,fontWeight:900,color:NEON.text,maxWidth:52,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{top1m.name}</span>
+                  <span style={{fontSize:9,fontWeight:900,color:top1m.gain>0?"#ff6600":"#ff073a",fontFamily:"'Orbitron'"}}>
+                    {top1m.gain>0?"+":""}{top1m.gain.toFixed(1)}%</span>
+                  {top1m.isCluster&&<span style={{fontSize:7,color:"#bf00ff"}}>🔗</span>}
+                </div>}
+                {top5m&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:4,cursor:"pointer"}}
+                  onClick={()=>{const t=tokens.find(tk=>tk.addr===top5m.addr);if(t)selectToken(t);}}>
+                  <span style={{fontSize:7,color:"#ffe600",fontFamily:"'Orbitron'",minWidth:14}}>5m</span>
+                  <span style={{fontSize:9,fontWeight:900,color:NEON.text,maxWidth:52,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{top5m.name}</span>
+                  <span style={{fontSize:9,fontWeight:900,color:top5m.gain>0?"#ffe600":"#ff073a",fontFamily:"'Orbitron'"}}>
+                    {top5m.gain>0?"+":""}{top5m.gain.toFixed(1)}%</span>
+                </div>}
+                {topSig&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:4,
+                  borderTop:"1px solid rgba(0,255,255,0.1)",paddingTop:1,cursor:"pointer"}}
+                  onClick={()=>selectToken(topSig.t)}>
+                  <span style={{fontSize:7,color:NEON.cyan,fontFamily:"'Orbitron'",minWidth:14}}>◈</span>
+                  <span style={{fontSize:9,fontWeight:900,color:NEON.text,maxWidth:52,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{topSig.t.name}</span>
+                  <span style={{fontSize:9,fontWeight:900,color:"#ffd700",fontFamily:"'Orbitron'",textShadow:"0 0 6px #ffd700"}}>
+                    {Math.round(topSig.sig)}</span>
+                </div>}
+              </div>
+            );
+          })()}
           <div style={{display:"flex",alignItems:"center",gap:5,marginLeft:6}}>
             <div style={{width:6,height:6,borderRadius:"50%",background:NEON.green,
               boxShadow:`0 0 8px ${NEON.green}`,animation:"blink 1s infinite"}}/>
@@ -5464,33 +6724,22 @@ export default function DegenCommandCenter(){
           </>}
 
           {/* WAR LOG */}
-          {leftTab==="WARLOG"&&<WarLog events={intelEvents}/>}
+          {leftTab==="WARLOG"&&<WarLog events={intelEvents} clusterAlerts={intel?.clusterAlerts||[]}/>}
 
           {/* LEADERBOARD */}
-          {leftTab==="LEADERS"&&<div style={{padding:"6px"}}>
-            {[{title:"💰 TOP MCAP",data:leaderboard.byMcap,metric:t=>"$"+formatNum(t.mcap),color:"#ffd740"},
-              {title:"⚡ FASTEST",data:leaderboard.byVelocity,metric:t=>(t.velocity||0)+"/30s",color:NEON.green},
-              {title:"👥 MOST HOLDERS",data:leaderboard.byHolders,metric:t=>(t.holders||0)+"w",color:NEON.cyan},
-            ].map(cat=>(
-              <div key={cat.title} style={{marginBottom:10}}>
-                <div style={{fontSize:10,fontWeight:900,color:cat.color,fontFamily:"'Orbitron',sans-serif",
-                  letterSpacing:1,marginBottom:4,borderBottom:`1px solid ${cat.color}30`,paddingBottom:3}}>{cat.title}</div>
-                {cat.data.length===0&&<div style={{fontSize:10,color:NEON.dimText,fontStyle:"italic",padding:4}}>Waiting for data...</div>}
-                {cat.data.map((t,i)=>(
-                  <div key={t.id} onClick={()=>selectToken(t)} style={{display:"flex",justifyContent:"space-between",
-                    alignItems:"center",padding:"3px 4px",cursor:"pointer",borderRadius:3,
-                    background:i===0?`${cat.color}08`:"transparent",borderLeft:i===0?`2px solid ${cat.color}`:"2px solid transparent"}}>
-                    <div style={{display:"flex",alignItems:"center",gap:5}}>
-                      <span style={{fontSize:11,fontWeight:900,color:i===0?cat.color:NEON.dimText,width:14,textAlign:"right",
-                        fontFamily:"'Orbitron'"}}>{i+1}</span>
-                      <span style={{fontSize:11,fontWeight:700,color:i===0?NEON.text:"#aaa"}}>{t.name}</span>
-                    </div>
-                    <span style={{fontSize:11,fontWeight:700,color:cat.color,fontFamily:"'Share Tech Mono'"}}>{cat.metric(t)}</span>
-                  </div>
-                ))}
-              </div>
-            ))}
-          </div>}
+          {leftTab==="LEADERS"&&<LeaderboardPanel
+            SB_URL="https://yrmjphhfgduysoftnuxv.supabase.co"
+            SB_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlybWpwaGhmZ2R1eXNvZnRudXh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3MzI5MzAsImV4cCI6MjA4ODMwODkzMH0.scHhvTGiABJDybgbjgjilw8XuxOfmWPsqo4iytMZmio"
+            onSelectToken={(addr,stub)=>enrichAndSelect(addr,stub)}
+            onSelectWallet={(addr)=>viewWalletDetail(addr)}
+            onKill={(addr)=>{
+              const xp = awardKillXP(addr, 0, killStreak+1);
+              setHunterKills(k=>{const n=k+1;try{localStorage.setItem("hunter_kills",n)}catch{};return n;});
+              pushMsg(`💀 LEADERBOARD KILL — ${addr.slice(0,8)}... dropped off top 50 +${xp}XP`,"sus");
+            }}
+            NEON={NEON}
+            formatNum={formatNum}
+          />}
 
           {/* LOCK HISTORY */}
           {leftTab==="HISTORY"&&<div style={{padding:"4px 6px"}}>
@@ -5733,8 +6982,14 @@ export default function DegenCommandCenter(){
                         background:"rgba(255,255,255,0.02)",border:`1px solid ${w2.isElite?"rgba(0,255,136,0.15)":"rgba(255,255,255,0.05)"}`,
                         transition:"background 0.2s"}}>
                       <div>
-                        <div style={{fontSize:10,fontWeight:900,color:NEON.text,fontFamily:"monospace"}}>{w2.addr.slice(0,4)}...{w2.addr.slice(-4)}</div>
-                        <div style={{fontSize:9,color:NEON.dimText}}>{w2.wins}W / {w2.losses}L / {w2.holds}H</div>
+                        <div style={{display:"flex",alignItems:"center",gap:4}}>
+                          <div style={{fontSize:10,fontWeight:900,color:NEON.text,fontFamily:"monospace"}}>{w2.addr.slice(0,4)}...{w2.addr.slice(-4)}</div>
+                          {intel?.walletDNA?.[w2.addr] && <span style={{fontSize:9,background:`${intel.walletDNA[w2.addr].meta.color}18`,color:intel.walletDNA[w2.addr].meta.color,border:`1px solid ${intel.walletDNA[w2.addr].meta.color}30`,borderRadius:3,padding:"0px 4px"}}>{intel.walletDNA[w2.addr].meta.icon} {intel.walletDNA[w2.addr].archetype}</span>}
+                        </div>
+                        <div style={{display:"flex",alignItems:"center",gap:4}}>
+                          <div style={{fontSize:9,color:NEON.dimText}}>{w2.wins}W / {w2.losses}L / {w2.holds}H</div>
+                          {intel?.persistenceScores?.[w2.addr] && <span style={{fontSize:8,color:intel.persistenceScores[w2.addr].tierColor,fontWeight:700}}>{intel.persistenceScores[w2.addr].tier}</span>}
+                        </div>
                       </div>
                       <div style={{textAlign:"right"}}>
                         <div style={{fontSize:14,fontWeight:900,color:tc,fontFamily:"Orbitron"}}>{w2.rate}%</div>
@@ -5756,10 +7011,15 @@ export default function DegenCommandCenter(){
                 return(<div>
                   {subNav}
                   <div style={{background:"rgba(255,215,64,0.04)",border:"1px solid rgba(255,215,64,0.12)",borderRadius:6,padding:8,marginBottom:8}}>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-                      <div style={{fontSize:10,fontWeight:900,color:tierColor,fontFamily:"Orbitron",letterSpacing:1}}>{tierLabel}</div>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                      <div style={{display:"flex",alignItems:"center",gap:6}}>
+                        <div style={{fontSize:10,fontWeight:900,color:tierColor,fontFamily:"Orbitron",letterSpacing:1}}>{tierLabel}</div>
+                        {intel?.walletDNA?.[w.addr] && <span style={{fontSize:10,background:`${intel.walletDNA[w.addr].meta.color}18`,color:intel.walletDNA[w.addr].meta.color,border:`1px solid ${intel.walletDNA[w.addr].meta.color}30`,borderRadius:4,padding:"1px 6px",fontWeight:700}}>{intel.walletDNA[w.addr].meta.icon} {intel.walletDNA[w.addr].archetype}<span style={{opacity:0.7,fontSize:8,marginLeft:3}}>{intel.walletDNA[w.addr].confidence}%</span></span>}
+                        {intel?.persistenceScores?.[w.addr] && <span style={{fontSize:9,color:intel.persistenceScores[w.addr].tierColor,fontWeight:700,background:`${intel.persistenceScores[w.addr].tierColor}15`,border:`1px solid ${intel.persistenceScores[w.addr].tierColor}25`,borderRadius:4,padding:"1px 5px"}}>{intel.persistenceScores[w.addr].tier} {intel.persistenceScores[w.addr].score}pts</span>}
+                      </div>
                       <div style={{fontSize:22,fontWeight:900,color:tierColor,fontFamily:"Orbitron"}}>{w.rate}%</div>
                     </div>
+                    {intel?.walletDNA?.[w.addr] && <div style={{fontSize:8,color:NEON.dimText,marginBottom:4,fontStyle:"italic"}}>{intel.walletDNA[w.addr].meta.desc} · avg buy {intel.walletDNA[w.addr].stats.avgBuy.toFixed(2)} SOL · hold {intel.walletDNA[w.addr].stats.avgHoldMs>0?Math.round(intel.walletDNA[w.addr].stats.avgHoldMs/1000)+'s':'?'}</div>}
                     <div style={{fontSize:9,color:NEON.dimText,wordBreak:"break-all",marginBottom:6,fontFamily:"monospace"}}>{w.addr}</div>
                     <div onClick={()=>{navigator.clipboard.writeText(w.addr);}}
                       style={{cursor:"pointer",fontSize:10,fontWeight:700,color:"#111",background:tierColor,
@@ -6115,10 +7375,87 @@ export default function DegenCommandCenter(){
 
         {/* CENTER: BATTLEFIELD */}
         <GlassPanel accent={NEON.cyan} style={{position:"relative",overflow:"hidden"}}>
-          <BattlefieldMap tokens={tokens} lockedTokens={lockedTokens} onSelect={selectToken}
+          <BattlefieldMap tokens={tokens} lockedTokens={lockedTokens} onSelect={selectToken} tradeDataRef={live.tradeDataRef}
             selectedId={selectedToken?.id} onKillFeed={addKillFeed} onAlienUpdate={setAlienStats}
-            onMenuToggle={()=>setShowMenu(p=>!p)} whaleTrigger={whaleTriggerRef} dolphinTrigger={dolphinTriggerRef}/>
+            onMenuToggle={()=>setShowMenu(p=>!p)} whaleTrigger={whaleTriggerRef} dolphinTrigger={dolphinTriggerRef}
+            signalScoresRef={live.signalScoresRef} hotClusterRef={hotClusterRef} flashSnapsRef={live.flashSnapsRef}/>
           <KillFeed events={killFeed} onSelectByName={selectByName}/>
+
+          {/* ── NEURAL SURFACE AUTO-POP — shows top signal without any click ── */}
+          {(()=>{
+            const recent = (live.autoSurface||[]).filter(e=>Date.now()-e.time<25000).slice(0,1);
+            if(!recent.length)return null;
+            const e = recent[0];
+            const tok = tokens.find(t=>t.addr===e.addr);
+            return(
+              <div key={e.id} style={{position:"absolute",top:12,left:"50%",transform:"translateX(-50%)",
+                zIndex:55,pointerEvents:"auto",
+                background:"rgba(0,0,0,0.88)",
+                border:`1px solid rgba(255,215,0,0.6)`,
+                boxShadow:"0 0 20px rgba(255,215,0,0.3),0 0 40px rgba(255,215,0,0.1)",
+                borderRadius:8,padding:"8px 14px",minWidth:240,maxWidth:320,
+                animation:"neuralPop 0.3s ease-out"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{fontSize:8,color:"#ffd700",letterSpacing:2,fontFamily:"'Orbitron'"}}>◈ NEURAL SURFACE</span>
+                    <span style={{fontSize:7,color:"rgba(255,215,0,0.5)"}}>auto-detected</span>
+                  </div>
+                  <span style={{fontSize:14,fontWeight:900,color:"#ffd700",fontFamily:"'Orbitron'",
+                    textShadow:"0 0 10px #ffd700"}}>{e.score}</span>
+                </div>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                  <span style={{fontSize:14,fontWeight:900,color:NEON.text,fontFamily:"'Orbitron'",cursor:"pointer"}}
+                    onClick={()=>tok&&selectToken(tok)}>{e.name}</span>
+                  <span style={{fontSize:11,color:NEON.dimText}}>${(e.mcap/1000).toFixed(1)}K mcap</span>
+                </div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+                  {e.reasons.slice(0,4).map((r,i)=>(
+                    <span key={i} style={{fontSize:8,background:"rgba(255,215,0,0.08)",
+                      border:"1px solid rgba(255,215,0,0.2)",borderRadius:3,
+                      padding:"1px 5px",color:"rgba(255,215,0,0.8)"}}>{r}</span>
+                  ))}
+                </div>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:6}}>
+                  <button onClick={()=>tok&&selectToken(tok)} style={{fontSize:8,color:"#ffd700",
+                    background:"rgba(255,215,0,0.12)",border:"1px solid rgba(255,215,0,0.3)",
+                    borderRadius:4,padding:"2px 8px",cursor:"pointer",fontFamily:"'Orbitron'"}}>
+                    → FOCUS</button>
+                  <span style={{fontSize:7,color:NEON.dimText}}>{Math.floor((Date.now()-e.time)/1000)}s ago</span>
+                </div>
+              </div>
+            );
+          })()}
+          {/* ── HUNTER KILL POPUPS ── */}
+          {killPopups.map(k=>(
+            <div key={k.id} style={{position:"absolute",left:`${k.x*100}%`,top:`${k.y*100}%`,
+              transform:"translate(-50%,-50%)",pointerEvents:"none",zIndex:50,
+              animation:"floatUp 2.5s ease-out forwards",textAlign:"center"}}>
+              <div style={{fontSize:18,fontWeight:900,color:"#ff073a",fontFamily:"'Orbitron'",
+                textShadow:"0 0 20px #ff073a",letterSpacing:2}}>💀 KILL</div>
+              <div style={{fontSize:14,fontWeight:900,color:"#ffd740",fontFamily:"'Share Tech Mono'",
+                textShadow:"0 0 12px #ffd740"}}>+{k.xp} XP</div>
+              {k.mult>1&&<div style={{fontSize:11,color:"#ff6600",fontWeight:900}}>🔥 {k.mult}x STREAK</div>}
+              <div style={{fontSize:10,color:"#aaa"}}>{k.name}</div>
+            </div>
+          ))}
+          {/* ── TREASURE CHESTS ── */}
+          <TreasureChestOverlay chests={chests} onOpen={handleChestOpen}/>
+          {/* ── CHEST LOOT POPUP ── */}
+          {chestPopup&&(
+            <div style={{position:"absolute",top:"30%",left:"50%",transform:"translate(-50%,-50%)",
+              zIndex:60,pointerEvents:"none",textAlign:"center",animation:"floatUp 4s ease-out forwards"}}>
+              <div style={{background:"rgba(5,3,14,0.97)",border:`2px solid ${RARITIES[chestPopup.rarity]?.color}`,
+                borderRadius:8,padding:"12px 20px",boxShadow:`0 0 30px ${RARITIES[chestPopup.rarity]?.color}60`}}>
+                <div style={{fontSize:10,fontWeight:900,color:RARITIES[chestPopup.rarity]?.color,
+                  fontFamily:"'Orbitron'",letterSpacing:2,marginBottom:4}}>
+                  🎁 {RARITIES[chestPopup.rarity]?.label} CHEST OPENED
+                </div>
+                <div style={{fontSize:28,marginBottom:4}}>{chestPopup.item?.icon}</div>
+                <div style={{fontSize:13,fontWeight:700,color:"#e0e0ff",marginBottom:2}}>{chestPopup.item?.name}</div>
+                <div style={{fontSize:11,color:"#ffd740",fontFamily:"'Share Tech Mono'"}}>+{chestPopup.xpGain} XP</div>
+              </div>
+            </div>
+          )}
           {/* ═══ INTEL PANEL — bottom of battlefield on token select ═══ */}
           {selectedToken&&(()=>{
             const token=selectedToken;
@@ -6161,6 +7498,33 @@ export default function DegenCommandCenter(){
               ...(token.activityLevel?[{l:"🔥 ACT",v:token.activityLevel,c:token.activityLevel==="BLAZING"?"#ffd740":token.activityLevel==="HOT"?NEON.green:token.activityLevel==="ACTIVE"?NEON.cyan:NEON.dimText}]:[]),
               ...(token.rayBurnPct>0?[{l:"🔥 BURN",v:token.rayBurnPct.toFixed(0)+"%LP",c:token.rayBurnPct>90?NEON.green:token.rayBurnPct>50?NEON.cyan:NEON.orange}]:[]),
               ...(token.rayTvl>0?[{l:"💎 TVL",v:"$"+formatNum(token.rayTvl),c:NEON.cyan}]:[]),
+              // ── INTEL LAYER ──
+              ...(()=>{
+                const dna = intel?.tokenDNA?.[token.addr];
+                const dev = intel?.devFlags?.[token.deployer];
+                const sw = intel?.snipeWindow;
+                const extras = [];
+                if (dna && dna.score > 0) extras.push({l:"🧬 DNA",v:`${dna.score}% ${dna.label}`,c:dna.labelColor});
+                if (dev && dev.flagged) extras.push({l:"🚩 DEV",v:dev.tier.replace(/_/g,' '),c:dev.tier.includes('SERIAL')?'#ff073a':'#ff6600'});
+                if (dev && !dev.flagged && dev.tier) extras.push({l:"✅ DEV",v:dev.tier,c:NEON.green});
+                if (sw && token.mcap > 0) {
+                  const inWindow = token.mcap >= sw.low && token.mcap <= sw.high;
+                  const belowWindow = token.mcap < sw.low;
+                  extras.push({l:"🎯 SNIPE",v:inWindow?"IN ZONE":belowWindow?`↑$${(sw.low/1000).toFixed(0)}K`:`↓$${(sw.high/1000).toFixed(0)}K`,c:inWindow?NEON.green:belowWindow?NEON.yellow:NEON.dimText});
+                }
+                // Neural signal score — the composite brain score
+                const baseSignal = live.signalScoresRef?.current?.[token.addr] || 0;
+                const intelB = intel?.signalBoost?.[token.addr]?.boost || 0;
+                const totalSignal = Math.round(baseSignal + intelB);
+                if (totalSignal > 0) {
+                  const sigColor = totalSignal >= 88 ? '#ffd700' : totalSignal >= 72 ? '#00ffff' : totalSignal >= 55 ? '#ffe600' : NEON.dimText;
+                  extras.push({l:"◈ SIGNAL",v:`${totalSignal}/100${totalSignal>=88?' ★':''}`,c:sigColor});
+                }
+                if(intel?.hotClusterTokens?.has(token.addr)) extras.push({l:"🔗 CLUSTER",v:"ACTIVE",c:"#bf00ff"});
+                const boostReasons = intel?.signalBoost?.[token.addr]?.reasons;
+                if(boostReasons?.length) extras.push({l:"🧠 BOOST",v:`+${Math.round(intelB)}`,c:"#bf00ff"});
+                return extras;
+              })(),
             ];
             return(<div style={{position:"absolute",bottom:0,left:0,right:0,zIndex:20,
               background:"rgba(5,3,14,0.94)",backdropFilter:"blur(10px)",
@@ -6171,6 +7535,26 @@ export default function DegenCommandCenter(){
                   <span style={{color:token.threatColor,fontSize:14,fontWeight:900,fontFamily:"'Orbitron',sans-serif",letterSpacing:2}}>◉ {token.name}</span>
                   {token.fullName&&token.fullName!==token.name&&<span style={{fontSize:9,color:NEON.dimText,letterSpacing:0.5,fontStyle:"italic"}}>{token.fullName}</span>}
                 </div>
+                {token._loading&&<span style={{fontSize:10,color:NEON.cyan,fontFamily:"'Share Tech Mono'"}}>⟳ FETCHING LIVE DATA...</span>}
+                {!token._loading&&token._killed&&<span style={{fontSize:11,color:"#ff073a",fontWeight:900,fontFamily:"'Orbitron'",textShadow:"0 0 10px #ff073a"}}>💀 KILL CONFIRMED +{token._xp}XP</span>}
+                {!token._loading&&!token._killed&&token.priceUsd>0&&!token.migrated&&!token.graduated&&<span style={{fontSize:9,color:"#39ff14",background:"rgba(57,255,20,0.1)",padding:"1px 5px",borderRadius:3}}>● LIVE</span>}
+                {!token._loading&&token._scanned&&<span style={{fontSize:9,color:"#39ff14",background:"rgba(57,255,20,0.12)",border:"1px solid rgba(57,255,20,0.4)",padding:"1px 7px",borderRadius:3,fontFamily:"'Orbitron'"}}>✓ SCANNED ${formatNum(token.mcap||0)}</span>}
+                {!token._loading&&!token._killed&&!token._scanned&&token.addr&&(token.migrated||token.graduated||!token.priceUsd)&&(
+                  <span onClick={(e)=>{
+                      e.stopPropagation();
+                      const scanAddr = token.addr || token.mint;
+                      console.log("[SCAN DEX] clicking, addr=", scanAddr, "token=", token);
+                      if(scanAddr) enrichAndSelect(scanAddr, {...token, addr: scanAddr});
+                    }}
+                    style={{fontSize:9,color:"#00ffff",background:"rgba(0,255,255,0.08)",
+                      border:"1px solid rgba(0,255,255,0.3)",padding:"1px 7px",borderRadius:3,
+                      cursor:"pointer",fontFamily:"'Orbitron'",letterSpacing:0.5,
+                      transition:"all 0.15s"}}
+                    onMouseEnter={e=>e.currentTarget.style.background="rgba(0,255,255,0.18)"}
+                    onMouseLeave={e=>e.currentTarget.style.background="rgba(0,255,255,0.08)"}>
+                    🎯 SCAN DEX
+                  </span>
+                )}
                 <span style={{fontSize:11,color:PLATFORM_COLORS[token.platform]||NEON.dimText,background:"rgba(255,255,255,0.04)",
                   padding:"1px 6px",borderRadius:8,border:`1px solid ${(PLATFORM_COLORS[token.platform]||NEON.dimText)}30`}}>{token.platform}</span>
                 <span onClick={()=>navigator.clipboard.writeText(token.addr)} style={{fontSize:11,color:NEON.cyan,cursor:"pointer",
@@ -6206,14 +7590,14 @@ export default function DegenCommandCenter(){
         {/* RIGHT COLUMN — 6-TAB INTEL SYSTEM */}
         <div style={{display:"flex",flexDirection:"column",gap:6,overflow:"hidden"}}>
           {/* RADAR + FLEET tabs */}
-          <GlassPanel accent={radarTab==="FLEET"?"#ff00ff":NEON.cyan} style={{flexShrink:0}}>
+          <GlassPanel accent={radarTab==="FLEET"?"#ff00ff":radarTab==="CHARACTER"?"#ffd740":NEON.cyan} style={{flexShrink:0}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"2px 8px",gap:2}}>
-              {[{id:"RADAR",icon:"📡",label:"RADAR"},{id:"FLEET",icon:"👾",label:"FLEET"}].map(t=>(
+              {[{id:"RADAR",icon:"📡",label:"RADAR"},{id:"FLEET",icon:"👾",label:"FLEET"},{id:"CHARACTER",icon:"⚔️",label:"HUNTER"}].map(t=>(
                 <button key={t.id} onClick={()=>setRadarTab(t.id)} style={{
-                  padding:"3px 10px",fontSize:10,fontWeight:700,cursor:"pointer",border:"none",
+                  padding:"3px 8px",fontSize:10,fontWeight:700,cursor:"pointer",border:"none",
                   fontFamily:"'Orbitron',sans-serif",letterSpacing:1,borderRadius:4,
                   background:radarTab===t.id?"rgba(0,255,255,0.12)":"transparent",
-                  color:radarTab===t.id?(t.id==="FLEET"?"#ff00ff":NEON.cyan):NEON.dimText,
+                  color:radarTab===t.id?(t.id==="FLEET"?"#ff00ff":t.id==="CHARACTER"?"#ffd740":NEON.cyan):NEON.dimText,
                 }}>{t.icon} {t.label}</button>
               ))}
             </div>
@@ -6253,6 +7637,9 @@ export default function DegenCommandCenter(){
                 </div>);})}
               {alienStats.length===0&&<div style={{color:NEON.dimText,fontSize:11,textAlign:"center",padding:12}}>Waiting for fleet deployment...</div>}
             </div>}
+            {radarTab==="CHARACTER"&&<div style={{maxHeight:420,overflow:"auto"}}>
+              <HunterPanel hunterXP={hunterXP} hunterKills={hunterKills} killStreak={killStreak} NEON={NEON}/>
+            </div>}
           </GlassPanel>
 
           {/* TAB SYSTEM */}
@@ -6263,9 +7650,11 @@ export default function DegenCommandCenter(){
                 {id:"LOCKS",icon:"🎯",label:"LOCKS",color:NEON.yellow,count:lockedTokens.length},
                 {id:"MIGRATE",icon:"🌉",label:"MIGRATE",color:NEON.green,count:migrations.length},
                 {id:"SMART",icon:"🧠",label:"SMART$",color:"#ff9500",count:live.smartMoneyAlerts?.length||0},
+                {id:"FLASH",icon:"⚡",label:"FLASH",color:"#ff073a",count:(live.flashBoard30s?.filter(e=>e.gain>=15)?.length||0)+(live.flashBoard1m?.filter(e=>e.gain>=20)?.length||0)+(live.flashBoard5m?.filter(e=>e.gain>=50)?.length||0)||(live.autoSurface?.filter(e=>Date.now()-e.time<60000)?.length||0)||null},
               ],[
                 {id:"BUNDLES",icon:"🔗",label:"BUNDLES",color:NEON.red,count:live.bundleAlerts?.length||0},
                 {id:"TRENDS",icon:"🔥",label:"TRENDS",color:NEON.pink,count:live.narratives?.length||0},
+                {id:"INTEL",icon:"🧬",label:"INTEL",color:"#bf00ff",count:intel?.clusters?.filter(c=>c.isHot)?.length||0},
                 {id:"STATS",icon:"📊",label:"STATS",color:NEON.cyan,count:null},
               ]].map((row,ri)=>(
                 <div key={ri} style={{display:"flex"}}>
@@ -6350,6 +7739,208 @@ export default function DegenCommandCenter(){
                   </div>)})}
               </>}
 
+              {/* ⚡ FLASH BOARDS — 30s + 1m danger zones */}
+              {rightTab==="FLASH"&&<div style={{padding:"2px 0"}}>
+                {/* Header */}
+                <div style={{fontSize:9,color:"#ff073a",letterSpacing:2,fontFamily:"'Orbitron'",marginBottom:8,textAlign:"center",
+                  textShadow:"0 0 10px #ff073a",padding:"4px 0",borderBottom:"1px solid rgba(255,7,58,0.2)"}}>
+                  ⚡ DANGER ZONE BOARDS ⚡
+                </div>
+
+                {/* 30s Board */}
+                <div style={{marginBottom:10}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
+                    <div style={{fontSize:9,color:"#ff073a",letterSpacing:2,fontFamily:"'Orbitron'",fontWeight:900}}>
+                      ⚡ 30 SECOND BOARD
+                    </div>
+                    <div style={{fontSize:8,color:"rgba(255,7,58,0.5)"}}>live</div>
+                  </div>
+                  {(!live.flashBoard30s||live.flashBoard30s.length===0)&&
+                    <div style={{color:NEON.dimText,fontSize:10,textAlign:"center",padding:"8px 0",fontStyle:"italic"}}>
+                      Accumulating data...</div>}
+                  {(live.flashBoard30s||[]).map((entry,i)=>{
+                    const isUp=entry.gain>0;
+                    const absGain=Math.abs(entry.gain);
+                    const barW=Math.min(100,absGain*2);
+                    return(<div key={entry.addr} style={{
+                      background:isUp?"rgba(57,255,20,0.04)":"rgba(255,7,58,0.04)",
+                      border:`1px solid ${isUp?"rgba(57,255,20,0.15)":"rgba(255,7,58,0.15)"}`,
+                      borderLeft:`3px solid ${isUp?NEON.green:"#ff073a"}`,
+                      borderRadius:4,padding:"5px 7px",marginBottom:3,cursor:"pointer"}}
+                      onClick={()=>{const t=tokens.find(tk=>tk.addr===entry.addr);if(t)selectToken(t);}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                        <span style={{fontSize:10,fontWeight:900,color:NEON.text,fontFamily:"'Orbitron'"}}>
+                          {i===0?"👑 ":""}{entry.name}</span>
+                        <span style={{fontSize:12,fontWeight:900,color:isUp?NEON.green:"#ff073a",fontFamily:"'Orbitron'"}}>
+                          {isUp?"+":""}{entry.gain.toFixed(1)}%</span>
+                      </div>
+                      <div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:NEON.dimText,marginTop:2}}>
+                        <span>${(entry.startMcap/1000).toFixed(1)}K → ${(entry.mcap/1000).toFixed(1)}K</span>
+                        {absGain>=20&&<span style={{color:isUp?"#ffd700":"#ff073a",fontWeight:700}}>
+                          {absGain>=50?"🚀 MOON":absGain>=30?"🔥 RIP":absGain>=20?"⚡ FAST":""}</span>}
+                      </div>
+                      <div style={{marginTop:3,height:2,background:"rgba(255,255,255,0.05)",borderRadius:1}}>
+                        <div style={{height:"100%",width:barW+"%",background:isUp?
+                          "linear-gradient(90deg,#39ff1460,#39ff14)":"linear-gradient(90deg,#ff073a60,#ff073a)",
+                          borderRadius:1,transition:"width 0.5s ease"}}/>
+                      </div>
+                    </div>);
+                  })}
+                </div>
+
+                {/* 1m Board */}
+                <div>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
+                    <div style={{fontSize:9,color:"#ff6600",letterSpacing:2,fontFamily:"'Orbitron'",fontWeight:900}}>
+                      🔥 1 MINUTE BOARD
+                    </div>
+                    <div style={{fontSize:8,color:"rgba(255,102,0,0.5)"}}>live</div>
+                  </div>
+                  {(!live.flashBoard1m||live.flashBoard1m.length===0)&&
+                    <div style={{color:NEON.dimText,fontSize:10,textAlign:"center",padding:"8px 0",fontStyle:"italic"}}>
+                      Accumulating data...</div>}
+                  {(live.flashBoard1m||[]).map((entry,i)=>{
+                    const isUp=entry.gain>0;
+                    const absGain=Math.abs(entry.gain);
+                    const barW=Math.min(100,absGain*1.5);
+                    return(<div key={entry.addr} style={{
+                      background:isUp?"rgba(255,102,0,0.04)":"rgba(255,7,58,0.04)",
+                      border:`1px solid ${isUp?"rgba(255,102,0,0.15)":"rgba(255,7,58,0.15)"}`,
+                      borderLeft:`3px solid ${isUp?"#ff6600":"#ff073a"}`,
+                      borderRadius:4,padding:"5px 7px",marginBottom:3,cursor:"pointer"}}
+                      onClick={()=>{const t=tokens.find(tk=>tk.addr===entry.addr);if(t)selectToken(t);}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                        <span style={{fontSize:10,fontWeight:900,color:NEON.text,fontFamily:"'Orbitron'"}}>
+                          {i===0?"👑 ":""}{entry.name}</span>
+                        <span style={{fontSize:12,fontWeight:900,color:isUp?"#ff6600":"#ff073a",fontFamily:"'Orbitron'"}}>
+                          {isUp?"+":""}{entry.gain.toFixed(1)}%</span>
+                      </div>
+                      <div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:NEON.dimText,marginTop:2}}>
+                        <span>${(entry.startMcap/1000).toFixed(1)}K → ${(entry.mcap/1000).toFixed(1)}K</span>
+                        {absGain>=30&&<span style={{color:isUp?"#ffd700":"#ff073a",fontWeight:700}}>
+                          {absGain>=100?"🚀🚀 INSANE":absGain>=50?"🚀 MOON":absGain>=30?"🔥 RIPPING":""}</span>}
+                      </div>
+                      <div style={{marginTop:3,height:2,background:"rgba(255,255,255,0.05)",borderRadius:1}}>
+                        <div style={{height:"100%",width:barW+"%",background:isUp?
+                          "linear-gradient(90deg,#ff660060,#ff6600)":"linear-gradient(90deg,#ff073a60,#ff073a)",
+                          borderRadius:1,transition:"width 0.5s ease"}}/>
+                      </div>
+                    </div>);
+                  })}
+                </div>
+
+                {/* ─── 5 MINUTE BOARD ─── */}
+                <div style={{marginTop:8}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
+                    <div style={{fontSize:9,color:"#ffe600",letterSpacing:2,fontFamily:"'Orbitron'",fontWeight:900}}>
+                      ⏱ 5 MINUTE BOARD
+                    </div>
+                    <div style={{fontSize:8,color:"rgba(255,230,0,0.5)"}}>live</div>
+                  </div>
+                  {(!live.flashBoard5m||live.flashBoard5m.length===0)&&
+                    <div style={{color:NEON.dimText,fontSize:10,textAlign:"center",padding:"6px 0",fontStyle:"italic"}}>
+                      Accumulating 5m data...</div>}
+                  {(live.flashBoard5m||[]).map((entry,i)=>{
+                    const isUp=entry.gain>0;
+                    const absGain=Math.abs(entry.gain);
+                    const barW=Math.min(100,absGain*0.6);
+                    const sig = entry.sigScore || 0;
+                    return(<div key={entry.addr} style={{
+                      background:isUp?"rgba(255,230,0,0.04)":"rgba(255,7,58,0.04)",
+                      border:`1px solid ${isUp?"rgba(255,230,0,0.15)":"rgba(255,7,58,0.15)"}`,
+                      borderLeft:`3px solid ${isUp?"#ffe600":"#ff073a"}`,
+                      borderRadius:4,padding:"4px 7px",marginBottom:3,cursor:"pointer"}}
+                      onClick={()=>{const t=tokens.find(tk=>tk.addr===entry.addr);if(t)selectToken(t);}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                        <span style={{fontSize:10,fontWeight:900,color:NEON.text,fontFamily:"'Orbitron'"}}>
+                          {i===0?"👑 ":""}{entry.name}</span>
+                        <div style={{display:"flex",alignItems:"center",gap:5}}>
+                          {sig>=80&&<span style={{fontSize:8,color:"#ffd700",fontWeight:700,textShadow:"0 0 6px #ffd700"}}>◈{Math.round(sig)}</span>}
+                          <span style={{fontSize:12,fontWeight:900,color:isUp?"#ffe600":"#ff073a",fontFamily:"'Orbitron'"}}>
+                            {isUp?"+":""}{entry.gain.toFixed(1)}%</span>
+                        </div>
+                      </div>
+                      <div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:NEON.dimText,marginTop:2}}>
+                        <span>${(entry.startMcap/1000).toFixed(1)}K → ${(entry.mcap/1000).toFixed(1)}K</span>
+                        {absGain>=50&&<span style={{color:isUp?"#ffd700":"#ff073a",fontWeight:700}}>
+                          {absGain>=200?"🚀🚀 INSANE":absGain>=100?"🚀 MOON":absGain>=50?"🔥 RUNNER":""}</span>}
+                      </div>
+                      <div style={{marginTop:3,height:2,background:"rgba(255,255,255,0.05)",borderRadius:1}}>
+                        <div style={{height:"100%",width:barW+"%",background:isUp?
+                          "linear-gradient(90deg,#ffe60060,#ffe600)":"linear-gradient(90deg,#ff073a60,#ff073a)",
+                          borderRadius:1,transition:"width 0.5s ease"}}/>
+                      </div>
+                    </div>);
+                  })}
+                </div>
+
+                {/* ◈ NEURAL TOP SIGNALS — live composite scores */}
+                {(()=>{
+                  const topSignal=tokens.filter(t=>t.alive&&t.qualified)
+                    .map(t=>({t,sig:(live.signalScoresRef?.current?.[t.addr]||0)+(intel?.signalBoost?.[t.addr]?.boost||0)}))
+                    .filter(x=>x.sig>=65).sort((a,b)=>b.sig-a.sig).slice(0,6);
+                  if(!topSignal.length)return null;
+                  return(<div style={{marginTop:10,paddingTop:8,borderTop:"1px solid rgba(0,255,255,0.1)"}}>
+                    <div style={{fontSize:9,color:NEON.cyan,letterSpacing:2,fontFamily:"'Orbitron'",marginBottom:5}}>
+                      ◈ NEURAL SIGNALS
+                    </div>
+                    {topSignal.map(({t,sig})=>{
+                      const boost = intel?.signalBoost?.[t.addr];
+                      const isElite = sig>=88;
+                      return(<div key={t.addr} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+                        padding:"4px 6px",marginBottom:2,
+                        background:isElite?"rgba(255,215,0,0.05)":"rgba(0,255,255,0.03)",
+                        border:`1px solid ${isElite?"rgba(255,215,0,0.2)":"rgba(0,255,255,0.08)"}`,
+                        borderLeft:`2px solid ${isElite?"#ffd700":NEON.cyan}`,
+                        borderRadius:4,cursor:"pointer"}}
+                        onClick={()=>selectToken(t)}>
+                        <div style={{display:"flex",flexDirection:"column",gap:1}}>
+                          <span style={{fontSize:10,fontWeight:700,color:NEON.text}}>{t.name}</span>
+                          {boost?.reasons?.length>0&&<span style={{fontSize:7,color:NEON.dimText,fontStyle:"italic"}}>{boost.reasons.slice(0,2).join(" · ")}</span>}
+                        </div>
+                        <div style={{display:"flex",alignItems:"center",gap:5}}>
+                          <span style={{fontSize:8,color:NEON.dimText}}>${(t.mcap/1000).toFixed(1)}K</span>
+                          <span style={{fontSize:11,fontWeight:900,color:isElite?"#ffd700":NEON.cyan,
+                            textShadow:isElite?"0 0 10px #ffd700":"none",fontFamily:"'Orbitron'"}}>{Math.round(sig)}</span>
+                          {intel?.hotClusterTokens?.has(t.addr)&&<span style={{fontSize:7,color:"#bf00ff",fontWeight:700}}>🔗</span>}
+                          {t.hasSmartMoney&&<span style={{fontSize:7,color:"#ff9500"}}>🧠</span>}
+                        </div>
+                      </div>);
+                    })}
+                  </div>);
+                })()}
+
+                {/* 📡 AUTO-SURFACE EVENTS — tokens that fired neural threshold */}
+                {(live.autoSurface||[]).length>0&&(()=>{
+                  const recent = (live.autoSurface||[]).filter(e=>Date.now()-e.time<300000);
+                  if(!recent.length)return null;
+                  return(<div style={{marginTop:10,paddingTop:8,borderTop:"1px solid rgba(255,215,0,0.12)"}}>
+                    <div style={{fontSize:9,color:"#ffd700",letterSpacing:2,fontFamily:"'Orbitron'",marginBottom:5}}>
+                      📡 NEURAL SURFACE EVENTS
+                    </div>
+                    {recent.slice(0,5).map(e=>{
+                      const ageS=Math.floor((Date.now()-e.time)/1000);
+                      const tok=tokens.find(t=>t.addr===e.addr);
+                      return(<div key={e.id} style={{padding:"5px 7px",marginBottom:3,
+                        background:"rgba(255,215,0,0.04)",border:"1px solid rgba(255,215,0,0.15)",
+                        borderLeft:"3px solid #ffd700",borderRadius:4,cursor:"pointer"}}
+                        onClick={()=>tok&&selectToken(tok)}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                          <span style={{fontSize:10,fontWeight:900,color:"#ffd700",fontFamily:"'Orbitron'"}}>{e.name}</span>
+                          <div style={{display:"flex",alignItems:"center",gap:5}}>
+                            <span style={{fontSize:8,color:NEON.dimText}}>{ageS}s ago</span>
+                            <span style={{fontSize:10,fontWeight:900,color:"#ffd700"}}>◈{e.score}</span>
+                          </div>
+                        </div>
+                        <div style={{fontSize:8,color:NEON.dimText,marginTop:2}}>
+                          ${(e.mcap/1000).toFixed(1)}K — {e.reasons.slice(0,3).join(" · ")}
+                        </div>
+                      </div>);
+                    })}
+                  </div>);
+                })()}
+              </div>}
+
               {/* 🔗 BUNDLES TAB */}
               {rightTab==="BUNDLES"&&<>
                 {(!live.bundleAlerts||live.bundleAlerts.length===0)&&
@@ -6396,6 +7987,96 @@ export default function DegenCommandCenter(){
               </>}
 
               {/* 📊 STATS TAB */}
+              {rightTab==="INTEL"&&<div style={{padding:"2px 0"}}>
+                {/* ── SNIPE WINDOW ── */}
+                {intel?.snipeWindow && <div style={{background:"rgba(191,0,255,0.06)",border:"1px solid rgba(191,0,255,0.2)",borderRadius:6,padding:"8px 10px",marginBottom:8}}>
+                  <div style={{fontSize:9,color:"#bf00ff",letterSpacing:2,fontFamily:"'Orbitron'",marginBottom:6}}>🎯 SNIPE WINDOW</div>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                    <div style={{textAlign:"center"}}>
+                      <div style={{fontSize:7,color:NEON.dimText}}>LOW</div>
+                      <div style={{fontSize:14,color:NEON.green,fontWeight:900,fontFamily:"Orbitron"}}>${(intel.snipeWindow.low/1000).toFixed(1)}K</div>
+                    </div>
+                    <div style={{flex:1,margin:"0 8px",position:"relative",height:6}}>
+                      <div style={{position:"absolute",inset:0,background:"rgba(255,255,255,0.06)",borderRadius:3}}/>
+                      <div style={{position:"absolute",left:"10%",right:"10%",top:0,bottom:0,background:"linear-gradient(90deg,#39ff14,#ffe600)",borderRadius:3,opacity:0.7}}/>
+                    </div>
+                    <div style={{textAlign:"center"}}>
+                      <div style={{fontSize:7,color:NEON.dimText}}>HIGH</div>
+                      <div style={{fontSize:14,color:NEON.yellow,fontWeight:900,fontFamily:"Orbitron"}}>${(intel.snipeWindow.high/1000).toFixed(1)}K</div>
+                    </div>
+                  </div>
+                  <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:NEON.dimText}}>
+                    <span>📈 {intel.snipeWindow.avgMultiple}x avg</span>
+                    <span>✅ {intel.snipeWindow.successRate}% 3x rate</span>
+                    <span>📊 {intel.snipeWindow.sampleSize} winners</span>
+                  </div>
+                </div>}
+
+                {/* ── MARKET TEMP DETAIL ── */}
+                {intel?.marketTemp && <div style={{background:`${intel.marketTemp.color}08`,border:`1px solid ${intel.marketTemp.color}25`,borderRadius:6,padding:"8px 10px",marginBottom:8}}>
+                  <div style={{fontSize:9,color:NEON.dimText,letterSpacing:2,fontFamily:"'Orbitron'",marginBottom:4}}>🌡 MARKET TEMPERATURE</div>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+                    <div style={{fontSize:18,color:intel.marketTemp.color,fontWeight:900,fontFamily:"'Orbitron'"}}>{intel.marketTemp.emoji} {intel.marketTemp.label}</div>
+                    <div style={{fontSize:24,color:intel.marketTemp.color,fontWeight:900}}>{intel.marketTemp.score}</div>
+                  </div>
+                  <div style={{width:"100%",height:4,background:"rgba(255,255,255,0.05)",borderRadius:2,marginBottom:6,overflow:"hidden"}}>
+                    <div style={{width:`${intel.marketTemp.score}%`,height:"100%",background:`linear-gradient(90deg,${intel.marketTemp.color}60,${intel.marketTemp.color})`,borderRadius:2,transition:"width 2s ease"}}/>
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:3,fontSize:9,color:NEON.dimText}}>
+                    <span>🌉 {intel.marketTemp.factors.migrations} migrations/hr</span>
+                    <span>✅ {intel.marketTemp.factors.qualRate}% qual rate</span>
+                    <span>🧠 {intel.marketTemp.factors.smartWallets} smart wallets</span>
+                    <span>🔗 {intel.marketTemp.factors.bundleRate} bundles</span>
+                  </div>
+                </div>}
+
+                {/* ── WALLET CLUSTERS ── */}
+                <div style={{marginBottom:8}}>
+                  <div style={{fontSize:9,color:"#bf00ff",letterSpacing:2,fontFamily:"'Orbitron'",marginBottom:4,display:"flex",justifyContent:"space-between"}}>
+                    <span>🕸 WALLET CLUSTERS</span>
+                    <span style={{color:NEON.dimText}}>{intel?.clusters?.length||0} detected</span>
+                  </div>
+                  {(!intel?.clusters?.length) && <div style={{color:NEON.dimText,fontSize:11,textAlign:"center",padding:"10px 0",fontStyle:"italic"}}>Accumulating co-buy data...</div>}
+                  {intel?.clusters?.slice(0,8).map((cl,i) => (
+                    <div key={cl.id} style={{background:cl.isHot?"rgba(191,0,255,0.08)":"rgba(255,255,255,0.02)",
+                      border:`1px solid ${cl.isHot?"rgba(191,0,255,0.4)":"rgba(255,255,255,0.06)"}`,
+                      borderRadius:4,padding:"6px 8px",marginBottom:3}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:5}}>
+                          {cl.isHot && <div style={{width:6,height:6,borderRadius:"50%",background:"#bf00ff",boxShadow:"0 0 6px #bf00ff",animation:"blink 1s infinite"}}/>}
+                          <span style={{fontSize:10,fontWeight:900,color:cl.isHot?"#bf00ff":NEON.dimText}}>{cl.walletCount}w cluster</span>
+                          <span style={{fontSize:8,color:NEON.dimText}}>{cl.cobuys} co-buys · {cl.tokenCount} tokens</span>
+                        </div>
+                        <div style={{fontSize:9,fontWeight:700,color:cl.strength>=60?"#bf00ff":cl.strength>=30?NEON.yellow:NEON.dimText}}>
+                          {cl.strength}%
+                        </div>
+                      </div>
+                      {cl.isHot && <div style={{fontSize:8,color:"rgba(191,0,255,0.6)",marginTop:2}}>
+                        {cl.wallets.slice(0,3).map(w=>w.slice(0,6)).join(', ')}...
+                      </div>}
+                    </div>
+                  ))}
+                </div>
+
+                {/* ── TOP DNA MATCHES ── */}
+                <div>
+                  <div style={{fontSize:9,color:"#00ffff",letterSpacing:2,fontFamily:"'Orbitron'",marginBottom:4}}>🧬 TOP TOKEN DNA MATCHES</div>
+                  {Object.entries(intel?.tokenDNA||{}).filter(([,d])=>d.score>=50).sort((a,b)=>b[1].score-a[1].score).slice(0,5).map(([addr,dna])=>{
+                    const tok = tokens.find(t=>t.addr===addr);
+                    if(!tok) return null;
+                    return(<div key={addr} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 6px",
+                      background:"rgba(0,255,255,0.04)",border:"1px solid rgba(0,255,255,0.08)",borderRadius:4,marginBottom:3,cursor:"pointer"}}
+                      onClick={()=>selectToken(tok)}>
+                      <span style={{fontSize:10,fontWeight:700,color:NEON.text}}>{tok.name}</span>
+                      <div style={{display:"flex",alignItems:"center",gap:6}}>
+                        <span style={{fontSize:9,color:NEON.dimText}}>${(tok.mcap/1000).toFixed(1)}K</span>
+                        <span style={{fontSize:10,fontWeight:900,color:dna.labelColor}}>{dna.score}%</span>
+                      </div>
+                    </div>);
+                  })}
+                </div>
+              </div>}
+
               {rightTab==="STATS"&&<>
                 {(()=>{
                   const ss=live.sessionStats||{};

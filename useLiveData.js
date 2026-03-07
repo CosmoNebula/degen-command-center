@@ -4,7 +4,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { useState, useEffect, useRef } from "react";
-import { connectPumpFun, fetchTokenByAddress, fetchJupiterPrice, fetchTokenMeta, fetchLargestHolders, fetchLatestProfiles, fetchBoostedTokens, connectHeliusWS, fetchRugCheck, fetchGeckoTrending, fetchGeckoPoolByToken, fetchPumpCurveProgress, fetchDefinedTrending, fetchJupiterSlippage, fetchJupiterVerified, fetchPumpFunDirect, fetchRaydiumPool, fetchUniqueSigners } from "./api";
+import { connectPumpFun, fetchTokenByAddress, fetchTokensBatch, fetchTokenMeta, fetchHolderCount, fetchLargestHolders, fetchLatestProfiles, fetchBoostedTokens, connectHeliusWS, fetchRugCheck, fetchGeckoTrending, fetchGeckoPoolByToken, fetchPumpCurveProgress, fetchDefinedTrending, fetchJupiterSlippage, fetchJupiterVerified, fetchPumpFunDirect, fetchRaydiumPool, fetchUniqueSigners } from "./api";
 
 // ─── DIRECT SUPABASE WRITES (no callback chain needed) ───
 const SB_URL = "https://yrmjphhfgduysoftnuxv.supabase.co";
@@ -13,6 +13,12 @@ const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 async function sbUpsertToken(token) {
   if (!token?.addr) return;
   try {
+    // Detect rug: died fast (< 5 min) at low mcap (< 20k), or peak < 5k
+    const lifeMs = token.deathTime ? token.deathTime - (token.timestamp || 0) : null;
+    const isRug = token.alive === false && (
+      (lifeMs && lifeMs < 300000 && (token.peakMcap || 0) < 20000) ||
+      (token.peakMcap || 0) < 3000
+    );
     const r = await fetch(`${SB_URL}/rest/v1/token_history?on_conflict=addr`, {
       method: "POST",
       headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`, "Content-Type": "application/json", Prefer: "resolution=merge-duplicates" },
@@ -24,6 +30,11 @@ async function sbUpsertToken(token) {
         first_seen: token.timestamp || Date.now(),
         graduated: token.migrated || false,
         platform: token.platform || "PumpFun",
+        holders: token.holders || 0,
+        volume: token.vol || 0,
+        deployer: token.deployer || "",
+        rug: isRug,
+        image_uri: token.imageUri || "",
         updated_at: new Date().toISOString(),
       }]),
     });
@@ -52,7 +63,7 @@ async function sbUpsertWallet(addr, ws) {
 }
 
 
-const COIN_COLORS = [
+const _LIVE_COIN_COLORS = [
   { bg: "#ff6b35", fg: "#fff", rim: "#cc5528" },
   { bg: "#00d4aa", fg: "#fff", rim: "#00a885" },
   { bg: "#7c4dff", fg: "#fff", rim: "#6237cc" },
@@ -133,6 +144,16 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
   const raydiumPoolCache = useRef({});      // {mint: {pool, ts}}
   const activityCache = useRef({});         // {mint: {signers, ts}}
 
+  // ─── NEURAL WEB: Flash boards + Signal Scores ───
+  const flashSnapsRef = useRef({});  // addr -> [{time, mcap}] for 30s/1m/5m boards
+  const fastSnapRef = useRef({});    // addr -> [{time, mcap}] from tradeData (5s interval, fills board gaps)
+  const signalScores = useRef({});   // addr -> 0-100 composite signal score
+  const externalBoostRef = useRef({}); // addr -> boost from intel (clusters, DNA) — injected by useIntelligence
+  const [flashBoard30s, setFlashBoard30s] = useState([]);
+  const [flashBoard1m, setFlashBoard1m] = useState([]);
+  const [flashBoard5m, setFlashBoard5m] = useState([]);
+  const [autoSurface, setAutoSurface] = useState([]); // [{addr,name,score,reasons,time}] — tokens that auto-surfaced
+
   // ─── EDGE DETECTION GLOBALS ───
   const globalWallets = useRef(new Set());   // every wallet we've ever seen trade
   const deployerHistory = useRef({});         // { deployer: { launches: N, rugs: N, mints: [] } }
@@ -205,7 +226,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
           warpStartX: Math.random(), warpStartY: Math.random() * 0.2 - 0.1,
           bobOffset: Math.random() * Math.PI * 2,
           initials: name.slice(0, 2).toUpperCase(),
-          coinColor: pick(COIN_COLORS),
+          coinColor: pick(_LIVE_COIN_COLORS),
           timestamp: Date.now(), deployer: newToken.deployer || "",
           imageUri: newToken.imageUri || "",
           jupVerified: jupVerifiedRef.current.has(newToken.mint),
@@ -350,10 +371,11 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
               ws.activeBuys[mint] = { token: _tname, addr: mint, sol: 0, entryMcap: entryMcNow||0, time: now };
             }
             ws.activeBuys[mint].sol += sol;
+            ws.activeBuys[mint].entryMcap = ws.activeBuys[mint].entryMcap || tdMcapUsd(td) || 0;
           }
-          // Compute unrealized loss drag from open holds
+          // Compute unrealized value from open holds (use stored unrealizedPnl field if available)
           const unrealizedPnl = ws ? (ws.trades||[]).filter(tr=>tr.type==="HOLD")
-            .reduce((s,tr)=>s+(tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol)),0) : 0;
+            .reduce((s,tr)=>s+(tr.unrealizedPnl!=null?tr.unrealizedPnl:(tr.pnl!=null?tr.pnl:0)),0) : 0;
           const qualWinCount = ws ? (ws.trades||[]).filter(tr=>tr.type==="WIN").length : 0;
           const qualLossCount = ws ? (ws.trades||[]).filter(tr=>tr.type==="LOSS").length : 0;
           const qualTotal = qualWinCount + qualLossCount;
@@ -978,121 +1000,125 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
       });
     }, 5000);
 
-    // ─── ENRICHMENT: DexScreener + Helius (for qualified tokens) ───
-    const enriched = {};  // { mint: { lastDex: ms, lastHelius: ms, heliusDone: bool } }
+    // ─── ENRICHMENT: DexScreener BATCH ALL + Helius metadata ───
+    // Batch fetches ALL qualified tokens at once vs old 3-per-10s approach
+    const enriched = {};  // { mint: { lastHelius: ms, heliusDone: bool } }
     const dexInterval = setInterval(async () => {
       const now = Date.now();
-      // Find qualified tokens that need DexScreener data (not enriched in last 30s)
-      const needsEnrich = [];
-      tokensRef.current.forEach(t => {
-        if (!t.qualified || !t.addr) return;
-        const e = enriched[t.addr];
-        if (!e) { enriched[t.addr] = { lastDex: 0, lastHelius: 0, heliusDone: false }; }
-        if (now - (enriched[t.addr]?.lastDex || 0) > 30000) {
-          needsEnrich.push(t.addr);
-        }
-      });
 
-      // DexScreener: up to 3 tokens per cycle
-      const batch = needsEnrich.slice(0, 3);
-      for (const mint of batch) {
+      // ── DEXSCREENER BATCH: ALL qualified alive tokens in one call ──
+      const allQualified = tokensRef.current
+        .filter(t => t.qualified && t.addr && t.alive)
+        .map(t => t.addr);
+
+      if (allQualified.length > 0) {
         try {
-          const dex = await fetchTokenByAddress(mint);
-          if (!dex) continue;
-          enriched[mint].lastDex = now;
-          const td = tradeData.current[mint];
+          const results = await fetchTokensBatch(allQualified); // up to 30 per call
+          const updatedAddrs = Object.keys(results);
 
-          setTokens(prev => prev.map(t => {
-            if (t.addr !== mint) return t;
-            return {
-              ...t,
-              // DexScreener gives us real liquidity, mcap, volume, image
-              liquidity: dex.liquidity || t.liquidity,
-              mcap: dex.mcap > 0 ? dex.mcap : t.mcap,
-              vol: dex.vol > 0 ? Math.max(t.vol, dex.vol) : t.vol,
-              priceUsd: dex.priceUsd || t.priceUsd,
-              imageUri: dex.imageUrl || t.imageUri,
-              dexPlatform: dex.platform || t.platform,
-              dexEnriched: true,
-            };
-          }));
-          // Update tradeData mcap from DexScreener (more accurate than PumpFun estimate)
-          if (td && dex.mcap > 0) {
-            // ─── AUTO-CALIBRATE: compare PumpPortal FDV vs DexScreener real mcap ───
-            if (td.mcapSource === "pp" && td.lastMcapSol > 0) {
-              const ppMcapUsd = td.lastMcapSol * SOL_USD; // raw PumpPortal value, no correction
-              const ratio = dex.mcap / ppMcapUsd;
-              if (ratio > 0.1 && ratio < 2.0) { // sanity check
-                mcapSamples.push(ratio);
-                if (mcapSamples.length > 30) mcapSamples.shift();
-                // Median of recent samples
-                const sorted = [...mcapSamples].sort((a, b) => a - b);
-                const newCorr = sorted[Math.floor(sorted.length / 2)];
-                if (Math.abs(newCorr - MCAP_CORRECTION) > 0.02) {
-                  MCAP_CORRECTION = newCorr;
-                  console.log(`[MCAP] 🔧 Correction updated: ${MCAP_CORRECTION.toFixed(3)} (${mcapSamples.length} samples) — PP:$${ppMcapUsd.toFixed(0)} vs DEX:$${dex.mcap.toFixed(0)}`);
+          if (updatedAddrs.length > 0) {
+            // Flash snap + mcap calibration for all returned tokens
+            updatedAddrs.forEach(addr => {
+              const dex = results[addr];
+              if (!dex?.mcap || dex.mcap <= 0) return;
+              // Flash snapshots for 30s/1m boards
+              if (!flashSnapsRef.current[addr]) flashSnapsRef.current[addr] = [];
+              flashSnapsRef.current[addr].push({ time: now, mcap: dex.mcap });
+              flashSnapsRef.current[addr] = flashSnapsRef.current[addr].filter(s => now - s.time < 90000);
+              // Auto-calibrate MCAP_CORRECTION
+              const td = tradeData.current[addr];
+              if (td) {
+                if (td.mcapSource === "pp" && td.lastMcapSol > 0) {
+                  const ppMcapUsd = td.lastMcapSol * SOL_USD;
+                  const ratio = dex.mcap / ppMcapUsd;
+                  if (ratio > 0.1 && ratio < 2.0) {
+                    mcapSamples.push(ratio);
+                    if (mcapSamples.length > 30) mcapSamples.shift();
+                    const sorted = [...mcapSamples].sort((a, b) => a - b);
+                    const newCorr = sorted[Math.floor(sorted.length / 2)];
+                    if (Math.abs(newCorr - MCAP_CORRECTION) > 0.02) {
+                      MCAP_CORRECTION = newCorr;
+                      console.log(`[MCAP] 🔧 Correction: ${MCAP_CORRECTION.toFixed(3)}`);
+                    }
+                  }
                 }
+                td.lastMcapSol = dex.mcap / SOL_USD;
+                td.mcapSource = "dex";
               }
-            }
-            td.lastMcapSol = dex.mcap / SOL_USD;
-            td.mcapSource = "dex";
+            });
+
+            // Batch update all tokens at once
+            setTokens(prev => {
+              let changed = false;
+              const updated = prev.map(t => {
+                const dex = results[t.addr];
+                if (!dex) return t;
+                changed = true;
+                return {
+                  ...t,
+                  liquidity: dex.liquidity || t.liquidity,
+                  mcap: dex.mcap > 0 ? dex.mcap : t.mcap,
+                  vol: dex.vol > 0 ? dex.vol : t.vol,
+                  priceUsd: dex.priceUsd || t.priceUsd,
+                  imageUri: dex.imageUrl || t.imageUri,
+                  dexPlatform: dex.platform || t.platform,
+                  priceChange5m: dex.priceChange5m !== 0 ? dex.priceChange5m : t.priceChange5m,
+                  priceChange1h: dex.priceChange1h !== 0 ? dex.priceChange1h : t.priceChange1h,
+                  dexEnriched: true,
+                };
+              });
+              return changed ? updated : prev;
+            });
+            console.log(`[DEX] ⚡ BRAIN PULSE — ${updatedAddrs.length}/${allQualified.length} tokens refreshed`);
           }
-          console.log(`[DEX] ✅ ${mint.slice(0, 8)} — mcap:$${dex.mcap?.toFixed(0)} liq:$${dex.liquidity?.toFixed(0)} vol:$${dex.vol?.toFixed(0)}`);
         } catch (e) {
-          console.warn(`[DEX] ❌ ${mint.slice(0, 8)}`, e.message);
+          console.warn('[DEX] Batch failed:', e.message);
         }
       }
 
-      // Helius: check on-chain metadata once per token
-      for (const mint of batch) {
-        if (enriched[mint]?.heliusDone) continue;
+      // ── HELIUS: on-chain metadata, 3 per cycle, retry every 30s ──
+      const heliusBatch = tokensRef.current
+        .filter(t => t.qualified && t.addr)
+        .filter(t => !enriched[t.addr]?.heliusDone || (now - (enriched[t.addr]?.lastHelius || 0)) > 30000)
+        .slice(0, 3)
+        .map(t => t.addr);
+
+      for (const mint of heliusBatch) {
+        if (!enriched[mint]) enriched[mint] = { lastHelius: 0, heliusDone: false };
         try {
-          const [meta, holders] = await Promise.all([
+          const [meta, largest, count] = await Promise.all([
             fetchTokenMeta(mint),
             fetchLargestHolders(mint),
+            fetchHolderCount(mint),
           ]);
           enriched[mint].heliusDone = true;
           enriched[mint].lastHelius = now;
-
-          if (meta || holders) {
+          const realHolders = count || meta?.holderCount || 0;
+          if (meta || realHolders > 0) {
             setTokens(prev => prev.map(t => {
               if (t.addr !== mint) return t;
               return {
                 ...t,
                 mintAuth: meta?.mintAuth || false,
                 frozen: meta?.frozen || false,
-                holders: holders?.holderCount > t.holders ? holders.holderCount : t.holders,
-                topHolderPct: holders?.topHolderPct > 0 ? Math.round(holders.topHolderPct) : t.topHolderPct,
+                holders: realHolders > 0 ? realHolders : t.holders,
+                topHolderPct: largest?.topHolderPct > 0 ? Math.round(largest.topHolderPct) : t.topHolderPct,
                 heliusEnriched: true,
               };
             }));
-            console.log(`[HELIUS] ✅ ${mint.slice(0, 8)} — mintAuth:${meta?.mintAuth} holders:${holders?.holderCount} top10:${holders?.topHolderPct?.toFixed(1)}%`);
+            console.log(`[HELIUS] ✅ ${mint.slice(0, 8)} — holders:${realHolders} top10:${largest?.topHolderPct?.toFixed(1)}%`);
           }
         } catch (e) {
-          enriched[mint].heliusDone = true; // don't retry on failure
+          enriched[mint].heliusDone = true;
+          enriched[mint].lastHelius = now;
           console.warn(`[HELIUS] ❌ ${mint.slice(0, 8)}`, e.message);
         }
       }
-    }, 10000);
+    }, 8000);
 
-    // ─── SOL PRICE: Keep USD conversion accurate ───
+    // ─── SOL PRICE: DexScreener only (Jupiter API deprecated/auth required) ───
     const SOL_MINT = "So11111111111111111111111111111111111111112";
     const fetchSolPrice = async () => {
-      // Try Jupiter first
-      try {
-        const prices = await fetchJupiterPrice(SOL_MINT);
-        const p = prices[SOL_MINT];
-        if (p && p.price) {
-          const newPrice = parseFloat(p.price);
-          if (newPrice > 10 && newPrice < 1000) {
-            SOL_USD = newPrice;
-            console.log(`[SOL] ✅ Jupiter: $${SOL_USD.toFixed(2)} | MCAP corr: ${MCAP_CORRECTION.toFixed(3)} (${mcapSamples.length} samples)`);
-            return;
-          }
-        }
-        console.warn("[SOL] Jupiter returned no price, trying DexScreener...");
-      } catch (e) { console.warn("[SOL] Jupiter failed:", e.message); }
-      // Fallback: DexScreener SOL/USDC pair
       try {
         const res = await fetch("https://api.dexscreener.com/tokens/v1/solana/So11111111111111111111111111111111111111112");
         const data = await res.json();
@@ -1101,49 +1127,13 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
           const newPrice = parseFloat(pair.priceUsd);
           if (newPrice > 10 && newPrice < 1000) {
             SOL_USD = newPrice;
-            console.log(`[SOL] ✅ DexScreener fallback: $${SOL_USD.toFixed(2)}`);
             return;
           }
         }
-      } catch (e2) { console.warn("[SOL] DexScreener fallback also failed:", e2.message); }
-      console.warn(`[SOL] ⚠ Using default: $${SOL_USD}`);
+      } catch (e) { console.warn("[SOL] DexScreener failed:", e.message); }
     };
     fetchSolPrice(); // immediate
     const solPriceInterval = setInterval(fetchSolPrice, 30000); // every 30s
-
-    // ─── JUPITER: Batch price updates for all qualified tokens ───
-    const jupInterval = setInterval(async () => {
-      const mints = [];
-      tokensRef.current.forEach(t => { if (t.qualified && t.addr) mints.push(t.addr); });
-      if (mints.length === 0) return;
-
-      // Jupiter supports up to 100 comma-separated IDs
-      const batchMints = mints.slice(0, 50);
-      try {
-        const prices = await fetchJupiterPrice(batchMints);
-        if (!prices || Object.keys(prices).length === 0) return;
-
-        setTokens(prev => prev.map(t => {
-          const p = prices[t.addr];
-          if (!p || !p.price) return t;
-          const jupPrice = parseFloat(p.price);
-          // Update mcap from Jupiter price (most accurate)
-          const td = tradeData.current[t.addr];
-          const supply = td?.supply || 1000000000; // default 1B supply
-          const jupMcap = jupPrice * supply;
-          return {
-            ...t,
-            priceUsd: jupPrice,
-            // Only use Jupiter mcap if it seems reasonable (not 0 or astronomical)
-            mcap: jupMcap > 100 && jupMcap < 100000000 ? jupMcap : t.mcap,
-            jupEnriched: true,
-          };
-        }));
-        console.log(`[JUP] ✅ Priced ${Object.keys(prices).length}/${batchMints.length} tokens`);
-      } catch (e) {
-        console.warn("[JUP] ❌", e.message);
-      }
-    }, 15000);
 
     // ─── FALLBACK MIGRATION DETECTION: catch tokens PumpPortal missed ───
     // If a token has high mcap and goes silent, check DexScreener for Raydium pair
@@ -1241,13 +1231,12 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
       const id = mintToId.current[mint];
       if (!id) return;
 
-      // Instant Jupiter price fetch
+      // Instant DexScreener price fetch on swap event
       try {
-        const jupData = await fetchJupiterPrice([mint]);
-        const jp = jupData[mint];
-        if (!jp || !jp.price) return;
-        const priceUsd = parseFloat(jp.price);
-        const jupMcap = priceUsd * PUMP_SUPPLY;
+        const dex = await fetchTokenByAddress(mint);
+        if (!dex || !dex.mcap) return;
+        const jupMcap = dex.mcap;
+        const priceUsd = dex.priceUsd || 0;
 
         const td = tradeData.current[mint];
         if (td) { td.lastTradeTime = Date.now(); td.lastMcapSol = jupMcap / SOL_USD; }
@@ -1260,10 +1249,8 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
         setMigrations(prev => prev.map(m => m.mint === mint ? {
           ...m, curMcap: jupMcap, curPrice: priceUsd, lastDexUpdate: Date.now(),
         } : m));
-
-        console.log(`[HELIUS-WS] ⚡ ${mint.slice(0, 8)} swap → $${priceUsd.toFixed(8)} ($${formatNum(jupMcap)} mcap)`);
       } catch (e) {
-        console.warn("[HELIUS-WS] Jupiter fetch failed:", e.message);
+        console.warn("[HELIUS-WS] DexScreener fetch failed:", e.message);
       }
     });
     heliusWsRef.current = heliusWs;
@@ -1275,174 +1262,208 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
 
     // ─── MIGRATED TOKEN FALLBACK POLLING: DexScreener for vol/buys/sells + Helius holders ───
     let migratedLastSeen = {};
-    let migratedPollCycle = 0;
+    let migratedHolderCycle = 0;
 
+    // === BATCH 2s poll: all migrated tokens in ONE DexScreener request ===
     const migratedInterval = setInterval(async () => {
       const mints = [...migratedMints.current];
       if (mints.length === 0) return;
-
       const curTokens = tokensRef.current;
       const now = Date.now();
-      const toPoll = mints.slice(0, 8).map(mint => ({
-        addr: mint,
-        id: mintToId.current[mint] || null,
+
+      const toPoll = mints.map(mint => ({
+        addr: mint, id: mintToId.current[mint] || null,
       })).filter(m => {
         if (!m.id) return false;
         const live = curTokens.find(t => t.id === m.id);
         if (live) { migratedLastSeen[m.addr] = now; return true; }
         const lastSeen = migratedLastSeen[m.addr] || now;
         migratedLastSeen[m.addr] = migratedLastSeen[m.addr] || now;
-        const goneSec = (now - lastSeen) / 1000;
-        if (goneSec > 300) { migratedMints.current.delete(m.addr); delete migratedLastSeen[m.addr]; return false; }
+        if ((now - lastSeen) / 1000 > 300) { migratedMints.current.delete(m.addr); delete migratedLastSeen[m.addr]; return false; }
         return true;
       });
 
       if (toPoll.length === 0) return;
-      migratedPollCycle++;
 
-      // === JUPITER PRICE FALLBACK: only if Helius WS hasn't updated in 10s ===
-      if (migratedPollCycle % 2 === 0) {
-        const now2 = Date.now();
-        const staleTokens = toPoll.filter(mt => !lastWsPrice[mt.addr] || now2 - lastWsPrice[mt.addr] > 10000);
-        if (staleTokens.length > 0) {
-          try {
-            const jupAddrs = staleTokens.map(m => m.addr);
-            const jupData = await fetchJupiterPrice(jupAddrs);
-            for (const mt of staleTokens) {
-              const jp = jupData[mt.addr];
-              if (!jp || !jp.price) continue;
-              const priceUsd = parseFloat(jp.price);
-              const jupMcap = priceUsd * PUMP_SUPPLY;
-
+      // One batch request for ALL migrated tokens — much cheaper than N sequential calls
+      try {
+        const results = await fetchTokensBatch(toPoll.map(m => m.addr));
+        toPoll.forEach(mt => {
+          const dex = results[mt.addr];
+          if (!dex) return;
           const td = tradeData.current[mt.addr];
-          if (td) { td.lastTradeTime = now; td.lastMcapSol = jupMcap / SOL_USD; }
-
+          if (td) {
+            td.lastTradeTime = now;
+            if (dex.mcap) { td.lastMcapSol = dex.mcap / SOL_USD; td.mcapSource = "dex"; }
+            if (dex.buys >= 0) td.buys = dex.buys;
+            if (dex.sells >= 0) td.sells = dex.sells;
+          }
           setTokens(prev => prev.map(t => t.id === mt.id ? {
-            ...t, mcap: jupMcap, priceUsd: priceUsd,
-            health: jupMcap > 10000 ? Math.max(t.health, 50) : t.health,
+            ...t,
+            mcap: dex.mcap || t.mcap,
+            vol: dex.vol != null ? dex.vol : t.vol,
+            buys: dex.buys != null ? dex.buys : t.buys,
+            sells: dex.sells != null ? dex.sells : t.sells,
+            liquidity: dex.liquidity != null ? dex.liquidity : t.liquidity,
+            dexEnriched: true,
           } : t));
-
           setMigrations(prev => prev.map(m => m.mint === mt.addr ? {
-            ...m, curMcap: jupMcap, curPrice: priceUsd, lastDexUpdate: now,
+            ...m,
+            curMcap: dex.mcap || m.curMcap,
+            curVol: dex.vol || m.curVol,
+            curBuys: dex.buys != null ? dex.buys : m.curBuys,
+            curSells: dex.sells != null ? dex.sells : m.curSells,
+            curLiquidity: dex.liquidity || m.curLiquidity,
+            lastDexUpdate: now,
           } : m));
+        });
+      } catch(e) { console.warn("[MIGRATED-BATCH]", e.message); }
 
-          console.log("[MIGRATED-JUP] \u26A1 " + mt.addr.slice(0, 8) + " \u2192 $" + priceUsd.toFixed(8) + " ($" + formatNum(jupMcap) + " mcap) [FALLBACK]");
-        }
-          } catch (e) {
-            console.warn("[MIGRATED-JUP] fallback price failed:", e.message);
-          }
-        }
-      }
-
-      // === DEXSCREENER: every 3rd cycle (vol, buys, sells, liquidity) ===
-      if (migratedPollCycle % 3 === 0) {
-        for (const mt of toPoll) {
+      // Helius real holder count every 30s (every 15th cycle at 2s)
+      migratedHolderCycle++;
+      if (migratedHolderCycle % 15 === 0) {
+        for (const mt of toPoll.slice(0, 10)) { // was 3 — all migrated tokens need holder updates
           try {
-            const dex = await fetchTokenByAddress(mt.addr);
-            if (!dex) continue;
-
-            const td = tradeData.current[mt.addr];
-            if (td) {
-              td.lastTradeTime = now;
-              if (dex.mcap) { td.lastMcapSol = dex.mcap / SOL_USD; td.mcapSource = "dex"; }
-              if (dex.buys > (td.buys || 0)) td.buys = dex.buys;
-              if (dex.sells > (td.sells || 0)) td.sells = dex.sells;
+            const [count, largest] = await Promise.all([
+              fetchHolderCount(mt.addr),
+              fetchLargestHolders(mt.addr),
+            ]);
+            const holderCount = count || 0;
+            const topPct = largest?.topHolderPct || 0;
+            if (holderCount > 0) {
+              setTokens(prev => prev.map(t => t.id === mt.id ? {
+                ...t, holders: holderCount, topHolderPct: topPct,
+              } : t));
+              setMigrations(prev => prev.map(m => m.mint === mt.addr ? {
+                ...m, curHolders: holderCount, lastDexUpdate: now,
+              } : m));
             }
-
-            setTokens(prev => prev.map(t => t.id === mt.id ? {
-              ...t,
-              mcap: dex.mcap || t.mcap,
-              vol: dex.vol != null ? dex.vol : t.vol,
-              buys: dex.buys != null ? dex.buys : t.buys,
-              sells: dex.sells != null ? dex.sells : t.sells,
-              holders: dex.holders != null ? dex.holders : t.holders,
-              liquidity: dex.liquidity != null ? dex.liquidity : t.liquidity,
-              dexEnriched: true,
-            } : t));
-
-            setMigrations(prev => prev.map(m => m.mint === mt.addr ? {
-              ...m,
-              curMcap: dex.mcap || m.curMcap,
-              curVol: dex.vol || m.curVol,
-              curBuys: dex.buys != null ? dex.buys : m.curBuys,
-              curSells: dex.sells != null ? dex.sells : m.curSells,
-              curHolders: dex.holders || m.curHolders,
-              curLiquidity: dex.liquidity || m.curLiquidity,
-              lastDexUpdate: now,
-            } : m));
-
-            console.log("[MIGRATED-DEX] \uD83D\uDCCA " + mt.addr.slice(0, 8) + " \u2192 $" + formatNum(dex.mcap) + " mcap, " + dex.buys + "b/" + dex.sells + "s liq:$" + formatNum(dex.liquidity));
-          } catch (e) {
-            console.warn("[MIGRATED-DEX] fetch failed:", e.message);
-          }
+          } catch(e) { /* skip */ }
         }
       }
+    }, 2000);
 
-      // === HELIUS HOLDERS: every 6th cycle (~30s) ===
-      if (migratedPollCycle % 6 === 0) {
-        for (const mt of toPoll.slice(0, 3)) {
-          try {
-            const h = await fetchLargestHolders(mt.addr);
-            if (!h || h.holderCount === 0) continue;
-
-            setTokens(prev => prev.map(t => t.id === mt.id ? {
-              ...t,
-              holders: Math.max(t.holders || 0, h.holderCount),
-              topHolderPct: h.topHolderPct || t.topHolderPct,
-            } : t));
-
-            setMigrations(prev => prev.map(m => m.mint === mt.addr ? {
-              ...m, curHolders: Math.max(m.curHolders || 0, h.holderCount), lastDexUpdate: now,
-            } : m));
-
-            console.log("[MIGRATED-HEL] \uD83D\uDC65 " + mt.addr.slice(0, 8) + " \u2192 " + h.holderCount + " holders, top10: " + h.topHolderPct.toFixed(1) + "%");
-          } catch (e) {
-            console.warn("[MIGRATED-HEL] holders failed:", e.message);
-          }
-        }
-      }
-    }, 5000);
-
-    // ─── DEAD FIELD CHECK: Verify DB-hydrated + stale tokens every 2 mins ───
+    // ─── HOLDING BAY AUDIT: fast scan — release alive coins, nuke dead ones ────
+    // Runs every 20s. Rotates through parked tokens in batches of 5 to avoid rate limits.
+    let bayAuditCursor = 0;
     const deadCheckInterval = setInterval(async () => {
       const now = Date.now();
-      const candidates = tokensRef.current.filter(t => {
-        if (!t.alive) return false;
+
+      // Collect all parked tokens + stale unparked
+      const parked = tokensRef.current.filter(t => t.alive && t.parked);
+      const staleUnparked = tokensRef.current.filter(t => {
+        if (!t.alive || t.parked) return false;
         const td = tradeData.current[t.addr];
-        const lastTrade = td?.lastTradeTime || t.timestamp;
-        const silentMs = now - lastTrade;
-        // Check DB tokens after 3 mins silence, live tokens after 8 mins
-        return t.fromDB ? silentMs > 180000 : (silentMs > 480000 && t.qualified);
-      }).slice(0, 5); // max 5 at a time
+        const silentMs = now - (td?.lastTradeTime || t.timestamp);
+        return t.fromDB ? silentMs > 300000 : (silentMs > 480000 && t.qualified);
+      });
 
-      for (const t of candidates) {
-        try {
-          const res = await fetch(`https://api.dexscreener.com/tokens/v1/solana/${t.addr}`);
-          const data = await res.json();
-          const pair = data?.pairs?.[0] || (Array.isArray(data) ? data[0] : null);
-          const liveMcap = pair?.marketCap || pair?.fdv || 0;
+      const allCandidates = [...parked, ...staleUnparked];
+      if (!allCandidates.length) return;
+
+      // Rotate cursor so every token gets scanned even if bay is large
+      if (bayAuditCursor >= allCandidates.length) bayAuditCursor = 0;
+      const toAudit = allCandidates.slice(bayAuditCursor, bayAuditCursor + 5);
+      bayAuditCursor += 5;
+
+      console.log(`[BAY] 🔍 Scanning ${toAudit.length}/${allCandidates.length} (${parked.length} docked, cursor ${bayAuditCursor})`);
+
+      try {
+        const results = await fetchTokensBatch(toAudit.map(t => t.addr));
+
+        for (const t of toAudit) {
+          const dex = results[t.addr];
+          const liveMcap = dex?.mcap || 0;
           const peakMcap = t.peakMcap || t.mcap || 0;
-          const isDead = !pair || liveMcap < 1000 || (peakMcap > 5000 && liveMcap < peakMcap * 0.12);
+          const platform = dex?.platform || 'unknown';
+          const timeParked = now - (t.parkedAt || now);
 
-          if (isDead) {
-            console.log(`[DEADCHECK] 💀 ${t.name} — no activity, mcap $${liveMcap?.toFixed(0)||0} (peak $${peakMcap?.toFixed(0)}) — removing`);
+          // ── PRE-MIGRATION tokens ──
+          if (t._preMig) {
+            const scanCount = (t._bayScans || 0) + 1;
+            // Migrated: platform changed away from pump.fun OR mcap jumped above $80K (graduated)
+            const platformMigrated = dex && platform !== 'pump.fun' && platform !== 'unknown' && liveMcap > 0;
+            const mcapMigrated = liveMcap > 80000; // blew past bonding ceiling — it graduated
+            const hasMigrated = platformMigrated || mcapMigrated;
+            // Dead: mcap collapsed below $5K while in bay
+            const bayDead = dex && liveMcap > 0 && liveMcap < 5000;
+            if (hasMigrated) {
+              const why = mcapMigrated ? `mcap $${(liveMcap/1000).toFixed(0)}K (graduated)` : `platform → ${platform}`;
+              console.log(`[BAY] 🎓 ${t.name} MIGRATED — ${why} — removing`);
+              setTokens(prev => prev.map(tok => tok.addr === t.addr ? { ...tok, alive: false, health: 0, deathTime: now } : tok));
+              if (onUpsertTokenRef.current) sbUpsertToken({ ...t, alive: false, mcap: liveMcap, peakMcap });
+            } else if (bayDead || scanCount >= 4) {
+              const why = bayDead ? `collapsed $${liveMcap.toFixed(0)}` : `stuck after ${scanCount} scans`;
+              console.log(`[BAY] 🪲 ${t.name} purged — ${why}`);
+              setTokens(prev => prev.map(tok => tok.addr === t.addr ? { ...tok, alive: false, health: 0, deathTime: now } : tok));
+            } else {
+              // Still waiting — update mcap, check if it's actually moving again (re-release)
+              const isMovingAgain = liveMcap > 0 && liveMcap < 28000; // fell back below bonding zone — release to field
+              if (isMovingAgain) {
+                console.log(`[BAY] 🔄 ${t.name} fell below bonding zone $${(liveMcap/1000).toFixed(1)}K — releasing`);
+                setTokens(prev => prev.map(tok => tok.addr === t.addr ? { ...tok, mcap: liveMcap, parked: false, bunkerX: null, bunkerY: null, _preMig: false, _bayScans: 0 } : tok));
+                const tRef = tokensRef.current.find(r => r.addr === t.addr);
+                if (tRef) { tRef.parked = false; tRef.bunkerX = null; tRef.bunkerY = null; tRef._preMig = false; tRef._bayScans = 0; }
+              } else {
+                console.log(`[BAY] ⏳ ${t.name} pre-mig scan ${scanCount} — $${(liveMcap/1000).toFixed(1)}K`);
+                setTokens(prev => prev.map(tok => tok.addr === t.addr ? { ...tok, mcap: liveMcap || tok.mcap, _bayScans: scanCount } : tok));
+                const tRef = tokensRef.current.find(r => r.addr === t.addr);
+                if (tRef) tRef._bayScans = scanCount;
+              }
+            }
+            continue;
+          }
+
+          // ── NORMAL docked token ──
+          // Dead: no data, mcap < $800, cratered >92% from peak, OR docked 8min+ and down >80%
+          const isDead = !dex || liveMcap < 800 || (peakMcap > 3000 && liveMcap < peakMcap * 0.08);
+          const bayDecay = t.parked && timeParked > 480000 && peakMcap > 5000 && liveMcap < peakMcap * 0.20;
+
+          if (isDead || bayDecay) {
+            const reason = bayDecay ? `bay decay ${((liveMcap/peakMcap)*100).toFixed(0)}% of peak` : `dead $${liveMcap.toFixed(0)}`;
+            console.log(`[BAY] 💀 ${t.name} evicted — ${reason}`);
             setTokens(prev => prev.map(tok => tok.addr === t.addr ? { ...tok, alive: false, health: 0, deathTime: now } : tok));
             if (onUpsertTokenRef.current) sbUpsertToken({ ...t, alive: false, mcap: liveMcap, peakMcap });
-          } else if (liveMcap > 0 && Math.abs(liveMcap - t.mcap) / (t.mcap || 1) > 0.05) {
-            // Still alive but mcap changed — update position + DB
+            continue;
+          }
+
+          if (liveMcap > 0) {
+            // Release conditions (any one triggers return to field):
+            // 1. Pumping hard (>10% gain since parked)
+            // 2. Still healthy mcap (>50% of peak) and been docked >2min — give it another shot
+            // 3. High mcap token ($40K+) that hasn't cratered — always worth showing
+            const prevMcap = t.mcap || 0;
+            const pumping = liveMcap > prevMcap * 1.10;
+            const stillHealthy = liveMcap > peakMcap * 0.50 && timeParked > 120000;
+            const highValue = liveMcap >= 40000 && liveMcap > peakMcap * 0.30;
+            const shouldRelease = t.parked && (pumping || stillHealthy || highValue);
+
             const zz=[[5000,0.95],[10000,0.63],[20000,0.47],[50000,0.32],[100000,0.20],[300000,0.10]];
             let targetY=0.95;
             if(liveMcap>=300000)targetY=0.08;
             else{for(let i=0;i<zz.length-1;i++){if(liveMcap>=zz[i][0]&&liveMcap<zz[i+1][0]){const pct=(liveMcap-zz[i][0])/(zz[i+1][0]-zz[i][0]);targetY=zz[i][1]+(zz[i+1][1]-zz[i][1])*pct;break;}}}
+
+            if (shouldRelease) {
+              const why = pumping ? `📈 pumping +${(((liveMcap/prevMcap)-1)*100).toFixed(0)}%` : stillHealthy ? `💚 still healthy` : `💰 high value`;
+              console.log(`[BAY] 🔄 ${t.name} RELEASED — ${why} $${(liveMcap/1000).toFixed(1)}K`);
+            }
+
             setTokens(prev => prev.map(tok => tok.addr === t.addr ? {
               ...tok, mcap: liveMcap, targetY,
               peakMcap: Math.max(tok.peakMcap || 0, liveMcap),
+              ...(shouldRelease ? { parked: false, bunkerX: null, bunkerY: null, _preMig: false, _bayScans: 0, by: targetY, bx: 0.08 + Math.random() * 0.75 } : {}),
             } : tok));
+
+            // Also update ref for immediate canvas loop effect
+            if (shouldRelease) {
+              const tRef = tokensRef.current.find(r => r.addr === t.addr);
+              if (tRef) { tRef.parked = false; tRef.bunkerX = null; tRef.bunkerY = null; tRef._preMig = false; tRef._bayScans = 0; }
+            }
             if (onUpsertTokenRef.current) sbUpsertToken({ ...t, mcap: liveMcap, peakMcap: Math.max(peakMcap, liveMcap), alive: true });
           }
-        } catch(e) { /* network err, skip */ }
-      }
-    }, 120000); // every 2 mins
+        }
+      } catch(e) { console.warn('[BAY] Audit failed:', e.message); }
+    }, 20000); // every 20s — rotates through all docked tokens
 
     return () => {
       if (typeof pf === 'function') pf();
@@ -1450,7 +1471,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
       if (heliusWs) heliusWs.cleanup();
       clearInterval(qualInterval);
       clearInterval(dexInterval);
-      clearInterval(jupInterval);
+      // jupInterval removed - Jupiter API deprecated
       clearInterval(solPriceInterval);
       clearInterval(migratedInterval);
       clearInterval(migFallbackInterval);
@@ -1530,7 +1551,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
               warpStartX: Math.random(), warpStartY: Math.random() * 0.2 - 0.1,
               bobOffset: Math.random() * Math.PI * 2,
               initials: name.slice(0, 2).toUpperCase(),
-              coinColor: pick(COIN_COLORS),
+              coinColor: pick(_LIVE_COIN_COLORS),
               timestamp: Date.now(), deployer: "",
               imageUri: pair.info?.imageUrl || "",
             };
@@ -1643,12 +1664,15 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
     const iv = setInterval(async () => {
       cycle++;
       const cur = tokensRef.current;
-      // Get qualified PumpFun tokens that haven't migrated yet
+      // Get qualified tokens — including migrated (SolanaTracker returns real holder count for both)
       const pumpTokens = cur.filter(t =>
-        t.alive && t.qualified && !t.migrated && t.platform === "PumpFun"
-      ).slice(0, 4); // max 4 per cycle to avoid rate limits
+        t.alive && t.qualified
+      );
+      // Sort: migrated tokens first (need holders most urgently), then by recency
+      pumpTokens.sort((a, b) => (b.migrated ? 1 : 0) - (a.migrated ? 1 : 0));
+      const pumpBatch = pumpTokens.slice(0, 8); // max 8 per cycle (was 4)
 
-      for (const t of pumpTokens) {
+      for (const t of pumpBatch) {
         // Skip if cached less than 15s ago
         const cached = curveProgressCache.current[t.addr];
         if (cached && Date.now() - cached.ts < 15000) continue;
@@ -1660,15 +1684,18 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
 
           setTokens(prev => prev.map(tok => tok.addr === t.addr ? {
             ...tok,
-            // Only set bondingPct from SolanaTracker if PumpFun Direct hasn't already set it
-            // PumpFun Direct reads actual on-chain reserves (accurate), SolanaTracker estimates from mcap (rough)
             bondingPct: tok.realSolReserves ? tok.bondingPct : st.bondingCurvePct,
             stVol1h: st.vol1h,
             stPriceChange5m: st.priceChange5m,
             stPriceChange1h: st.priceChange1h,
-            stHolders: st.holders > (tok.holders || 0) ? st.holders : tok.holders,
+            holders: st.holders > 0 ? st.holders : tok.holders,
             stLiquidity: st.liquidityUsd,
           } : tok));
+
+          // Persist real holder count to Supabase so leaderboard stays accurate
+          if (st.holders > 0 && onUpsertTokenRef.current) {
+            sbUpsertToken({ addr: t.addr, name: t.name, holders: st.holders });
+          }
 
           // Alert when token is close to migration (>80% bonding)
           const effectivePct = t.realSolReserves ? t.bondingPct : st.bondingCurvePct;
@@ -1689,9 +1716,15 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
         }
       }
 
-      // ─── GECKO POOL ENRICHMENT for migrated tokens (every 3rd cycle ~30s) ───
-      if (cycle % 3 === 0) {
-        const migrated = cur.filter(t => t.alive && t.migrated).slice(0, 3);
+      // ─── GECKO POOL ENRICHMENT — rotating window covers ALL migrated tokens ───
+      if (cycle % 2 === 0) {
+        const allMig = cur.filter(t => t.alive && t.migrated);
+        const batchSize = 5;
+        const offset = Math.floor(cycle / 2) * batchSize % Math.max(1, allMig.length);
+        const migrated = allMig.length <= batchSize
+          ? allMig
+          : [...allMig.slice(offset, offset + batchSize),
+             ...allMig.slice(0, Math.max(0, (offset + batchSize) - allMig.length))].slice(0, batchSize);
         for (const t of migrated) {
           try {
             const gp = await fetchGeckoPoolByToken(t.addr);
@@ -1794,11 +1827,13 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
       }
 
       // === RAYDIUM POOL DATA: reserves + LP burn for migrated tokens ===
-      if (deepCycle % 4 === 0) {
-        const migrated = cur.filter(t =>
+      if (deepCycle % 3 === 0) {
+        const allMigRay = cur.filter(t =>
           t.alive && t.migrated &&
-          (!raydiumPoolCache.current[t.addr] || now - raydiumPoolCache.current[t.addr].ts > 30000)
-        ).slice(0, 2);
+          (!raydiumPoolCache.current[t.addr] || now - raydiumPoolCache.current[t.addr].ts > 25000)
+        );
+        const rayOffset = Math.floor(deepCycle / 3) * 3 % Math.max(1, allMigRay.length);
+        const migrated = allMigRay.slice(rayOffset, rayOffset + 3);
 
         for (const t of migrated) {
           try {
@@ -1828,11 +1863,13 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
       }
 
       // === JUPITER SLIPPAGE: liquidity depth check for locked/qualified tokens ===
-      if (deepCycle % 5 === 0) {
-        const toCheck = cur.filter(t =>
+      if (deepCycle % 4 === 0) {
+        const slipCandidates = cur.filter(t =>
           t.alive && t.qualified && t.mcap > 15000 &&
-          (!slippageCache.current[t.addr] || now - slippageCache.current[t.addr].ts > 60000)
-        ).slice(0, 2);
+          (!slippageCache.current[t.addr] || now - slippageCache.current[t.addr].ts > 45000)
+        );
+        const slipOffset = Math.floor(deepCycle / 4) * 3 % Math.max(1, slipCandidates.length);
+        const toCheck = slipCandidates.slice(slipOffset, slipOffset + 3);
 
         for (const t of toCheck) {
           try {
@@ -1855,12 +1892,14 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
       }
 
       // === HELIUS SIGNATURES: on-chain activity intensity for top tokens ===
-      // Every 5th cycle (~60s) to conserve Helius credits
-      if (deepCycle % 5 === 0) {
-        const hotTokens = cur.filter(t =>
+      // Every 4th cycle with rotation to cover more tokens
+      if (deepCycle % 4 === 0) {
+        const actCandidates = cur.filter(t =>
           t.alive && t.qualified && t.mcap > 10000 &&
-          (!activityCache.current[t.addr] || now - activityCache.current[t.addr].ts > 25000)
-        ).slice(0, 3);
+          (!activityCache.current[t.addr] || now - activityCache.current[t.addr].ts > 20000)
+        );
+        const actOffset = Math.floor(deepCycle / 4) * 4 % Math.max(1, actCandidates.length);
+        const hotTokens = actCandidates.slice(actOffset, actOffset + 4);
 
         for (const t of hotTokens) {
           try {
@@ -1906,7 +1945,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
           const tokenAlive = !tokenDead && t.alive;
 
           Object.entries(td.wallets).forEach(([w, data]) => {
-            if (data.bought <= 0.01) return;
+            if (data.bought <= 0.15) return;
             if (!walletScores.current[w]) walletScores.current[w] = {
               wins: 0, losses: 0, holds: 0,
               tokens: [], lossTokens: [], holdTokens: [],   // display names only
@@ -1924,46 +1963,69 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
             const hasExited = (data.sold || 0) >= data.bought * 0.5;
             if (hasExited && holdDuration < 30000) return;
 
-            const sellEvts = (data.sellEvents || []).filter(s =>
-              s.time >= (data.firstBuyTime || 0) &&
-              (!data.lastSellTime || s.time <= data.lastSellTime)
+            // ─── WALLET-LEVEL OUTCOME ───
+            // PumpPortal reports solAmount on sells as COST BASIS, not actual SOL received.
+            // Fix: use sell event mcap ratios to compute actual SOL out for each sell.
+            // Each sellEvent has { sol (cost basis), mcap (mcap at sell time), time }
+            // Actual SOL received per sell ≈ cost_basis * (sell_mcap / entry_mcap)
+
+            const entryMcap = data.entryMcap || 0;
+            const currentMcap = t.mcap || 0;
+
+            // Filter sell events to this position window, cap so sells can't exceed bought
+            const rawSellEvts = (data.sellEvents || []).filter(s =>
+              s.time >= (data.firstBuyTime || 0)
             );
-            // Cap sell amounts to bought so bleed can't inflate sells beyond buy size
             let capRemaining = data.bought;
-            const cappedSellEvts = sellEvts.filter(s => {
+            const sellEvts = rawSellEvts.filter(s => {
               if (capRemaining <= 0.001) return false;
-              capRemaining -= s.sol;
+              const capped = Math.min(s.sol, capRemaining);
+              capRemaining -= capped;
               return true;
             });
+            const cappedSellEvts = sellEvts; // alias for legacy trade record use
 
-            // ─── WALLET-LEVEL OUTCOME ───
-            // PumpPortal reports solAmount on sells as original cost basis, NOT SOL received.
-            // Detect this: if sold ≈ bought but mcap moved significantly, estimate real SOL out.
-            const rawSold = data.sold || 0;
-            const entryMcap = data.entryMcap || 0;
-            const exitMcapRaw = data.exitMcap || t.mcap || 0;
-            const mcapRatio = entryMcap > 0 && exitMcapRaw > 0 ? exitMcapRaw / entryMcap : 1;
-            const soldRatioRaw = data.bought > 0 ? rawSold / data.bought : 0;
-            // If sold ≈ bought (within 2%) but mcap moved >10% — cost-basis reporting detected
-            const costBasisReporting = soldRatioRaw >= 0.9 && soldRatioRaw <= 1.1 && Math.abs(mcapRatio - 1) > 0.1;
-            // Estimated actual SOL received = bought * mcapRatio (bonding curve approximation)
-            const estimatedSold = costBasisReporting ? data.bought * mcapRatio : rawSold;
-            const sold = estimatedSold;
-            const pnl = sold - data.bought;
-            const soldRatio = data.bought > 0 ? sold / data.bought : 0;
-            const positionClosed = soldRatioRaw >= 0.5; // use raw ratio to detect exit
-            const positionFullyExited = soldRatioRaw >= 0.95;
+            // Compute actual SOL received per sell using mcap ratio
+            let actualSolReceived = 0;
+            let costBasisSold = 0;
+            for (const s of sellEvts) {
+              costBasisSold += s.sol;
+              if (entryMcap > 0 && s.mcap > 0) {
+                // Bonding curve approximation: actual out = cost_basis * (exit_mcap / entry_mcap)
+                actualSolReceived += s.sol * (s.mcap / entryMcap);
+              } else {
+                actualSolReceived += s.sol; // fallback: treat as break-even if no mcap data
+              }
+            }
 
-            const exitMcap = positionClosed ? (data.exitMcap || t.mcap || 0) : (t.mcap || 0);
+            // Position sizing
+            const soldRatioRaw = data.bought > 0 ? costBasisSold / data.bought : 0;
+            const positionFullyExited = soldRatioRaw >= 0.90;
+            const positionClosed = soldRatioRaw >= 0.50;
 
-            const walletWin = positionClosed && pnl > 0 && (soldRatio >= 1.2 || positionFullyExited);
+            // Remaining position unrealized value
+            const remainingCost = Math.max(0, data.bought - costBasisSold);
+            const mcapRatio = entryMcap > 0 && currentMcap > 0 ? currentMcap / entryMcap : 1;
+            const remainingValue = remainingCost * mcapRatio;
+            const unrealizedPnl = remainingValue - remainingCost;
+
+            // PnL: realized (from actual sales) + unrealized (remaining position)
+            const realizedPnl = actualSolReceived - costBasisSold;
+            const pnl = realizedPnl + (positionFullyExited ? 0 : unrealizedPnl);
+            const sold = actualSolReceived; // for trade record compatibility
+
+            const exitMcap = positionClosed ? (data.exitMcap || currentMcap) : currentMcap;
+
+            // WIN: fully exited with profit, OR partially exited with strong realized gain
+            const walletWin = (positionFullyExited && realizedPnl > 0) ||
+              (positionClosed && realizedPnl > 0 && actualSolReceived >= data.bought * 1.2);
             const walletLoss = !walletWin && (
               (tokenDead && pnl < 0) ||
-              (positionFullyExited && pnl < 0)
+              (positionFullyExited && realizedPnl < 0)  // use realized only on full exit
             );
             const walletHold = !walletWin && !walletLoss && tokenAlive;
 
-            // Use capped+filtered sell events for all trade records
+            // Sell events for trade records
             const sellEvents = cappedSellEvts;
 
             // ── WIN ──
@@ -2036,7 +2098,16 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
             // Refresh live HOLD entries with current mcap/pnl/athMcap/sellEvents
             if (walletHold && ws.holdAddrs.has(t.addr)) {
               const existTrade = ws.trades.find(tr => tr.addr === t.addr && tr.type === "HOLD");
-              if (existTrade) { existTrade.mcap = exitMcap; existTrade.sold = sold; existTrade.pnl = pnl; existTrade.athMcap = Math.max(td.athMcap||0, existTrade.athMcap||0); existTrade.sellEvents = sellEvents; }
+              if (existTrade) {
+                existTrade.mcap = exitMcap;
+                existTrade.sold = sold;            // actual SOL received from sells so far
+                existTrade.pnl = pnl;              // realized + unrealized combined
+                existTrade.realizedPnl = realizedPnl;
+                existTrade.unrealizedPnl = unrealizedPnl;
+                existTrade.remainingCost = remainingCost; // SOL still in position
+                existTrade.athMcap = Math.max(td.athMcap||0, existTrade.athMcap||0);
+                existTrade.sellEvents = cappedSellEvts;
+              }
             }
           });
         });
@@ -2134,7 +2205,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
             const losses=(w.trades||[]).filter(tr=>tr.type==="LOSS").length;
             const total=wins+losses;
             const rate=total>0?wins/total:0;
-            const unrealized=(w.trades||[]).filter(tr=>tr.type==="HOLD").reduce((s,tr)=>s+(tr.pnl!=null?tr.pnl:((tr.sold||0)-tr.sol)),0);
+            const unrealized=(w.trades||[]).filter(tr=>tr.type==="HOLD").reduce((s,tr)=>s+(tr.unrealizedPnl!=null?tr.unrealizedPnl:(tr.pnl!=null?tr.pnl:0)),0);
             const adjustedPnl=(w.totalPnl||0)+unrealized;
             return wins>=4&&rate>=0.60&&wins>=(losses*2)&&total>=5&&(w.totalPnl||0)>=1.0&&adjustedPnl>0.5;
           }).length,
@@ -2146,6 +2217,159 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
     return () => clearInterval(iv);
   }, []);
 
+  // ═══ FAST SNAP: 5s ring-buffer from tradeData mcap — fills board gaps between DexScreener batches ═══
+  useEffect(() => {
+    const iv = setInterval(() => {
+      const now = Date.now();
+      tokensRef.current.forEach(t => {
+        if (!t.alive || !t.mcap || t.mcap <= 0) return;
+        const addr = t.addr;
+        if (!fastSnapRef.current[addr]) fastSnapRef.current[addr] = [];
+        fastSnapRef.current[addr].push({ time: now, mcap: t.mcap });
+        // Keep 6 minutes of data for 5m board
+        fastSnapRef.current[addr] = fastSnapRef.current[addr].filter(s => now - s.time < 370000);
+      });
+    }, 5000);
+    return () => clearInterval(iv);
+  }, []);
+
+  // ═══ FLASH BOARDS: 30s + 1m + 5m mcap movers — the danger zones ═══
+  useEffect(() => {
+    const iv = setInterval(() => {
+      const now = Date.now();
+      const compute = (windowMs) => {
+        const target = now - windowMs;
+        // Merge DexScreener snaps + fast snaps for maximum resolution
+        return tokensRef.current
+          .filter(t => t.alive && t.qualified && t.mcap > 0)
+          .map(t => {
+            const dexSnaps = flashSnapsRef.current[t.addr] || [];
+            const fastSnaps = fastSnapRef.current[t.addr] || [];
+            const allSnaps = [...dexSnaps, ...fastSnaps].sort((a, b) => a.time - b.time);
+            if (allSnaps.length < 2) return null;
+            const snap = allSnaps.reduce((best, s) => {
+              if (!best) return s;
+              return Math.abs(s.time - target) < Math.abs(best.time - target) ? s : best;
+            }, null);
+            if (!snap || snap.mcap <= 0) return null;
+            if (now - snap.time < windowMs * 0.5) return null;
+            const gain = ((t.mcap - snap.mcap) / snap.mcap) * 100;
+            if (Math.abs(gain) < 0.5) return null;
+            const sigScore = signalScores.current[t.addr] || 0;
+            const extBoost = externalBoostRef.current[t.addr]?.boost || 0;
+            return {
+              addr: t.addr, name: t.name, gain,
+              mcap: t.mcap, startMcap: snap.mcap,
+              threatColor: t.threatColor || '#00ffff',
+              sigScore: Math.min(100, sigScore + extBoost),
+              hasSmartMoney: t.hasSmartMoney,
+              smartWalletCount: t.smartWalletCount || 0,
+              isCluster: !!t._hotCluster,
+              qualified: t.qualified,
+            };
+          })
+          .filter(Boolean)
+          .sort((a, b) => b.gain - a.gain);
+      };
+      setFlashBoard30s(compute(30000).slice(0, 10));
+      setFlashBoard1m(compute(60000).slice(0, 10));
+      setFlashBoard5m(compute(300000).slice(0, 10));
+    }, 1000); // refresh every 1s — these boards are LIVE
+    return () => clearInterval(iv);
+  }, []);
+
+  // ═══ NEURAL SIGNAL SCORES: composite 0-100 per token, updated every 2s ═══
+  useEffect(() => {
+    const prevScores = {};
+    const autoSurfaceCooldown = {}; // addr -> lastSurfaceTime (throttle 60s)
+    const iv = setInterval(() => {
+      const scores = {};
+      const newSurfaces = [];
+      const now = Date.now();
+      tokensRef.current.forEach(t => {
+        if (!t.alive) return;
+        let s = 0;
+        // ── Qualification backbone ──
+        s += (t.qualScore || 0) * 6;                          // 0-48
+        // ── Smart money (most predictive single signal) ──
+        s += Math.min(24, (t.smartWalletCount || 0) * 8);
+        // ── Momentum ──
+        if (t.accelerating) s += 12;
+        s += Math.min(10, (t.velocity || 0) * 1.0);
+        // ── Token health ──
+        if ((t.retentionPct || 0) > 70) s += 7;
+        else if ((t.retentionPct || 0) > 50) s += 3;
+        if ((t.smallBuyRatio || 0) > 60) s += 5;
+        if ((t.freshPct || 100) < 40) s += 5;
+        // ── On-chain security ──
+        if (t.lpLocked) s += 4;
+        if ((t.rayBurnPct || 0) > 80) s += 5;
+        // ── Cross-platform signals ──
+        if (t.onGeckoTrending) s += 9;
+        if ((t.trendScore || 0) >= 2) s += 7;
+        if (t.hasSmartMoney) s += 5;
+        // ── Post-migration activity ──
+        if (t.migrated && (t.geckoVol1h || 0) > 10000) s += 9;
+        if (t.migrated && (t.rayTvl || 0) > 20000) s += 6;
+        if (t.activityLevel === 'BLAZING') s += 9;
+        else if (t.activityLevel === 'HOT') s += 5;
+        else if (t.activityLevel === 'ACTIVE') s += 2;
+        // ── Dev track record ──
+        if (t.deployerGrade === 'A') s += 6;
+        else if (t.deployerGrade === 'B') s += 2;
+        if (t.isKOTH) s += 4;
+        if (t.hasSocials) s += 2;
+        if (t.replyCount > 20) s += 3;
+        if ((t.bondingPct || 0) > 80 && !t.migrated) s += 8; // migration pump incoming
+        // ── INTEL BOOST: cluster + DNA composite (injected from useIntelligence) ──
+        const extBoost = externalBoostRef.current[t.addr]?.boost || 0;
+        s += extBoost;
+        if (t._hotCluster) s += 12; // active coordinated buy = major signal
+        // ── Penalties ──
+        if (t.bundleDetected) s -= 28;
+        if (t.deployerGrade === 'F') s -= 22;
+        if (t.deployerGrade === 'D') s -= 12;
+        if (t.liquidityRating === 'PAPER') s -= 12;
+        if (t.rugLevel === 'DANGER') s -= 18;
+        if (t.isSerialRugger) s -= 35;
+        if (t.isStale || t.isDead) s -= 15;
+        scores[t.addr] = Math.max(0, Math.min(100, Math.round(s)));
+
+        // ── AUTO-SURFACE: emit when score crosses 85+ (once per 60s per token) ──
+        const prev = prevScores[t.addr] || 0;
+        const cur = scores[t.addr];
+        const lastSurface = autoSurfaceCooldown[t.addr] || 0;
+        if (cur >= 85 && prev < 85 && now - lastSurface > 60000) {
+          autoSurfaceCooldown[t.addr] = now;
+          const extData = externalBoostRef.current[t.addr];
+          const reasons = [];
+          if (t.hasSmartMoney) reasons.push(`🧠 ${t.smartWalletCount}x smart wallets`);
+          if (t._hotCluster) reasons.push(`🔗 cluster active`);
+          if (t.accelerating) reasons.push(`⚡ accelerating`);
+          if (t.onGeckoTrending) reasons.push(`🦎 gecko trending`);
+          if (extData?.reasons?.length) reasons.push(...extData.reasons.slice(0, 2));
+          if ((t.bondingPct || 0) > 80 && !t.migrated) reasons.push(`🚀 ${t.bondingPct?.toFixed(0)}% bonding`);
+          if (t.activityLevel === 'BLAZING') reasons.push(`🔥 blazing tx`);
+          newSurfaces.push({
+            id: Date.now() + Math.random(),
+            addr: t.addr, name: t.name, score: cur,
+            mcap: t.mcap, reasons, time: now,
+            threatColor: t.threatColor || '#00ffff',
+          });
+        }
+        prevScores[t.addr] = cur;
+      });
+      signalScores.current = scores;
+      if (newSurfaces.length > 0) {
+        setAutoSurface(prev => [...newSurfaces, ...prev].slice(0, 8));
+      }
+    }, 2000);
+    return () => clearInterval(iv);
+  }, []);
+
   return { tokens, whaleAlerts, intelEvents, migrations, stats,
-    smartMoneyAlerts, bundleAlerts, narratives, sessionStats, walletScoresRef: walletScores };
+    smartMoneyAlerts, bundleAlerts, narratives, sessionStats, walletScoresRef: walletScores,
+    tradeDataRef: tradeData, deployerHistoryRef: deployerHistory,
+    flashBoard30s, flashBoard1m, flashBoard5m, autoSurface,
+    signalScoresRef: signalScores, externalBoostRef, flashSnapsRef };
 }
