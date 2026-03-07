@@ -127,75 +127,10 @@ export async function fetchTokenMeta(mintAddress) {
 }
 
 export async function fetchHolderCount(mintAddress) {
-  if (!HELIUS_KEY) {
-    console.warn("[Helius] fetchHolderCount: no HELIUS_KEY set — holders will be 0");
-    return 0;
-  }
-  try {
-    // Method 1: getAsset DAS — token_info.holder_count (most accurate when populated)
-    const res = await fetch(`https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0", id: 1,
-        method: "getAsset",
-        params: { id: mintAddress },
-      }),
-    });
-    const data = await res.json();
-    const count = data.result?.token_info?.holder_count || 0;
-    if (count > 0) return count;
-
-    // Method 2: getTokenAccounts — reliable total field, works for all SPL tokens
-    const res2 = await fetch(`https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0", id: 2,
-        method: "getTokenAccounts",
-        params: { mint: mintAddress, limit: 1, page: 1 },
-      }),
-    });
-    const data2 = await res2.json();
-    const total = data2.result?.total || 0;
-    if (total > 0) return total;
-
-    // Method 3: getProgramAccounts count — last resort, slower but always works
-    const res3 = await fetch(`https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0", id: 3,
-        method: "getProgramAccounts",
-        params: [
-          "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
-          {
-            encoding: "jsonParsed",
-            filters: [
-              { dataSize: 165 },
-              { memcmp: { offset: 0, bytes: mintAddress } }
-            ],
-            dataSlice: { offset: 0, length: 0 }, // don't need data, just count
-          }
-        ],
-      }),
-    });
-    const data3 = await res3.json();
-    const pgCount = Array.isArray(data3.result) ? data3.result.length : 0;
-    return pgCount;
-  } catch (e) {
-    console.warn("[Helius] fetchHolderCount failed:", e.message);
-    return 0;
-  }
-}
-
-// Holder count fallback — tries multiple Helius methods aggressively
-// Used when fetchHolderCount returns 0 (DAS inconsistency for some Raydium tokens)
-export async function fetchHolderCountPublic(mintAddress) {
   if (!HELIUS_KEY) return 0;
   try {
-    // getTokenAccounts with Helius key — most reliable for Raydium tokens
-    // DAS getAsset often misses holder_count for newer Raydium pools
+    // Method 1: getTokenAccounts — has a real `total` field, most reliable for pump/raydium tokens
+    // getAsset DAS returns holder_count:1 as default for many tokens (known Helius bug) — don't use first
     const res = await fetch(`https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -207,23 +142,53 @@ export async function fetchHolderCountPublic(mintAddress) {
     });
     const data = await res.json();
     const total = data?.result?.total || 0;
-    if (total > 0) { console.log(`[HELIUS-ACCTS] ${mintAddress.slice(0,8)}: ${total} holders`); return total; }
+    if (total > 1) return total; // >1 means real data (1 could still be the default bug)
 
-    // Last resort: searchAssets with grouping — sometimes returns token holder count
+    // Method 2: getAsset DAS — sometimes has accurate holder_count for migrated tokens
     const res2 = await fetch(`https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         jsonrpc: "2.0", id: 2,
         method: "getAsset",
-        params: { id: mintAddress, displayOptions: { showFungibleExtensions: true } },
+        params: { id: mintAddress },
       }),
     });
     const data2 = await res2.json();
-    const cnt2 = data2?.result?.token_info?.holder_count
-      || data2?.result?.supply?.print_current_supply
-      || 0;
-    if (cnt2 > 0) { console.log(`[HELIUS-ASSET2] ${mintAddress.slice(0,8)}: ${cnt2} holders`); return cnt2; }
+    const dasCount = data2?.result?.token_info?.holder_count || 0;
+    if (dasCount > 1) return dasCount;
+
+    // Method 3: if both returned <=1, return the getTokenAccounts total (at least it's real)
+    // A token can genuinely have 1 holder right after launch
+    return total || dasCount || 0;
+  } catch (e) {
+    console.warn("[Helius] fetchHolderCount failed:", e.message);
+    return 0;
+  }
+}
+
+// Secondary holder count — used when primary returns <=1 to cross-check
+export async function fetchHolderCountPublic(mintAddress) {
+  if (!HELIUS_KEY) return 0;
+  try {
+    // Try getTokenAccounts with higher page limit to get accurate total
+    // Sometimes page:1 limit:1 is stale — try limit:1000 to force a real count
+    const res = await fetch(`https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0", id: 1,
+        method: "getTokenAccounts",
+        params: { mint: mintAddress, limit: 1000, page: 1 },
+      }),
+    });
+    const data = await res.json();
+    const total = data?.result?.total || 0;
+    const tokenAccounts = data?.result?.token_accounts || [];
+    // Use total if available, otherwise count non-zero balance accounts
+    const nonZero = tokenAccounts.filter(a => (a.amount || 0) > 0).length;
+    const best = total > 1 ? total : nonZero > 1 ? nonZero : 0;
+    if (best > 1) { console.log(`[HELIUS-ACCTS] ${mintAddress.slice(0,8)}: ${best} holders`); return best; }
     return 0;
   } catch(e) {
     return 0;

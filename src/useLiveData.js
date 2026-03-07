@@ -1116,10 +1116,10 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
           ]);
           enriched[mint].heliusDone = true;
           enriched[mint].lastHelius = now;
-          // Fall back to public RPC if Helius key missing or returned 0
-          const realHolders = count || meta?.holderCount || (await fetchHolderCountPublic(mint)) || 0;
-          // Only mark heliusDone if we actually got real data — retry if holders still 0
-          enriched[mint].heliusDone = realHolders > 0 || !!meta;
+          // Fall back to secondary method if primary returned 0 or the suspicious default of 1
+          const realHolders = count > 1 ? count : meta?.holderCount > 1 ? meta.holderCount : (await fetchHolderCountPublic(mint)) || count || 0;
+          // Only lock out retries if we got real holder data (>1) — keep retrying if still stuck at 0/1
+          enriched[mint].heliusDone = realHolders > 1 || !!meta;
           if (meta || realHolders > 0) {
             setTokens(prev => prev.map(t => {
               if (t.addr !== mint) return t;
@@ -1372,7 +1372,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
             try {
               // Try Helius first, fall back to public RPC if no key or returns 0
               let holderCount = await fetchHolderCount(mt.addr);
-              if (!holderCount) holderCount = await fetchHolderCountPublic(mt.addr);
+              if (holderCount <= 1) holderCount = (await fetchHolderCountPublic(mt.addr)) || holderCount;
               const largest = await fetchLargestHolders(mt.addr);
               const topPct = largest?.topHolderPct || 0;
               if (holderCount > 0) {
