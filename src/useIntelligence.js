@@ -2,7 +2,6 @@ import { useState, useRef, useEffect } from 'react';
 
 var SB_URL = "https://yrmjphhfgduysoftnuxv.supabase.co";
 var SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlybWpwaGhmZ2R1eXNvZnRudXh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3MzI5MzAsImV4cCI6MjA4ODMwODkzMH0.scHhvTGiABJDybgbjgjilw8XuxOfmWPsqo4iytMZmio";
-var hdrs = { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` };
 
 // ── 1. WALLET DNA ARCHETYPES ──────────────────────────────────────────────────
 var ARCHETYPES = {
@@ -272,7 +271,7 @@ export function useIntelligence({ walletScoresRef, tokens, tradeDataRef, deploye
         // Load winners for fingerprints — upgrade to 500 rows with better query
         const r1 = await fetch(
           `${SB_URL}/rest/v1/token_history?select=entry_mcap,peak_mcap,holders,volume,graduated&peak_mcap=gte.15000&entry_mcap=gt.0&limit=500&order=peak_mcap.desc`,
-          { headers: hdrs }
+          { headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` } }
         );
         if (r1.ok) {
           const rows = await r1.json();
@@ -311,7 +310,7 @@ export function useIntelligence({ walletScoresRef, tokens, tradeDataRef, deploye
         // Load dev history for surveillance
         const r2 = await fetch(
           `${SB_URL}/rest/v1/token_history?select=deployer,rug,graduated,peak_mcap,name&deployer=neq.&limit=3000`,
-          { headers: hdrs }
+          { headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` } }
         );
         if (r2.ok) {
           const rows2 = await r2.json();
@@ -364,7 +363,7 @@ export function useIntelligence({ walletScoresRef, tokens, tradeDataRef, deploye
       try {
         const r = await fetch(
           `${SB_URL}/rest/v1/token_history?select=entry_mcap,peak_mcap&peak_mcap=gte.10000&entry_mcap=gt.500&limit=500&order=peak_mcap.desc`,
-          { headers: hdrs }
+          { headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` } }
         );
         if (!r.ok) return;
         const rows = await r.json();

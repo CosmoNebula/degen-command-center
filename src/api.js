@@ -8,8 +8,6 @@
 // ═══════════════════════════════════════════════════════════════
 
 var HELIUS_KEY = import.meta.env.VITE_HELIUS_KEY || "";
-var HELIUS_RPC = `https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`;
-var HELIUS_WS = `wss://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`;
 
 var IS_DEPLOYED=typeof window!=="undefined"&&!window.location.hostname.match(/^(localhost|127\.|0\.0)/);
 export function proxyUrl(u){return IS_DEPLOYED?"/api/proxy?url="+encodeURIComponent(u):u;}
@@ -77,7 +75,7 @@ function normalizePair(p) {
 export async function fetchTokenMeta(mintAddress) {
   if (!HELIUS_KEY) return null;
   try {
-    const res = await fetch(HELIUS_RPC, {
+    const res = await fetch(`https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -130,7 +128,7 @@ export async function fetchHolderCount(mintAddress) {
 export async function fetchLargestHolders(mintAddress) {
   if (!HELIUS_KEY) return { holders: [], topHolderPct: 0, holderCount: 0 };
   try {
-    const res = await fetch(HELIUS_RPC, {
+    const res = await fetch(`https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -338,7 +336,7 @@ export function connectHeliusWS(onActivity) {
 
   function connect() {
     try {
-      ws = new WebSocket(HELIUS_WS);
+      ws = new WebSocket(`wss://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`);
       ws.onopen = () => {
         console.log("[HeliusWS] ✅ Connected");
         // Re-subscribe pending mints
@@ -751,7 +749,7 @@ export async function fetchRaydiumPool(mintAddress) {
 export async function fetchUniqueSigners(mintAddress, limit = 50) {
   if (!HELIUS_KEY) return null;
   try {
-    const res = await fetch(HELIUS_RPC, {
+    const res = await fetch(`https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
