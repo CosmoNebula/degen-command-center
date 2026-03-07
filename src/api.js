@@ -129,65 +129,78 @@ export async function fetchTokenMeta(mintAddress) {
 export async function fetchHolderCount(mintAddress) {
   if (!HELIUS_KEY) return 0;
   try {
-    // Method 1: getTokenAccounts — has a real `total` field, most reliable for pump/raydium tokens
-    // getAsset DAS returns holder_count:1 as default for many tokens (known Helius bug) — don't use first
+    // getProgramAccounts on SPL Token Program — counts actual on-chain token accounts
+    // This is the ONLY reliable method; DAS getAsset and getTokenAccounts both return 1 for pumpswap tokens
     const res = await fetch(`https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         jsonrpc: "2.0", id: 1,
-        method: "getTokenAccounts",
-        params: { mint: mintAddress, limit: 1, page: 1 },
+        method: "getProgramAccounts",
+        params: [
+          "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          {
+            encoding: "base64",
+            dataSlice: { offset: 64, length: 8 }, // amount field only — minimal data transfer
+            filters: [
+              { dataSize: 165 },
+              { memcmp: { offset: 0, bytes: mintAddress } }
+            ],
+          }
+        ],
       }),
     });
+    if (!res.ok) return 0;
     const data = await res.json();
-    const total = data?.result?.total || 0;
-    if (total > 1) return total; // >1 means real data (1 could still be the default bug)
-
-    // Method 2: getAsset DAS — sometimes has accurate holder_count for migrated tokens
-    const res2 = await fetch(`https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0", id: 2,
-        method: "getAsset",
-        params: { id: mintAddress },
-      }),
-    });
-    const data2 = await res2.json();
-    const dasCount = data2?.result?.token_info?.holder_count || 0;
-    if (dasCount > 1) return dasCount;
-
-    // Method 3: if both returned <=1, return the getTokenAccounts total (at least it's real)
-    // A token can genuinely have 1 holder right after launch
-    return total || dasCount || 0;
+    if (!Array.isArray(data?.result)) return 0;
+    // Count only accounts with non-zero balance (base64 decode 8-byte little-endian u64)
+    const nonZero = data.result.filter(acct => {
+      try {
+        const bytes = atob(acct.account?.data?.[0] || "");
+        if (bytes.length < 8) return true; // include if can't decode
+        let val = 0;
+        for (let i = 7; i >= 0; i--) val = val * 256 + bytes.charCodeAt(i);
+        return val > 0;
+      } catch { return true; }
+    }).length;
+    return nonZero;
   } catch (e) {
     console.warn("[Helius] fetchHolderCount failed:", e.message);
     return 0;
   }
 }
 
-// Secondary holder count — used when primary returns <=1 to cross-check
+// Retry with jsonParsed encoding — different Helius path, sometimes succeeds when base64 fails
 export async function fetchHolderCountPublic(mintAddress) {
   if (!HELIUS_KEY) return 0;
   try {
-    // getTokenAccounts — limit:1 is enough, `total` is the real full count
     const res = await fetch(`https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         jsonrpc: "2.0", id: 1,
-        method: "getTokenAccounts",
-        params: { mint: mintAddress, limit: 1, page: 1 },
+        method: "getProgramAccounts",
+        params: [
+          "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          {
+            encoding: "jsonParsed",
+            filters: [
+              { dataSize: 165 },
+              { memcmp: { offset: 0, bytes: mintAddress } }
+            ],
+          }
+        ],
       }),
     });
+    if (!res.ok) return 0;
     const data = await res.json();
-    const total = data?.result?.total || 0;
-    if (total > 1) { console.log(`[HELIUS-ACCTS] ${mintAddress.slice(0,8)}: ${total}`); return total; }
-    return 0;
-  } catch(e) {
-    return 0;
-  }
+    if (!Array.isArray(data?.result)) return 0;
+    const nonZero = data.result.filter(a =>
+      (a.account?.data?.parsed?.info?.tokenAmount?.uiAmount || 0) > 0
+    ).length;
+    if (nonZero > 0) console.log(`[HELIUS-GPA2] ${mintAddress.slice(0,8)}: ${nonZero}`);
+    return nonZero;
+  } catch(e) { return 0; }
 }
 
 export async function fetchLargestHolders(mintAddress) {
