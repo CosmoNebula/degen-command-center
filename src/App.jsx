@@ -803,9 +803,10 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         // Skip visual rendering for non-priority tokens (data still updates above)
         if(!isVisual)return;
 
-        const px=Math.round(t.bx*W),py=Math.round(t.by*H);const isLk=locked.find(l=>l.id===t.id);const isSel=t.id===selId;
+        const px=Math.round(t.bx*W),py=Math.round(t.by*H);const isLk=locked.find(l=>l.id===t.id);const isSel=t.id===selId;const isParked=!!t.parked&&!isLk;
         const color=t.health>70?NEON.green:t.health>40?NEON.yellow:t.health>20?NEON.orange:NEON.red;
-        const bob=Math.round(Math.sin(f*0.03+t.bobOffset)*2);const cc=t.coinColor;const cr=12;
+        const bob=isParked?0:Math.round(Math.sin(f*0.03+t.bobOffset)*2);const cc=t.coinColor;const cr=isParked?8:12;
+        if(isParked)ctx.globalAlpha=0.28;
 
         // Trail - tiny dots
         t.trail.forEach(tr=>{tr.life-=0.015;if(tr.life<=0)return;
@@ -4025,7 +4026,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
       // If crashing repeatedly, kill J-Ai-C (most likely culprit)
       if(crashCount>=3){
         console.warn("[BATTLEFIELD] ⚠ 3+ crashes in 10s — disabling J-Ai-C Dreadnought");
-        const jcr=jcRef.current;jcr.active=false;jcr.bills=[];jcr.phase="idle";
+        const jcr=jaycShipRef.current;jcr.active=false;jcr.bills=[];jcr.phase="idle";
         crashCount=0;
       }
      }
