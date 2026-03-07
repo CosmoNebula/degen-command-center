@@ -161,16 +161,16 @@ ${high.length > 1 ? `Other high signals: ${high.slice(1,4).map(t => `${t.name}(�
   if (q.includes("cluster") || q.includes("smart money") || q.includes("wallet")) {
     const clustered = tokens.filter(t => t.hotCluster);
     const smartToks = tokens.filter(t => t.smartMoney >= 2).sort((a,b) => b.smartMoney - a.smartMoney);
-    return `📊 MOCK ANALYSIS — WALLET INTELLIGENCE
-
-${clustered.length > 0 ? `🟡 Hot cluster tokens (${clustered.length}): ${clustered.map(t => t.name).join(", ")}
-Watch for coordinated dump — cluster wallets tend to exit together.
-
-` : "🟢 No active hot clusters.
-
-"}${smartToks.length > 0 ? `Smart money hits: ${smartToks.slice(0,4).map(t => `${t.name}(${t.smartMoney}x)`).join(", ")}
-${smartToks[0] && smartToks[0].status !== "LOCKED" ? `
-💡 ${smartToks[0].name} has ${smartToks[0].smartMoney}x smart hits but isn't locked — check if qualScore is failing on another factor.` : ""}` : "No significant smart money activity."}`;
+    const clusterLine = clustered.length > 0
+      ? `🟡 Hot cluster tokens (${clustered.length}): ${clustered.map(t => t.name).join(", ")}\nWatch for coordinated dump — cluster wallets tend to exit together.`
+      : "🟢 No active hot clusters.";
+    const smartLine = smartToks.length > 0
+      ? `Smart money hits: ${smartToks.slice(0,4).map(t => `${t.name}(${t.smartMoney}x)`).join(", ")}` +
+        (smartToks[0] && smartToks[0].status !== "LOCKED"
+          ? `\n💡 ${smartToks[0].name} has ${smartToks[0].smartMoney}x smart hits but isn't locked — check if qualScore is failing on another factor.`
+          : "")
+      : "No significant smart money activity.";
+    return `📊 MOCK ANALYSIS — WALLET INTELLIGENCE\n\n${clusterLine}\n\n${smartLine}`;
   }
 
   if (q.includes("cost") || q.includes("price") || q.includes("expensive") || q.includes("cheap")) {
