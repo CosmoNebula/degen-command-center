@@ -19,9 +19,6 @@ const COST_OUTPUT_PER_M = 15.00;  // $ per 1M output tokens
 const STORAGE_KEY_REAL  = "degen_claude_spend_cents";
 const STORAGE_KEY_MOCK  = "degen_claude_mock_est_cents";
 
-// Estimated avg tokens per call (for mock cost projection)
-const MOCK_AVG_INPUT_TOK  = 3200;
-const MOCK_AVG_OUTPUT_TOK = 650;
 
 function loadSpendCents(mock = false) {
   try { return parseFloat(localStorage.getItem(mock ? STORAGE_KEY_MOCK : STORAGE_KEY_REAL) || "0") || 0; }
@@ -34,7 +31,7 @@ function calcCallCostCents(inputTok, outputTok) {
   return ((inputTok / 1_000_000) * COST_INPUT_PER_M
         + (outputTok / 1_000_000) * COST_OUTPUT_PER_M) * 100;
 }
-const MOCK_CALL_COST_CENTS = calcCallCostCents(MOCK_AVG_INPUT_TOK, MOCK_AVG_OUTPUT_TOK);
+const MOCK_CALL_COST_CENTS = 1.935; // calcCallCostCents(3200, 650) — hardcoded to avoid TDZ
 
 const SYSTEM_PROMPT = `You are the intelligence officer embedded inside degen-LIVE — a real-time Solana memecoin trading dashboard built by Cosmo. You have a dedicated office inside the dashboard and watch live token data to diagnose problems, identify patterns, and suggest improvements.
 
@@ -96,8 +93,10 @@ Rules:
 // ─────────────────────────────────────────────
 // STATUS DETECTION
 // ─────────────────────────────────────────────
-const KEY_STATUS  = !ANTHROPIC_KEY ? "no_key" : ANTHROPIC_KEY.startsWith("sk-ant-") ? "ready" : "invalid";
-const IS_MOCK_MODE = KEY_STATUS !== "ready"; // true when no valid key — runs full simulation
+// Derived at runtime inside component to avoid TDZ in production bundle
+function getKeyStatus() {
+  return !ANTHROPIC_KEY ? "no_key" : ANTHROPIC_KEY.startsWith("sk-ant-") ? "ready" : "invalid";
+}
 
 
 // ─────────────────────────────────────────────
@@ -335,6 +334,9 @@ export default function ClaudeRoom({
   marketTemp,
   isActive,
 }) {
+  // Derived here (not module-level) to avoid esbuild TDZ in production bundle
+  const IS_MOCK_MODE = getKeyStatus() !== "ready";
+
   const [observations, setObservations]   = useState([]);
   const [chatInput, setChatInput]         = useState("");
   const [isLoading, setIsLoading]         = useState(false);
