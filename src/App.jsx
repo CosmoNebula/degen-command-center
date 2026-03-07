@@ -4802,41 +4802,54 @@ export default function DegenCommandCenter(){
         let pruned = 0;
 
         // ── TOKEN PURGE ───────────────────────────────────────────────────────
-        // Fetch all tokens (alive and dead) for multi-rule pass
-        const allTokensRes = await fetch(
-          `${SB_URL}/rest/v1/token_history?select=addr,peak_mcap,death_time,first_seen`,
-          { headers: hdrs }
-        );
-        if (allTokensRes.ok) {
-          const tokens = await allTokensRes.json();
-          let tokenPruned = 0;
-
-          for (const t of tokens) {
-            const peak      = t.peak_mcap   || 0;
-            const firstSeen = t.first_seen  || 0;
-            const deathTime = t.death_time  || 0;
-
-            // Rule 1: Never broke $4K and has been around 7+ minutes — never got traction
-            if (peak <= 4000 && firstSeen && firstSeen < m7) {
-              del("token_history", `addr=eq.${encodeURIComponent(t.addr)}`);
-              tokenPruned++; pruned++; continue;
-            }
-
-            // Rule 2: Dead, peak under $10K, older than 24h
-            if (deathTime && deathTime < h24 && peak < 10000) {
-              del("token_history", `addr=eq.${encodeURIComponent(t.addr)}`);
-              tokenPruned++; pruned++; continue;
-            }
-
-            // Rule 3: Dead, any peak, older than 7 days
-            if (deathTime && deathTime < d7) {
-              del("token_history", `addr=eq.${encodeURIComponent(t.addr)}`);
-              tokenPruned++; pruned++; continue;
-            }
-          }
-          if (tokenPruned > 0)
-            console.log(`[MAINT] 🗑 Pruned ${tokenPruned} tokens (never got traction / dead too long)`);
+        // Paginate to get ALL tokens, not just first 1000
+        const allTokens = [];
+        let tokenPage = 0;
+        while (true) {
+          const pageRes = await fetch(
+            `${SB_URL}/rest/v1/token_history?select=addr,peak_mcap,death_time,first_seen&limit=1000&offset=${tokenPage * 1000}`,
+            { headers: hdrs }
+          );
+          if (!pageRes.ok) break;
+          const page = await pageRes.json();
+          if (!Array.isArray(page) || page.length === 0) break;
+          allTokens.push(...page);
+          if (page.length < 1000) break;
+          tokenPage++;
         }
+        console.log(`[MAINT] 🪙 Scanning ${allTokens.length} tokens...`);
+
+        let tokenPruned = 0;
+        for (const t of allTokens) {
+          const peak = t.peak_mcap || 0;
+          // first_seen may be bigint ms OR ISO string depending on schema version
+          const firstSeen = t.first_seen
+            ? (typeof t.first_seen === "number" ? t.first_seen : new Date(t.first_seen).getTime())
+            : 0;
+          const deathTime = t.death_time
+            ? (typeof t.death_time === "number" ? t.death_time : new Date(t.death_time).getTime())
+            : 0;
+
+          // Rule 1: Never broke $4K and has been around 7+ minutes
+          if (peak <= 4000 && firstSeen > 0 && firstSeen < m7) {
+            del("token_history", `addr=eq.${encodeURIComponent(t.addr)}`);
+            tokenPruned++; pruned++; continue;
+          }
+          // Rule 2: Dead, peak under $10K, older than 24h
+          if (deathTime > 0 && deathTime < h24 && peak < 10000) {
+            del("token_history", `addr=eq.${encodeURIComponent(t.addr)}`);
+            tokenPruned++; pruned++; continue;
+          }
+          // Rule 3: Dead, any peak, older than 7 days
+          if (deathTime > 0 && deathTime < d7) {
+            del("token_history", `addr=eq.${encodeURIComponent(t.addr)}`);
+            tokenPruned++; pruned++; continue;
+          }
+        }
+        if (tokenPruned > 0)
+          console.log(`[MAINT] 🗑 Pruned ${tokenPruned} tokens`);
+        else
+          console.log(`[MAINT] 🪙 No tokens met prune criteria — sample first_seen: ${allTokens[0]?.first_seen}, death_time: ${allTokens[0]?.death_time}, peak: ${allTokens[0]?.peak_mcap}`);
 
         // ── WALLET PURGE — aggressive multi-rule cleanup ─────────────────────
         // Fetch all wallets once, apply all rules in one pass
