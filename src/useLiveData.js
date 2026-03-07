@@ -1441,7 +1441,7 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
             if (!pair || !pair.baseToken) continue;
 
             const mcap = pair.marketCap || pair.fdv || 0;
-            if (mcap < 2000 || mcap > 500000) continue; // filter to our range
+            if (mcap < 3200 || mcap > 500000) continue; // filter to our range
 
             const name = pair.baseToken.symbol || "???";
             const dexId = (pair.dexId || "").toLowerCase();
