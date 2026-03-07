@@ -4693,6 +4693,26 @@ export default function DegenCommandCenter(){
       return r;
     };
 
+    // Batch delete by addr list — one request per 100 rows instead of one per row
+    const delBatch = async (table, addrs) => {
+      if (!addrs.length) return 0;
+      const BATCH = 100;
+      let deleted = 0;
+      for (let i = 0; i < addrs.length; i += BATCH) {
+        const chunk = addrs.slice(i, i + BATCH);
+        const inList = chunk.map(a => encodeURIComponent(a)).join(",");
+        const r = await fetch(`${SB_URL}/rest/v1/${table}?addr=in.(${inList})`, { method:"DELETE", headers:delHdrs });
+        if (r.ok) {
+          deleted += chunk.length;
+        } else {
+          const txt = await r.text();
+          console.warn(`[MAINT] ❌ delBatch ${table} chunk ${i/BATCH} → ${r.status}: ${txt}`);
+        }
+        if (i + BATCH < addrs.length) await new Promise(r => setTimeout(r, 200));
+      }
+      return deleted;
+    };
+
     // ── TOKEN SCAN (every 30s) ──────────────────────────────────────────────────
     const runTokenScan = async () => {
       try {
@@ -4819,10 +4839,9 @@ export default function DegenCommandCenter(){
         }
         console.log(`[MAINT] 🪙 Scanning ${allTokens.length} tokens...`);
 
-        let tokenPruned = 0;
+        const tokensToPurge = [];
         for (const t of allTokens) {
           const peak = t.peak_mcap || 0;
-          // first_seen may be bigint ms OR ISO string depending on schema version
           const firstSeen = t.first_seen
             ? (typeof t.first_seen === "number" ? t.first_seen : new Date(t.first_seen).getTime())
             : 0;
@@ -4832,20 +4851,19 @@ export default function DegenCommandCenter(){
 
           // Rule 1: Never broke $4K and has been around 7+ minutes
           if (peak <= 4000 && firstSeen > 0 && firstSeen < m7) {
-            del("token_history", `addr=eq.${encodeURIComponent(t.addr)}`);
-            tokenPruned++; pruned++; continue;
+            tokensToPurge.push(t.addr); continue;
           }
           // Rule 2: Dead, peak under $10K, older than 24h
           if (deathTime > 0 && deathTime < h24 && peak < 10000) {
-            del("token_history", `addr=eq.${encodeURIComponent(t.addr)}`);
-            tokenPruned++; pruned++; continue;
+            tokensToPurge.push(t.addr); continue;
           }
           // Rule 3: Dead, any peak, older than 7 days
           if (deathTime > 0 && deathTime < d7) {
-            del("token_history", `addr=eq.${encodeURIComponent(t.addr)}`);
-            tokenPruned++; pruned++; continue;
+            tokensToPurge.push(t.addr); continue;
           }
         }
+        const tokenPruned = await delBatch("token_history", tokensToPurge);
+        pruned += tokenPruned;
         if (tokenPruned > 0)
           console.log(`[MAINT] 🗑 Pruned ${tokenPruned} tokens`);
         else
@@ -4925,12 +4943,8 @@ export default function DegenCommandCenter(){
             }
           }
 
-          let walletPruned = 0;
-          for (const addr of toPurge) {
-            del("wallet_scores", `addr=eq.${encodeURIComponent(addr)}`);
-            walletPruned++;
-            pruned++;
-          }
+          const walletPruned = await delBatch("wallet_scores", [...toPurge]);
+          pruned += walletPruned;
           if (walletPruned > 0)
             console.log(`[MAINT] 🗑 Purged ${walletPruned} wallets — breakdown by rule logged above`);
 
