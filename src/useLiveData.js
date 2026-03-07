@@ -1096,7 +1096,13 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
       // ── HELIUS: on-chain metadata, 3 per cycle, retry every 30s ──
       const heliusBatch = tokensRef.current
         .filter(t => t.qualified && t.addr)
-        .filter(t => !enriched[t.addr]?.heliusDone || (now - (enriched[t.addr]?.lastHelius || 0)) > 30000)
+        .filter(t => {
+          const e = enriched[t.addr];
+          if (!e?.heliusDone) return true; // never fetched
+          if (now - (e.lastHelius || 0) > 30000) return true; // stale
+          if (t.migrated && (t.holders || 0) <= 1) return true; // migrated with bad holder count — keep retrying
+          return false;
+        })
         .slice(0, 3)
         .map(t => t.addr);
 
@@ -1112,6 +1118,8 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
           enriched[mint].lastHelius = now;
           // Fall back to public RPC if Helius key missing or returned 0
           const realHolders = count || meta?.holderCount || (await fetchHolderCountPublic(mint)) || 0;
+          // Only mark heliusDone if we actually got real data — retry if holders still 0
+          enriched[mint].heliusDone = realHolders > 0 || !!meta;
           if (meta || realHolders > 0) {
             setTokens(prev => prev.map(t => {
               if (t.addr !== mint) return t;
