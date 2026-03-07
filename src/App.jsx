@@ -785,13 +785,9 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
           t.vx=0; // no horizontal drift in bunker
         } else {
           t.targetY=Math.max(-0.1,Math.min(0.95,canMove?gatedProgress:0.95));
-          if(t.bx>0.76)t.targetY=Math.min(t.targetY,0.74); // don't sink into bay zone
+          if(t.bx>0.76)t.targetY=Math.min(t.targetY,0.90); // keep tokens from bottom-right
           const moveSpeed=t.migrated?0.015:0.005;
           t.by+=(t.targetY-t.by)*moveSpeed;t.bx+=t.vx;
-          // ── HOLDING BAY EXCLUSION ZONE (bottom-right) — field tokens bounce off ──
-          const bayLeft=0.76,bayTop=0.76;
-          if(t.bx>bayLeft&&t.by>bayTop){t.bx=bayLeft-(t.bx-bayLeft)*0.5;t.vx*=-1;}
-          if(t.bx<0.05||t.bx>0.95)t.vx*=-1;
         }
         if(f%4===0){t.trail.push({x:t.bx,y:t.by,life:1});if(t.trail.length>20)t.trail.shift()}
         if(t.by<0.12&&!t.mooned){t.mooned=true;
@@ -4129,9 +4125,8 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
       }
 
                   // ═══════════════════════════════════════════════════════════════
-      // ██ HOLDING BAY — pixel city building, drawn LAST so it covers docked coins
-      // ═══════════════════════════════════════════════════════════════
-      {
+      // (holding bay building removed — now lives in footer command strip)
+      if(false){
         const bunkerCount=tokensRef.current.filter(t=>t.parked&&t.alive&&!t.inHoldingBay).length;
         const BW=Math.floor(W*0.22);   // building width
         const BH=Math.floor(H*0.22);   // building height from bottom
@@ -4349,7 +4344,7 @@ function KillFeed({events,onSelectByName}){
   const queueRef=useRef([]);
   const timerRef=useRef(null);
   const processedRef=useRef(new Set());
-  const DISPLAY_MS=14000;
+  const DISPLAY_MS=22000;
 
   const showNext=useCallback(()=>{
     if(queueRef.current.length===0){setCurrent(null);timerRef.current=null;return;}
@@ -4386,7 +4381,7 @@ function KillFeed({events,onSelectByName}){
       <div style={{position:"absolute",right:0,top:0,bottom:0,width:50,
         background:"linear-gradient(270deg,rgba(2,1,8,0.98),transparent)",zIndex:2,pointerEvents:"none"}}/>
       <div key={current._ts+current.text} style={{position:"absolute",top:"50%",transform:"translateY(-50%)",
-        whiteSpace:"nowrap",animation:`kfRTL ${DISPLAY_MS}ms linear both`,pointerEvents:"auto"}}
+        whiteSpace:"nowrap",animation:`kfRTL ${DISPLAY_MS}ms ease both`,pointerEvents:"auto"}}
       >
         <span style={{fontSize:13,fontWeight:900,letterSpacing:1.5,fontFamily:"'Orbitron',sans-serif",
           color:c,textShadow:`0 0 6px ${g}, 0 0 16px ${g}40`,opacity:0.92,
@@ -5641,29 +5636,32 @@ export default function DegenCommandCenter(){
         const next = prev.map(t => {
           if (!t.inHoldingBay) return t;
           const age = now - (t.holdingEnteredAt || now);
+          if (age < 20000) return t; // never audit before 20s — give it time to load trade data
+
           const trd = td[t.addr];
-          const recentTrade = trd?.lastTradeTime && (now - trd.lastTradeTime) < 45000;
-          const mcapMoved = Math.abs((t.mcap||0) - (t.holdingMcap||0)) / Math.max(1, t.holdingMcap||1) > 0.08;
+          const recentTrade = trd?.lastTradeTime && (now - trd.lastTradeTime) < 90000;
+          const mcapMoved = Math.abs((t.mcap||0) - (t.holdingMcap||0)) / Math.max(1, t.holdingMcap||1) > 0.05;
           const hasSmarts = (t.smartWalletCount||0) >= 1;
-          const showsLife = recentTrade || mcapMoved || hasSmarts || (t.buys||0) > 2;
+          const stillAliveOnChain = (t.mcap||0) >= 3000; // just being tradeable counts
+          const showsLife = recentTrade || mcapMoved || hasSmarts || (t.buys||0) >= 2 || stillAliveOnChain;
 
           if (showsLife) {
             // Graduate — release to battlefield
             changed = true;
-            addKillFeed({type:"system", text:`🔓 ${t.name} cleared holding bay audit → BATTLEFIELD`});
+            addKillFeed({type:"system", text:`🔓 ${t.name} cleared audit → DEPLOYED`});
             return {...t, inHoldingBay:false, warpIn:true,
               bx:0.2+Math.random()*0.6, by:0.95};
-          } else if (age > 120000) {
-            // 2 min no activity — incinerate
+          } else if (age > 240000) {
+            // 4 min zero signal — incinerate
             changed = true;
-            addKillFeed({type:"system", text:`🔥 ${t.name} incinerated — no activity in holding bay`});
+            addKillFeed({type:"system", text:`🔥 ${t.name} incinerated — dead on arrival`});
             return {...t, alive:false, inHoldingBay:false};
           }
           return t;
         });
         return changed ? next : prev;
       });
-    }, 5000);
+    }, 15000);
     return () => clearInterval(iv);
   }, [live.tradeDataRef]);
 
@@ -6497,7 +6495,7 @@ export default function DegenCommandCenter(){
         @keyframes newToken{from{background:rgba(255,7,58,0.06)}to{background:transparent}}
         @keyframes promoted{from{background:rgba(57,255,20,0.1)}to{background:transparent}}
         @keyframes marquee{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
-        @keyframes kfRTL{0%{transform:translateY(-50%) translateX(110vw)}10%{opacity:1}90%{opacity:1}100%{transform:translateY(-50%) translateX(-110vw)}}
+        @keyframes kfRTL{0%{transform:translateY(-50%) translateX(80vw);opacity:0}8%{opacity:1}88%{opacity:1}100%{transform:translateY(-50%) translateX(-80vw);opacity:0}}
         @keyframes kfSlide{0%{transform:translateX(110%);opacity:0}5%{opacity:1}95%{opacity:1}100%{transform:translateX(-110%);opacity:0}}
         @keyframes headerPulse{0%,100%{opacity:0.3}50%{opacity:0.7}}
         .token-row{transition:background 0.15s}.token-row:hover{background:rgba(255,0,255,0.05)!important}
@@ -7585,9 +7583,9 @@ export default function DegenCommandCenter(){
           const top5m = live.flashBoard5m?.[0];
           return (
             <div style={{
-              height: bayExpanded ? 148 : 54, flexShrink:0,
+              height: bayExpanded ? 150 : 54, flexShrink:0, minHeight: bayExpanded ? 150 : 54, maxHeight: bayExpanded ? 150 : 54,
               display:"flex", gap:4, overflow:"hidden",
-              transition:"height 0.25s ease",
+              transition:"height 0.2s ease, min-height 0.2s ease, max-height 0.2s ease",
             }}>
 
               {/* ── HOLDING BAY BUILDING ── */}
