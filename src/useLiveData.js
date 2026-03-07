@@ -1355,20 +1355,36 @@ export function useLiveData({ onMarkDirty, onSmartAlert, onUpsertToken } = {}) {
 
           // ── PRE-MIGRATION tokens ──
           if (t._preMig) {
-            const hasMigrated = dex && platform !== 'pump.fun' && platform !== 'unknown' && liveMcap > 0;
             const scanCount = (t._bayScans || 0) + 1;
+            // Migrated: platform changed away from pump.fun OR mcap jumped above $80K (graduated)
+            const platformMigrated = dex && platform !== 'pump.fun' && platform !== 'unknown' && liveMcap > 0;
+            const mcapMigrated = liveMcap > 80000; // blew past bonding ceiling — it graduated
+            const hasMigrated = platformMigrated || mcapMigrated;
+            // Dead: mcap collapsed below $5K while in bay
+            const bayDead = dex && liveMcap > 0 && liveMcap < 5000;
             if (hasMigrated) {
-              console.log(`[BAY] 🎓 ${t.name} MIGRATED → ${platform} ($${(liveMcap/1000).toFixed(1)}K) — removing`);
+              const why = mcapMigrated ? `mcap $${(liveMcap/1000).toFixed(0)}K (graduated)` : `platform → ${platform}`;
+              console.log(`[BAY] 🎓 ${t.name} MIGRATED — ${why} — removing`);
               setTokens(prev => prev.map(tok => tok.addr === t.addr ? { ...tok, alive: false, health: 0, deathTime: now } : tok));
               if (onUpsertTokenRef.current) sbUpsertToken({ ...t, alive: false, mcap: liveMcap, peakMcap });
-            } else if (scanCount >= 3) {
-              console.log(`[BAY] 🪲 ${t.name} stuck after ${scanCount} scans — purging`);
+            } else if (bayDead || scanCount >= 4) {
+              const why = bayDead ? `collapsed $${liveMcap.toFixed(0)}` : `stuck after ${scanCount} scans`;
+              console.log(`[BAY] 🪲 ${t.name} purged — ${why}`);
               setTokens(prev => prev.map(tok => tok.addr === t.addr ? { ...tok, alive: false, health: 0, deathTime: now } : tok));
             } else {
-              console.log(`[BAY] ⏳ ${t.name} pre-mig scan ${scanCount} — still bonding ($${(liveMcap/1000).toFixed(1)}K)`);
-              setTokens(prev => prev.map(tok => tok.addr === t.addr ? { ...tok, mcap: liveMcap || tok.mcap, _bayScans: scanCount } : tok));
-              const tRef = tokensRef.current.find(r => r.addr === t.addr);
-              if (tRef) tRef._bayScans = scanCount;
+              // Still waiting — update mcap, check if it's actually moving again (re-release)
+              const isMovingAgain = liveMcap > 0 && liveMcap < 28000; // fell back below bonding zone — release to field
+              if (isMovingAgain) {
+                console.log(`[BAY] 🔄 ${t.name} fell below bonding zone $${(liveMcap/1000).toFixed(1)}K — releasing`);
+                setTokens(prev => prev.map(tok => tok.addr === t.addr ? { ...tok, mcap: liveMcap, parked: false, bunkerX: null, bunkerY: null, _preMig: false, _bayScans: 0 } : tok));
+                const tRef = tokensRef.current.find(r => r.addr === t.addr);
+                if (tRef) { tRef.parked = false; tRef.bunkerX = null; tRef.bunkerY = null; tRef._preMig = false; tRef._bayScans = 0; }
+              } else {
+                console.log(`[BAY] ⏳ ${t.name} pre-mig scan ${scanCount} — $${(liveMcap/1000).toFixed(1)}K`);
+                setTokens(prev => prev.map(tok => tok.addr === t.addr ? { ...tok, mcap: liveMcap || tok.mcap, _bayScans: scanCount } : tok));
+                const tRef = tokensRef.current.find(r => r.addr === t.addr);
+                if (tRef) tRef._bayScans = scanCount;
+              }
             }
             continue;
           }

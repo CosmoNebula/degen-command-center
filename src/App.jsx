@@ -510,9 +510,13 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         const sessionAge = now_vs - (t.sessionLoadTime || t.timestamp || now_vs);
         const dbGrace = t.fromDB && sessionAge < 180000;
         const staleHigh=(t.mcap||0)>=40000&&silentMs>150000; // >=$40K, silent 2.5min
-        const staleMid=(t.mcap||0)<40000&&silentMs>60000&&!t.fromDB; // <$40K live tokens only — DB tokens use staleHigh only
-        const preMigration=(t.bondingPct||0)>80&&!t.migrated&&(!t.fromDB||sessionAge>300000); // >80% bonding — park after 5min grace for DB tokens
-        const shouldPark=(staleHigh||staleMid||preMigration)&&!isLocked&&!t.laserIn&&!t.accelerating&&!dbGrace;
+        const staleMid=(t.mcap||0)<40000&&silentMs>60000&&!t.fromDB; // <$40K live tokens only
+        const staleDB=t.fromDB&&(t.mcap||0)<40000&&silentMs>600000&&sessionAge>180000; // DB tokens under $40K silent 10min
+        // preMigration: either explicit bondingPct>80 OR mcap proxy ($30K-$75K non-migrated = near pump.fun ceiling)
+        const mcapForPark=t.mcap||0;
+        const nearMigrationMcap=mcapForPark>=28000&&mcapForPark<=80000&&!t.migrated;
+        const preMigration=((t.bondingPct||0)>80||nearMigrationMcap)&&!t.migrated&&(!t.fromDB||sessionAge>180000);
+        const shouldPark=(staleHigh||staleMid||staleDB||preMigration)&&!isLocked&&!t.laserIn&&!t.accelerating&&!dbGrace;
         if(preMigration&&!t.parked) t._preMig=true; // tag so audit knows why it's parked
         if(shouldPark&&!t.parked){
           t.parked=true;
