@@ -348,42 +348,42 @@ Rules:
   const updateParkCycles = useCallback((tokens) => {
     tokens.forEach((t) => {
       const isParked = !!t.isParked;
-      const prev = prevTokenStateRef.current[t.mint];
+      const prev = prevTokenStateRef.current[t.addr];
       if (prev === undefined) {
-        prevTokenStateRef.current[t.mint] = isParked;
-        if (!parkCycleRef.current[t.mint])
-          parkCycleRef.current[t.mint] = { name: t.name || t.mint?.slice(0,8), count: 0, lastParked: isParked };
+        prevTokenStateRef.current[t.addr] = isParked;
+        if (!parkCycleRef.current[t.addr])
+          parkCycleRef.current[t.addr] = { name: t.name || t.addr?.slice(0,8), count: 0, lastParked: isParked };
       } else if (prev !== isParked) {
-        parkCycleRef.current[t.mint] = {
-          name: t.name || t.mint?.slice(0,8),
-          count: (parkCycleRef.current[t.mint]?.count || 0) + 1,
+        parkCycleRef.current[t.addr] = {
+          name: t.name || t.addr?.slice(0,8),
+          count: (parkCycleRef.current[t.addr]?.count || 0) + 1,
           lastParked: isParked,
           mcap: Math.round(t.mcap || 0),
         };
-        prevTokenStateRef.current[t.mint] = isParked;
+        prevTokenStateRef.current[t.addr] = isParked;
       }
     });
   }, []);
 
   // ─── LOCK HISTORY TRACKER ─────────────────
   const updateLockHistory = useCallback((locked, tokens) => {
-    const lockedMints = new Set((locked || []).map((t) => t.mint));
+    const lockedMints = new Set((locked || []).map((t) => t.addr));
     (locked || []).forEach((t) => {
-      if (!lockHistoryRef.current[t.mint]) {
-        lockHistoryRef.current[t.mint] = {
+      if (!lockHistoryRef.current[t.addr]) {
+        lockHistoryRef.current[t.addr] = {
           name: t.name, lockedAt: Date.now(),
           mcapAtLock: t.mcap || 0, peakMcap: t.mcap || 0,
           exitMcap: null, status: "ACTIVE",
         };
       } else {
-        const h = lockHistoryRef.current[t.mint];
+        const h = lockHistoryRef.current[t.addr];
         if ((t.mcap || 0) > h.peakMcap) h.peakMcap = t.mcap;
       }
     });
     Object.keys(lockHistoryRef.current).forEach((mint) => {
       const h = lockHistoryRef.current[mint];
       if (h.status === "ACTIVE" && !lockedMints.has(mint)) {
-        const token = tokens.find((t) => t.mint === mint);
+        const token = tokens.find((t) => t.addr === mint);
         const exitMcap = token?.mcap || h.peakMcap;
         const pct = h.mcapAtLock > 0 ? ((exitMcap - h.mcapAtLock) / h.mcapAtLock) * 100 : 0;
         h.exitMcap = exitMcap;
@@ -403,34 +403,34 @@ Rules:
     updateParkCycles(tokens);
     updateLockHistory(locked, tokens);
 
-    const lockedMints     = new Set(locked.map((t) => t.mint));
+    const lockedMints     = new Set(locked.map((t) => t.addr));
     const hotClusterMints = intel?.hotClusterTokens || new Set();
     const clusters        = intel?.clusters || [];
 
     const interesting = tokens.filter((t) =>
-      lockedMints.has(t.mint) ||
-      hotClusterMints.has(t.mint) ||
-      (sigScores[t.mint] || 0) >= 65 ||
-      (parkCycleRef.current[t.mint]?.count || 0) >= 4 ||
+      lockedMints.has(t.addr) ||
+      hotClusterMints.has(t.addr) ||
+      (sigScores[t.addr] || 0) >= 65 ||
+      (parkCycleRef.current[t.addr]?.count || 0) >= 4 ||
       (t.mcap || 0) >= 15000
     ).slice(0, 25);
 
     const detailedTokens = interesting.map((t) => {
-      const td   = tradeData[t.mint] || {};
+      const td   = tradeData[t.addr] || {};
       const buys = td.buyTimes?.length  || 0;
       const sells= td.sellTimes?.length || 0;
       const total= buys + sells;
       return {
-        name:       t.name || t.mint?.slice(0,8),
-        mint8:      t.mint?.slice(0,8),
+        name:       t.name || t.addr?.slice(0,8),
+        mint8:      t.addr?.slice(0,8),
         mcap:       Math.round(t.mcap || 0),
-        status:     lockedMints.has(t.mint) ? "LOCKED" : t.isParked ? "PARKED" : "FIELD",
+        status:     lockedMints.has(t.addr) ? "LOCKED" : t.isParked ? "PARKED" : "FIELD",
         ageMin:     td.launchTime    ? Math.round((Date.now() - td.launchTime)    / 60000) : null,
         silentMin:  td.lastTradeTime ? Math.round((Date.now() - td.lastTradeTime) / 60000) : null,
-        signal:     Math.round(sigScores[t.mint] || 0),
-        intelBoost: intel?.signalBoost?.[t.mint] || 0,
-        hotCluster: hotClusterMints.has(t.mint),
-        parkCycles: parkCycleRef.current[t.mint]?.count || 0,
+        signal:     Math.round(sigScores[t.addr] || 0),
+        intelBoost: intel?.signalBoost?.[t.addr] || 0,
+        hotCluster: hotClusterMints.has(t.addr),
+        parkCycles: parkCycleRef.current[t.addr]?.count || 0,
         holders:    td.holders || 0,
         buyPct:     total > 0 ? Math.round((buys / total) * 100) : 0,
         vol:        Math.round(td.totalVol || 0),
@@ -442,20 +442,20 @@ Rules:
     });
 
     const summaryTokens = tokens
-      .filter((t) => !interesting.find((i) => i.mint === t.mint))
+      .filter((t) => !interesting.find((i) => i.addr === t.addr))
       .slice(0, 40)
       .map((t) => ({
-        name: t.name || t.mint?.slice(0,8),
+        name: t.name || t.addr?.slice(0,8),
         mcap: Math.round(t.mcap || 0),
-        s:    lockedMints.has(t.mint) ? "L" : t.isParked ? "P" : "F",
-        sig:  Math.round(sigScores[t.mint] || 0),
-        cyc:  parkCycleRef.current[t.mint]?.count || 0,
+        s:    lockedMints.has(t.addr) ? "L" : t.isParked ? "P" : "F",
+        sig:  Math.round(sigScores[t.addr] || 0),
+        cyc:  parkCycleRef.current[t.addr]?.count || 0,
       }));
 
     const topCyclers = Object.entries(parkCycleRef.current)
       .sort(([, a], [, b]) => b.count - a.count).slice(0, 8)
       .map(([mint, v]) => {
-        const token = tokens.find((t) => t.mint === mint);
+        const token = tokens.find((t) => t.addr === mint);
         return { name: v.name, cycles: v.count, mcap: Math.round(token?.mcap || 0), parked: !!token?.isParked };
       });
 
@@ -470,7 +470,7 @@ Rules:
     }));
 
     const activeClusters = clusters.slice(0, 5).map((c) => ({
-      tokens:   c.tokens?.slice(0, 4).map((m) => { const tok = tokens.find((t) => t.mint === m); return tok?.name || m?.slice(0,8); }),
+      tokens:   c.tokens?.slice(0, 4).map((m) => { const tok = tokens.find((t) => t.addr === m); return tok?.name || m?.slice(0,8); }),
       wallets:  c.wallets?.length || 0,
       strength: Math.round(c.strength || 0),
       ageSec:   c.detectedAt ? Math.round((Date.now() - c.detectedAt) / 1000) : null,
@@ -484,7 +484,7 @@ Rules:
         total:    tokens.length,
         locked:   locked.length,
         parked:   tokens.filter((t) => t.isParked).length,
-        field:    tokens.filter((t) => !t.isParked && !lockedMints.has(t.mint)).length,
+        field:    tokens.filter((t) => !t.isParked && !lockedMints.has(t.addr)).length,
         fromDB:   tokens.filter((t) => t.fromDB).length,
         migrated: tokens.filter((t) => t.migrated).length,
       },
@@ -644,7 +644,7 @@ Rules:
     }].slice(-40);
     const toks = tokensRef?.current || [];
     const sigs = signalScoresRef?.current || {};
-    const scores = toks.map(t => sigs[t.mint] || 0).filter(s => s > 0);
+    const scores = toks.map(t => sigs[t.addr] || 0).filter(s => s > 0);
     const avg = scores.length ? Math.round(scores.reduce((a,b)=>a+b,0)/scores.length) : 0;
     sigHistoryRef.current = [...sigHistoryRef.current, { t: Date.now(), avg }].slice(-40);
   }, [marketTemp]);
@@ -707,7 +707,7 @@ Rules:
   const locked       = lockedTokens || [];
   const sigScores    = signalScoresRef?.current || {};
   const parked       = toks.filter(t => t.isParked).length;
-  const field        = toks.filter(t => !t.isParked && !locked.find(l => l.mint === t.mint)).length;
+  const field        = toks.filter(t => !t.isParked && !locked.find(l => l.addr === t.addr)).length;
   const fromDB       = toks.filter(t => t.fromDB).length;
   const sessionMin   = Math.round((Date.now() - sessionStartRef.current) / 60000);
   const topCyclers   = Object.entries(parkCycleRef.current).sort(([,a],[,b]) => b.count - a.count).slice(0, 8);
@@ -723,7 +723,7 @@ Rules:
   // signal score distribution
   const sigBuckets = [0,0,0,0,0]; // <25, 25-50, 50-70, 70-88, 88+
   toks.forEach(t => {
-    const s = sigScores[t.mint] || 0;
+    const s = sigScores[t.addr] || 0;
     if (s >= 88) sigBuckets[4]++;
     else if (s >= 70) sigBuckets[3]++;
     else if (s >= 50) sigBuckets[2]++;
@@ -731,7 +731,7 @@ Rules:
     else sigBuckets[0]++;
   });
   const sigMax = Math.max(1, ...sigBuckets);
-  const sigAvg  = toks.length ? Math.round(toks.reduce((a,t) => a + (sigScores[t.mint]||0), 0) / toks.length) : 0;
+  const sigAvg  = toks.length ? Math.round(toks.reduce((a,t) => a + (sigScores[t.addr]||0), 0) / toks.length) : 0;
 
   // lock outcomes
   const lockVals  = Object.values(lockHistoryRef.current);
@@ -1103,7 +1103,7 @@ Rules:
           <SideBlock title="HOT CLUSTER TOKENS" color="#ff00ff">
             {intel?.hotClusterTokens?.size > 0
               ? [...intel.hotClusterTokens].slice(0,6).map((mint,i) => {
-                  const tok = toks.find(t => t.mint===mint);
+                  const tok = toks.find(t => t.addr===mint);
                   return tok ? (
                     <div key={i} style={{ display:"flex", justifyContent:"space-between", padding:"2px 0", fontSize:"10px" }}>
                       <span style={{ color:"#8888aa", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:140 }}>{tok.name||mint.slice(0,8)}</span>
