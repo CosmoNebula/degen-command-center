@@ -979,92 +979,140 @@ export default function ClaudeRoom({
         var portEntry = mockPortfolio.find(function(p) { return p.addr === tok.addr; });
         var dexUrl = "https://dexscreener.com/solana/" + tok.addr + "?embed=1&theme=dark&trades=0&info=0";
 
-        return (
-          <div style={{ position:"absolute", top:0, left:0, right:0, bottom:0, zIndex:50, background:"rgba(4,4,18,0.97)", display:"flex", flexDirection:"column", overflow:"hidden" }}>
-            {/* Header */}
-            <div style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 14px", borderBottom:"1px solid rgba(0,255,255,0.12)", background:"rgba(0,255,255,0.02)", flexShrink:0, flexWrap:"wrap" }}>
-              <span style={{ fontFamily:"Orbitron,sans-serif", fontSize:"13px", color:"#00ffff", fontWeight:900, letterSpacing:"2px" }}>{"\u25C9"} {tok.name || tok.addr?.slice(0,8)}</span>
-              {tok.alive !== false && <span style={{ fontSize:"8px", color:"#39ff14", background:"rgba(57,255,20,0.1)", padding:"1px 5px", borderRadius:3 }}>{"\u25CF"} LIVE</span>}
-              {tok.migrated && <span style={{ fontSize:"8px", color:"#39ff14", fontWeight:700 }}>{"\uD83C\uDF09"} MIG</span>}
-              <span onClick={function(){navigator.clipboard.writeText(tok.addr);}} style={{ fontSize:"9px", color:"#667799", cursor:"pointer" }} title={tok.addr}>{"\uD83D\uDCCB"} {tok.addr?.slice(0,6)}...{tok.addr?.slice(-4)}</span>
-              <div style={{ marginLeft:"auto", display:"flex", gap:6, alignItems:"center" }}>
-                {!inPort && (
-                  <button onClick={function(){ addToMockPortfolio(tok); }}
-                    style={{ background:"rgba(57,255,20,0.06)", border:"1px solid rgba(57,255,20,0.3)", color:"#39ff14", fontSize:"9px", padding:"3px 8px", borderRadius:3, cursor:"pointer", fontFamily:"Orbitron,sans-serif", fontWeight:700 }}>
-                    + PORTFOLIO
-                  </button>
-                )}
-                {inPort && <span style={{ fontSize:"8px", color:"#39ff14", fontFamily:"Orbitron,sans-serif" }}>{"\u2713"} IN PORTFOLIO</span>}
-                <button onClick={function(){ setInspectToken(null); }}
-                  style={{ background:"rgba(255,7,58,0.06)", border:"1px solid rgba(255,7,58,0.25)", color:"#ff073a", fontSize:"12px", padding:"2px 8px", borderRadius:3, cursor:"pointer", fontWeight:700 }}>{"\u2715"}</button>
+        var statRows = [
+          { l:"MCAP", v:fmtK(tok.mcap||0), c:"#00ffff" },
+          { l:"SIGNAL", v:sig > 0 ? "\u25C8"+sig+"/100" : "\u2014", c:sig>=88?"#ffd700":sig>=72?"#00ffff":"#8899bb" },
+          { l:"SMART $", v:smartHits > 0 ? smartHits+"x" : "0", c:smartHits>=2?"#39ff14":"#8899bb" },
+          { l:"HOLDERS", v:data.holders||tok.holders||"\u2014", c:(data.holders||tok.holders||0)>100?"#39ff14":"#8899bb" },
+          { l:"BUYS/SELLS", v:buys+"/"+sells, c:"#8899bb" },
+          { l:"BUY %", v:(buys+sells)>0?Math.round(buys/(buys+sells)*100)+"%":"\u2014", c:(buys+sells)>0&&buys/(buys+sells)>0.6?"#39ff14":"#8899bb" },
+          { l:"VOL", v:fmtVol(data.totalVol||tok.vol||0), c:"#ffd700" },
+          { l:"FRESH %", v:(tok.freshPct||0)+"%", c:(tok.freshPct||0)>75?"#ff073a":"#39ff14" },
+          { l:"DEV %", v:tok.devWallet!=null?tok.devWallet.toFixed(1)+"%":"\u2014", c:(tok.devWallet||0)>15?"#ff073a":"#39ff14" },
+        ];
+        // Extra edge stats
+        if (tok.velocity != null) statRows.push({ l:"VELOCITY", v:tok.velocity+"/30s", c:tok.accelerating?"#39ff14":"#8899bb" });
+        if (tok.retentionPct != null) statRows.push({ l:"RETAIN %", v:tok.retentionPct+"%", c:tok.retentionPct>60?"#39ff14":"#ff073a" });
+        if (tok.smallBuyRatio != null) statRows.push({ l:"RETAIL %", v:tok.smallBuyRatio+"%", c:tok.smallBuyRatio>50?"#39ff14":"#8899bb" });
+        if (tok.liquidity > 0) statRows.push({ l:"LIQUIDITY", v:fmtK(tok.liquidity), c:"#00ffff" });
+        if (tok.bondingPct != null && !tok.migrated) statRows.push({ l:"CURVE %", v:Math.round(tok.bondingPct)+"%", c:tok.bondingPct>80?"#39ff14":"#8899bb" });
+        if (tok.deployerGrade) statRows.push({ l:"DEPLOYER", v:tok.deployerGrade, c:tok.deployerGrade==="A"?"#39ff14":tok.deployerGrade==="B"?"#00ffff":"#ff6600" });
+        if (tok.bundleDetected) statRows.push({ l:"BUNDLE", v:(tok.bundleSize||"?")+" wallets", c:"#ff073a" });
+        if (tok.mintAuth) statRows.push({ l:"MINT AUTH", v:"\u26A0 ACTIVE", c:"#ff073a" });
+        if ((tok.topHolderPct||0)>=20) statRows.push({ l:"TOP HOLDER", v:Math.round(tok.topHolderPct)+"%", c:"#ff6600" });
+        if ((tok.riskScore||0)>=50) statRows.push({ l:"RISK", v:tok.riskScore, c:"#ff073a" });
+        if (tok.lpLocked) statRows.push({ l:"LP", v:"LOCKED", c:"#39ff14" });
+        if (tok.rayBurnPct > 0) statRows.push({ l:"LP BURN", v:Math.round(tok.rayBurnPct)+"%", c:tok.rayBurnPct>90?"#39ff14":"#8899bb" });
+
+        // ── HEADER (shared by both layouts) ──
+        var header = (
+          <div style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 14px", borderBottom:"1px solid rgba(0,255,255,0.12)", background:"rgba(0,255,255,0.02)", flexShrink:0, flexWrap:"wrap" }}>
+            <span style={{ fontFamily:"Orbitron,sans-serif", fontSize:"13px", color:"#00ffff", fontWeight:900, letterSpacing:"2px" }}>{"\u25C9"} {tok.name || tok.addr?.slice(0,8)}</span>
+            {tok.alive !== false && <span style={{ fontSize:"8px", color:"#39ff14", background:"rgba(57,255,20,0.1)", padding:"1px 5px", borderRadius:3 }}>{"\u25CF"} LIVE</span>}
+            {tok.migrated && <span style={{ fontSize:"8px", color:"#39ff14", fontWeight:700 }}>{"\uD83C\uDF09"} MIG</span>}
+            {tok.platform && <span style={{ fontSize:"8px", color:"#8899bb", background:"rgba(255,255,255,0.03)", padding:"1px 5px", borderRadius:3 }}>{tok.platform}</span>}
+            <span onClick={function(){navigator.clipboard.writeText(tok.addr);}} style={{ fontSize:"9px", color:"#667799", cursor:"pointer" }} title={tok.addr}>{"\uD83D\uDCCB"} {tok.addr?.slice(0,6)}...{tok.addr?.slice(-4)}</span>
+            <div style={{ marginLeft:"auto", display:"flex", gap:6, alignItems:"center" }}>
+              {!inPort && (
+                <button onClick={function(){ addToMockPortfolio(tok); }}
+                  style={{ background:"rgba(57,255,20,0.06)", border:"1px solid rgba(57,255,20,0.3)", color:"#39ff14", fontSize:"9px", padding:"3px 8px", borderRadius:3, cursor:"pointer", fontFamily:"Orbitron,sans-serif", fontWeight:700 }}>
+                  + PORTFOLIO
+                </button>
+              )}
+              {inPort && <span style={{ fontSize:"8px", color:"#39ff14", fontFamily:"Orbitron,sans-serif" }}>{"\u2713"} IN PORTFOLIO</span>}
+              <button onClick={function(){ setInspectToken(null); }}
+                style={{ background:"rgba(255,7,58,0.06)", border:"1px solid rgba(255,7,58,0.25)", color:"#ff073a", fontSize:"12px", padding:"2px 8px", borderRadius:3, cursor:"pointer", fontWeight:700 }}>{"\u2715"}</button>
+            </div>
+          </div>
+        );
+
+        // ── Shared stats block (used in both layouts) ──
+        var statsBlock = (
+          <div style={{ display:"flex", flexDirection:"column", gap:0 }}>
+            {statRows.map(function(s) {
+              return (
+                <div key={s.l} style={{ display:"flex", justifyContent:"space-between", padding:"3px 0", borderBottom:"1px solid rgba(255,255,255,0.02)" }}>
+                  <span style={{ fontSize:"9px", color:"#667799" }}>{s.l}</span>
+                  <span style={{ fontSize:"10px", color:s.c, fontFamily:"Orbitron,sans-serif", fontWeight:700 }}>{s.v}</span>
+                </div>
+              );
+            })}
+          </div>
+        );
+
+        // ── Position block ──
+        var posBlock = portEntry ? (
+          <div style={{ marginTop:6, padding:"6px 8px", background:"rgba(57,255,20,0.02)", border:"1px solid rgba(57,255,20,0.1)", borderRadius:3 }}>
+            <div style={{ fontFamily:"Orbitron,sans-serif", fontSize:"7px", color:"#39ff14", letterSpacing:"2px", marginBottom:4 }}>YOUR POSITION</div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:4 }}>
+              <div><div style={{ fontSize:"7px", color:"#667799" }}>ENTRY</div><div style={{ fontSize:"11px", color:"#8899bb", fontFamily:"Orbitron,sans-serif", fontWeight:700 }}>{fmtK(portEntry.entryMcap)}</div></div>
+              <div><div style={{ fontSize:"7px", color:"#667799" }}>CURRENT</div><div style={{ fontSize:"11px", color:"#00ffff", fontFamily:"Orbitron,sans-serif", fontWeight:700 }}>{fmtK(tok.mcap||0)}</div></div>
+              <div><div style={{ fontSize:"7px", color:"#667799" }}>P&L</div><div style={{ fontSize:"11px", color:((tok.mcap||0)>portEntry.entryMcap)?"#39ff14":"#ff073a", fontFamily:"Orbitron,sans-serif", fontWeight:900 }}>{portEntry.entryMcap > 0 ? fmtPct(((tok.mcap||0) - portEntry.entryMcap) / portEntry.entryMcap * 100) : "\u2014"}</div></div>
+              <div><div style={{ fontSize:"7px", color:"#667799" }}>ATH</div><div style={{ fontSize:"11px", color:"#ffd700", fontFamily:"Orbitron,sans-serif", fontWeight:700 }}>{fmtK(portEntry.athMcap)} <span style={{fontSize:"8px"}}>({portEntry.entryMcap>0?(portEntry.athMcap/portEntry.entryMcap).toFixed(1)+"x":"\u2014"})</span></div></div>
+            </div>
+            <div style={{ fontSize:"8px", color:"#667799", marginTop:3 }}>Held: {fmtAge(Date.now() - (portEntry.entryTime || Date.now()))}</div>
+          </div>
+        ) : null;
+
+        // ── Intel block ──
+        var intelBlock = (
+          <div style={{ display:"flex", flexDirection:"column", gap:2, marginTop:4 }}>
+            {intel?.hotClusterTokens?.has(tok.addr) && <div style={{ fontSize:"9px", color:"#bf00ff" }}>{"\uD83D\uDD17"} Active in wallet cluster</div>}
+            {intel?.devFlags?.[tok.deployer]?.flagged && <div style={{ fontSize:"9px", color:"#ff073a" }}>{"\uD83D\uDEA9"} Dev: {intel.devFlags[tok.deployer].tier}</div>}
+            {intel?.devFlags?.[tok.deployer] && !intel.devFlags[tok.deployer].flagged && <div style={{ fontSize:"9px", color:"#39ff14" }}>{"\u2705"} Dev: {intel.devFlags[tok.deployer].tier}</div>}
+          </div>
+        );
+
+        // ═══ PORTFOLIO COIN → chart + stats sidebar ═══
+        if (inPort) {
+          return (
+            <div style={{ position:"absolute", top:0, left:0, right:0, bottom:0, zIndex:50, background:"rgba(4,4,18,0.97)", display:"flex", flexDirection:"column", overflow:"hidden" }}>
+              {header}
+              <div style={{ flex:1, display:"flex", overflow:"hidden", minHeight:0 }}>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <iframe src={dexUrl} title="chart" style={{ width:"100%", height:"100%", border:"none", background:"#0a0a1a" }} allow="clipboard-write" />
+                </div>
+                <div style={{ width:250, flexShrink:0, borderLeft:"1px solid rgba(0,255,255,0.08)", overflow:"auto", padding:"10px", display:"flex", flexDirection:"column", gap:4 }}>
+                  {posBlock}
+                  <div style={{ fontFamily:"Orbitron,sans-serif", fontSize:"7px", color:"#00ffff", letterSpacing:"2px", marginTop:6 }}>STATS</div>
+                  {statsBlock}
+                  {intelBlock}
+                </div>
               </div>
             </div>
+          );
+        }
 
-            {/* Body: chart + stats */}
-            <div style={{ flex:1, display:"flex", overflow:"hidden", minHeight:0 }}>
-              {/* Chart */}
-              <div style={{ flex:1, minWidth:0, position:"relative" }}>
-                <iframe src={dexUrl} title="chart" style={{ width:"100%", height:"100%", border:"none", background:"#0a0a1a" }} allow="clipboard-write" />
-              </div>
-
-              {/* Stats sidebar */}
-              <div style={{ width:240, flexShrink:0, borderLeft:"1px solid rgba(0,255,255,0.08)", overflow:"auto", padding:"10px", display:"flex", flexDirection:"column", gap:8 }}>
-                {/* Core stats */}
-                <div style={{ fontFamily:"Orbitron,sans-serif", fontSize:"7px", color:"#00ffff", letterSpacing:"2px", marginBottom:2 }}>STATS</div>
-                {[
-                  { l:"MCAP", v:fmtK(tok.mcap||0), c:"#00ffff" },
-                  { l:"SIGNAL", v:sig > 0 ? "\u25C8"+sig+"/100" : "—", c:sig>=88?"#ffd700":sig>=72?"#00ffff":"#8899bb" },
-                  { l:"SMART $", v:smartHits > 0 ? smartHits+"x" : "0", c:smartHits>=2?"#39ff14":"#8899bb" },
-                  { l:"HOLDERS", v:data.holders||tok.holders||"—", c:(data.holders||tok.holders||0)>100?"#39ff14":"#8899bb" },
-                  { l:"BUYS/SELLS", v:buys+"/"+sells, c:"#8899bb" },
-                  { l:"BUY %", v:(buys+sells)>0?Math.round(buys/(buys+sells)*100)+"%":"—", c:(buys+sells)>0&&buys/(buys+sells)>0.6?"#39ff14":"#8899bb" },
-                  { l:"VOL", v:fmtVol(data.totalVol||tok.vol||0), c:"#ffd700" },
-                  { l:"FRESH %", v:(tok.freshPct||0)+"%", c:(tok.freshPct||0)>75?"#ff073a":"#39ff14" },
-                  { l:"DEV %", v:tok.devWallet!=null?tok.devWallet.toFixed(1)+"%":"—", c:(tok.devWallet||0)>15?"#ff073a":"#39ff14" },
-                ].map(function(s) {
+        // ═══ NON-PORTFOLIO COIN → battlefield-style info panel ═══
+        return (
+          <div style={{ position:"absolute", bottom:0, left:0, right:0, zIndex:50, background:"rgba(4,4,18,0.96)", backdropFilter:"blur(10px)", borderTop:"2px solid rgba(0,255,255,0.15)", maxHeight:"50%", overflow:"auto", padding:"0" }}>
+            {header}
+            <div style={{ padding:"8px 14px" }}>
+              {/* Stats grid */}
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(5, 1fr)", gap:3, marginBottom:6 }}>
+                {statRows.slice(0, 15).map(function(s) {
                   return (
-                    <div key={s.l} style={{ display:"flex", justifyContent:"space-between", padding:"2px 0", borderBottom:"1px solid rgba(255,255,255,0.02)" }}>
-                      <span style={{ fontSize:"8px", color:"#667799" }}>{s.l}</span>
-                      <span style={{ fontSize:"10px", color:s.c, fontFamily:"Orbitron,sans-serif", fontWeight:700 }}>{s.v}</span>
+                    <div key={s.l} style={{ background:"rgba(255,255,255,0.02)", borderRadius:3, padding:"3px 5px", textAlign:"center" }}>
+                      <div style={{ fontSize:"7px", color:"#667799", letterSpacing:"0.5px" }}>{s.l}</div>
+                      <div style={{ fontSize:"11px", color:s.c, fontWeight:700, fontFamily:"Orbitron,sans-serif" }}>{s.v}</div>
                     </div>
                   );
                 })}
-
-                {/* Risk flags */}
-                {(tok.bundleDetected || tok.mintAuth || (tok.riskScore||0)>=50) && (
-                  <div>
-                    <div style={{ fontFamily:"Orbitron,sans-serif", fontSize:"7px", color:"#ff073a", letterSpacing:"2px", marginBottom:4, marginTop:4 }}>RISK FLAGS</div>
-                    {tok.bundleDetected && <div style={{ fontSize:"9px", color:"#ff073a" }}>{"\uD83D\uDCE6"} Bundle detected ({tok.bundleSize||"?"} wallets)</div>}
-                    {tok.mintAuth && <div style={{ fontSize:"9px", color:"#ff073a" }}>{"\u26A0"} Mint authority active</div>}
-                    {(tok.riskScore||0)>=50 && <div style={{ fontSize:"9px", color:"#ff073a" }}>{"\u2620"} Risk score: {tok.riskScore}</div>}
-                    {(tok.topHolderPct||0)>=20 && <div style={{ fontSize:"9px", color:"#ff6600" }}>{"\uD83D\uDC0B"} Top holder: {Math.round(tok.topHolderPct)}%</div>}
-                  </div>
-                )}
-
-                {/* Portfolio entry if in port */}
-                {portEntry && (
-                  <div>
-                    <div style={{ fontFamily:"Orbitron,sans-serif", fontSize:"7px", color:"#39ff14", letterSpacing:"2px", marginBottom:4, marginTop:4 }}>YOUR POSITION</div>
-                    <div style={{ fontSize:"9px", color:"#8899bb" }}>Entry: {fmtK(portEntry.entryMcap)}</div>
-                    <div style={{ fontSize:"9px", color:"#8899bb" }}>Current: {fmtK(tok.mcap||0)}</div>
-                    <div style={{ fontSize:"9px", color:((tok.mcap||0)>portEntry.entryMcap)?"#39ff14":"#ff073a", fontWeight:700 }}>
-                      P&L: {portEntry.entryMcap > 0 ? fmtPct(((tok.mcap||0) - portEntry.entryMcap) / portEntry.entryMcap * 100) : "—"}
-                    </div>
-                    <div style={{ fontSize:"9px", color:"#ffd700" }}>ATH: {fmtK(portEntry.athMcap)} ({portEntry.entryMcap>0?(portEntry.athMcap/portEntry.entryMcap).toFixed(1)+"x":"—"})</div>
-                    <div style={{ fontSize:"8px", color:"#667799" }}>Held: {fmtAge(Date.now() - (portEntry.entryTime || Date.now()))}</div>
-                  </div>
-                )}
-
-                {/* Intel overlays */}
-                {intel?.hotClusterTokens?.has(tok.addr) && (
-                  <div style={{ fontSize:"9px", color:"#bf00ff", marginTop:4 }}>{"\uD83D\uDD17"} Active in wallet cluster</div>
-                )}
-                {intel?.devFlags?.[tok.deployer] && (
-                  <div style={{ fontSize:"9px", color:intel.devFlags[tok.deployer].flagged?"#ff073a":"#39ff14", marginTop:2 }}>
-                    {intel.devFlags[tok.deployer].flagged ? "\uD83D\uDEA9" : "\u2705"} Dev: {intel.devFlags[tok.deployer].tier}
-                  </div>
-                )}
               </div>
+              {/* Overflow stats */}
+              {statRows.length > 15 && (
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(5, 1fr)", gap:3, marginBottom:6 }}>
+                  {statRows.slice(15).map(function(s) {
+                    return (
+                      <div key={s.l} style={{ background:"rgba(255,255,255,0.02)", borderRadius:3, padding:"3px 5px", textAlign:"center" }}>
+                        <div style={{ fontSize:"7px", color:"#667799", letterSpacing:"0.5px" }}>{s.l}</div>
+                        <div style={{ fontSize:"11px", color:s.c, fontWeight:700, fontFamily:"Orbitron,sans-serif" }}>{s.v}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {intelBlock}
             </div>
           </div>
         );
