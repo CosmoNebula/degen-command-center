@@ -6816,6 +6816,7 @@ export default function DegenCommandCenter(){
               flashBoard30s={live.flashBoard30s}
               flashBoard1m={live.flashBoard1m}
               marketTemp={intel?.marketTemp}
+              onSelectToken={selectToken}
               isActive={leftTab==="AI"}
             />
           </div>}

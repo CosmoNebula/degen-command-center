@@ -30,6 +30,13 @@ function claudeGetKeyStatus(key) {
   return !key ? "no_key" : key.startsWith("sk-ant-") ? "ready" : "invalid";
 }
 
+function fmtVol(n) {
+  if (!n || n < 0) return "$0";
+  if (n >= 1000000) return "$" + (n / 1000000).toFixed(1) + "M";
+  if (n >= 1000) return "$" + (n / 1000).toFixed(0) + "K";
+  return "$" + Math.round(n);
+}
+
 // ─────────────────────────────────────────────
 // AUTO-ANALYSIS ENGINE — computes real observations from live data
 // No API key needed. Runs client-side. Everyone gets the same intelligence.
@@ -77,7 +84,7 @@ function analyzeField(tokens, tradeData, sigScores, lockedTokens, intel, flash30
 
   // ── ACCELERATION (flash movers) ──
   (flash30 || []).forEach(function(f) {
-    var chg = Math.round(f.change30s || 0);
+    var chg = Math.round(f.gain || 0);
     if (Math.abs(chg) >= 15) {
       obs.push({
         type: chg > 0 ? "acceleration" : "dump", sev: Math.abs(chg) >= 40 ? "critical" : "high",
@@ -244,7 +251,7 @@ function buildSnapshot(tokensRef, tradeDataRef, sigScoresRef, lockedTokens, inte
     locked: locked.length,
     market: { temp: marketTemp?.temp || "?", score: marketTemp?.score || 50, bull: marketTemp?.bullPressure || 0, bear: marketTemp?.bearPressure || 0 },
     tokens: topTokens,
-    flash30: (flash30 || []).slice(0, 6).map(function(t) { return { name: t.name, chg: Math.round(t.change30s || 0) }; }),
+    flash30: (flash30 || []).slice(0, 6).map(function(t) { return { name: t.name, chg: Math.round(t.gain || 0) }; }),
     clusters: (intel?.clusters || []).length,
     devFlags: intel?.devFlags ? Object.keys(intel.devFlags).length : 0,
     snipeWindow: intel?.snipeWindow || null,
@@ -346,7 +353,7 @@ var SYSTEM_PROMPT = "You are the intelligence officer inside degen-LIVE \u2014 a
 
 export default function ClaudeRoom({
   tokensRef, tokens, lockedTokens, tradeDataRef, signalScoresRef,
-  intel, flashBoard30s, flashBoard1m, marketTemp, isActive,
+  intel, flashBoard30s, flashBoard1m, marketTemp, isActive, onSelectToken,
 }) {
   // ── Config ──
   var ANTHROPIC_KEY = null;
@@ -476,6 +483,8 @@ export default function ClaudeRoom({
         smartHits: data.smartMoneyHits || (data.smartWallets ? data.smartWallets.size : 0),
         holders: data.holders || t.holders || 0,
         buyPct: (buys + sells) > 0 ? Math.round(buys / (buys + sells) * 100) : 0,
+        vol: data.totalVol || t.vol || 0,
+        age: data.launchTime ? Date.now() - data.launchTime : null,
         isLocked: locked.some(function(l) { return l.addr === t.addr; }),
         migrated: !!t.migrated,
       };
@@ -525,16 +534,16 @@ export default function ClaudeRoom({
       {/* ═══ HEADER ═══ */}
       <div style={{ display:"flex", alignItems:"center", gap:"8px", padding:"6px 12px", borderBottom:"1px solid rgba(0,255,255,0.08)", background:"rgba(0,255,255,0.015)", flexShrink:0, flexWrap:"wrap" }}>
         <div style={{ fontFamily:"Orbitron,sans-serif", fontSize:"10px", color:"#00ffff", letterSpacing:"3px", fontWeight:900, whiteSpace:"nowrap" }}>{"\u25C8"} INTELLIGENCE OFFICE</div>
-        <div style={{ fontSize:"9px", color:"#333355", whiteSpace:"nowrap" }}>{sessionMin}m {"\u00b7"} {aliveCount} alive {"\u00b7"} {locked.length} locked {"\u00b7"} scan #{scanCount.current}</div>
+        <div style={{ fontSize:"9px", color:"#667799", whiteSpace:"nowrap" }}>{sessionMin}m {"\u00b7"} {aliveCount} alive {"\u00b7"} {locked.length} locked {"\u00b7"} scan #{scanCount.current}</div>
 
         <div style={{ display:"flex", gap:"5px", alignItems:"center", marginLeft:"auto", flexWrap:"wrap" }}>
           <select value={scanSecs} onChange={function(e) { setScanSecs(Number(e.target.value)); }}
             style={{ background:"#0a0a1a", border:"1px solid rgba(0,255,255,0.12)", color:"#00ffff", fontSize:"9px", padding:"2px 4px", borderRadius:"3px", cursor:"pointer", fontFamily:"'Share Tech Mono',monospace" }}>
             <option value={5}>5s</option><option value={10}>10s</option><option value={15}>15s</option><option value={30}>30s</option>
           </select>
-          <Btn active={autoScan} color={autoScan?"#39ff14":"#333355"} onClick={function(){setAutoScan(function(v){return !v;});}}>{autoScan?"\u25CF SCANNING":"\u25CB AUTO-SCAN"}</Btn>
+          <Btn active={autoScan} color={autoScan?"#39ff14":"#667799"} onClick={function(){setAutoScan(function(v){return !v;});}}>{autoScan?"\u25CF SCANNING":"\u25CB AUTO-SCAN"}</Btn>
           <Btn color="#bf00ff" onClick={exportDebrief}>DEBRIEF</Btn>
-          <Btn color="#333355" onClick={function(){setChatMessages([]);setObservations([]);}}>CLEAR</Btn>
+          <Btn color="#667799" onClick={function(){setChatMessages([]);setObservations([]);}}>CLEAR</Btn>
 
           {/* Brain */}
           <div style={{ display:"flex", alignItems:"center", gap:"4px", padding:"3px 7px", background:"rgba(255,255,255,0.02)", border:"1px solid "+brainDisplay.color+"30", borderRadius:"3px" }}>
@@ -572,7 +581,7 @@ export default function ClaudeRoom({
                   return (
                     <div key={i} style={{ padding:"4px 6px", borderLeft:"2px solid "+color, marginBottom:3, background:"rgba(255,255,255,0.012)" }}>
                       <div style={{ color:color, fontSize:"10px" }}>{o.icon} {o.text}</div>
-                      {o.sub && <div style={{ color:"#444466", fontSize:"9px", marginTop:1 }}>{o.sub}</div>}
+                      {o.sub && <div style={{ color:"#7788aa", fontSize:"9px", marginTop:1 }}>{o.sub}</div>}
                     </div>
                   );
                 })}
@@ -617,15 +626,15 @@ export default function ClaudeRoom({
           <Panel title="PORTFOLIO" color="#39ff14" count={portfolio.length}>
             {portfolio.length === 0 && <Empty>Lock tokens to track P&L</Empty>}
             {portfolio.map(function(p, i) {
-              var col = p.pnl > 5 ? "#39ff14" : p.pnl < -5 ? "#ff073a" : "#555577";
+              var col = p.pnl > 5 ? "#39ff14" : p.pnl < -5 ? "#ff073a" : "#8899bb";
               return (
                 <div key={i} style={{ display:"flex", alignItems:"center", gap:"6px", padding:"4px 0", borderBottom:"1px solid rgba(255,255,255,0.03)" }}>
                   <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{ fontSize:"10px", color:"#c0c0e0", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{p.name}</div>
-                    <div style={{ fontSize:"8px", color:"#333355" }}>{fmtK(p.entry)} {"\u2192"} {fmtK(p.current)} {"\u00b7"} {fmtAge(p.held)}</div>
+                    <TokName name={p.name} addr={p.addr} toks={toks} onSelect={onSelectToken} />
+                    <div style={{ fontSize:"8px", color:"#8899bb" }}>{fmtK(p.entry)} {"\u2192"} {fmtK(p.current)} {"\u00b7"} {fmtAge(p.held)}</div>
                   </div>
                   <div style={{ fontFamily:"Orbitron,sans-serif", fontSize:"12px", color:col, fontWeight:900, flexShrink:0 }}>{fmtPct(p.pnl)}</div>
-                  {p.signal > 0 && <div style={{ fontSize:"8px", color:p.signal>=88?"#ffd700":p.signal>=72?"#00ffff":"#333355" }}>{"\u25C8"}{p.signal}</div>}
+                  {p.signal > 0 && <div style={{ fontSize:"8px", color:p.signal>=88?"#ffd700":p.signal>=72?"#00ffff":"#667799" }}>{"\u25C8"}{p.signal}</div>}
                 </div>
               );
             })}
@@ -635,15 +644,17 @@ export default function ClaudeRoom({
           <Panel title="TOP SIGNALS" color="#ffd700" count={topSignals.length}>
             {topSignals.length === 0 && <Empty>Waiting for signal data</Empty>}
             {topSignals.map(function(t, i) {
-              var sc = t.signal >= 88 ? "#ffd700" : t.signal >= 72 ? "#00ffff" : t.signal >= 50 ? "#8888aa" : "#444466";
+              var sc = t.signal >= 88 ? "#ffd700" : t.signal >= 72 ? "#00ffff" : t.signal >= 50 ? "#8888aa" : "#7788aa";
               return (
                 <div key={i} style={{ display:"flex", alignItems:"center", gap:"6px", padding:"3px 0", borderBottom:"1px solid rgba(255,255,255,0.03)" }}>
                   <span style={{ fontFamily:"Orbitron,sans-serif", fontSize:"11px", color:sc, fontWeight:900, width:32, flexShrink:0, textAlign:"right" }}>{"\u25C8"}{t.signal}</span>
                   <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{ fontSize:"10px", color:"#c0c0e0", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                      {t.name}{t.isLocked?" \uD83D\uDD12":""}{t.migrated?" \uD83C\uDF09":""}
+                    <div style={{ display:"flex", alignItems:"center", gap:4 }}>
+                      <TokName name={t.name} addr={t.addr} toks={toks} onSelect={onSelectToken} />
+                      {t.isLocked && <span style={{fontSize:"9px"}}>{"\uD83D\uDD12"}</span>}
+                      {t.migrated && <span style={{fontSize:"9px"}}>{"\uD83C\uDF09"}</span>}
                     </div>
-                    <div style={{ fontSize:"8px", color:"#333355" }}>{fmtK(t.mcap)} {"\u00b7"} {t.smartHits}sw {"\u00b7"} {t.buyPct}% buys {"\u00b7"} {t.holders}w</div>
+                    <div style={{ fontSize:"8px", color:"#8899bb" }}>{fmtK(t.mcap)} {"\u00b7"} {t.smartHits}sw {"\u00b7"} {t.buyPct}% buys {"\u00b7"} {t.holders}w {"\u00b7"} {fmtVol(t.vol)}vol</div>
                   </div>
                 </div>
               );
@@ -654,17 +665,18 @@ export default function ClaudeRoom({
           <Panel title="FLASH 30s" color="#ff073a">
             {!(flashBoard30s?.length) && <Empty>No flash movers</Empty>}
             {(flashBoard30s || []).slice(0, 8).map(function(t, i) {
-              var pct = Math.round(t.change30s || 0);
-              var maxPct = Math.max(1, ...(flashBoard30s || []).slice(0, 8).map(function(x) { return Math.abs(x.change30s || 0); }));
+              var pct = Math.round(t.gain || 0);
+              var maxPct = Math.max(1, ...(flashBoard30s || []).slice(0, 8).map(function(x) { return Math.abs(x.gain || 0); }));
               var barW = Math.min(100, Math.abs(pct) / maxPct * 100);
-              var col = pct > 20 ? "#39ff14" : pct > 5 ? "#ffd700" : pct < -10 ? "#ff073a" : "#555577";
+              var col = pct > 20 ? "#39ff14" : pct > 5 ? "#ffd700" : pct < -10 ? "#ff073a" : "#8899bb";
               return (
                 <div key={i} style={{ display:"flex", alignItems:"center", gap:"6px", padding:"2px 0" }}>
-                  <span style={{ fontSize:"10px", color:"#666688", width:70, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", flexShrink:0 }}>{t.name}</span>
+                  <span style={{ width:70, flexShrink:0 }}><TokName name={t.name} addr={t.addr} toks={toks} onSelect={onSelectToken} /></span>
+                  <span style={{ fontSize:"8px", color:"#667799", width:40, flexShrink:0, textAlign:"center" }}>{fmtK(t.mcap)}</span>
                   <div style={{ flex:1, height:8, background:"rgba(255,255,255,0.03)", borderRadius:3, overflow:"hidden" }}>
                     <div style={{ width:barW+"%", height:"100%", background:"linear-gradient(90deg,"+col+"60,"+col+")", borderRadius:3, transition:"width 0.8s ease" }} />
                   </div>
-                  <span style={{ fontFamily:"Orbitron,sans-serif", fontSize:"9px", color:col, fontWeight:700, width:40, textAlign:"right", flexShrink:0 }}>{pct>0?"+":""}{pct}%</span>
+                  <span style={{ fontFamily:"Orbitron,sans-serif", fontSize:"9px", color:col, fontWeight:700, width:44, textAlign:"right", flexShrink:0 }}>{pct>0?"+":""}{pct}%</span>
                 </div>
               );
             })}
@@ -701,15 +713,15 @@ export default function ClaudeRoom({
                 { label:"TOKENS", val:aliveCount, color:"#00ffff" },
                 { label:"LOCKED", val:locked.length, color:"#39ff14" },
                 { label:"SCANS", val:scanCount.current, color:"#bf00ff" },
-                { label:"AVG \u25C8", val:avgSignal, color:avgSignal>=50?"#ffd700":"#555577" },
-                { label:"DEV FLAGS", val:devFlagCount, color:devFlagCount>0?"#ff073a":"#333355" },
-                { label:"CLUSTERS", val:(intel?.clusters||[]).length, color:(intel?.clusters||[]).length>0?"#bf00ff":"#333355" },
-                { label:"SMART $", val:smartTokens.length, color:smartTokens.length>0?"#39ff14":"#333355" },
+                { label:"AVG \u25C8", val:avgSignal, color:avgSignal>=50?"#ffd700":"#8899bb" },
+                { label:"DEV FLAGS", val:devFlagCount, color:devFlagCount>0?"#ff073a":"#667799" },
+                { label:"CLUSTERS", val:(intel?.clusters||[]).length, color:(intel?.clusters||[]).length>0?"#bf00ff":"#667799" },
+                { label:"SMART $", val:smartTokens.length, color:smartTokens.length>0?"#39ff14":"#667799" },
               ].map(function(s) {
                 return (
                   <div key={s.label} style={{ textAlign:"center", minWidth:48 }}>
                     <div style={{ fontFamily:"Orbitron,sans-serif", fontSize:"16px", color:s.color, fontWeight:900 }}>{s.val}</div>
-                    <div style={{ fontSize:"7px", color:"#333355", letterSpacing:"1px" }}>{s.label}</div>
+                    <div style={{ fontSize:"7px", color:"#667799", letterSpacing:"1px" }}>{s.label}</div>
                   </div>
                 );
               })}
@@ -727,7 +739,7 @@ export default function ClaudeRoom({
               if ((t.riskScore||0) >= 70) flags.push("\u2620 RISK " + t.riskScore);
               return (
                 <div key={i} style={{ display:"flex", justifyContent:"space-between", padding:"3px 0", borderBottom:"1px solid rgba(255,255,255,0.03)" }}>
-                  <span style={{ fontSize:"10px", color:"#c0c0e0" }}>{t.name||t.addr?.slice(0,8)}</span>
+                  <TokName name={t.name||t.addr?.slice(0,8)} addr={t.addr} toks={toks} onSelect={onSelectToken} />
                   <span style={{ fontSize:"9px", color:"#ff073a" }}>{flags.join(" \u00b7 ")}</span>
                 </div>
               );
@@ -744,15 +756,15 @@ export default function ClaudeRoom({
           <Side title="WOLF PACKS" color="#bf00ff">
             {wolfPacks.length === 0 && <Empty>No coordinated packs detected</Empty>}
             {wolfPacks.map(function(p, i) {
-              var hc = p.heat === "HOT" ? "#ff073a" : p.heat === "WARM" ? "#ffd700" : "#555577";
+              var hc = p.heat === "HOT" ? "#ff073a" : p.heat === "WARM" ? "#ffd700" : "#8899bb";
               return (
                 <div key={i} style={{ padding:"5px 6px", background:"rgba(191,0,255,0.03)", border:"1px solid rgba(191,0,255,0.1)", borderRadius:3, marginBottom:4 }}>
                   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
                     <span style={{ fontFamily:"Orbitron,sans-serif", fontSize:"10px", color:"#bf00ff", fontWeight:700 }}>{p.walletCount}{"\uD83D\uDC3A"} {"\u00b7"} str:{p.strength}</span>
                     <span style={{ fontSize:"8px", color:hc, fontFamily:"Orbitron,sans-serif", fontWeight:700 }}>{p.heat}</span>
                   </div>
-                  <div style={{ fontSize:"9px", color:"#555577", marginTop:2 }}>{p.tokens.map(function(t){return t.name;}).join(", ")}</div>
-                  <div style={{ fontSize:"8px", color:"#333355", marginTop:1 }}>avg {fmtK(p.avgMcap)} {"\u00b7"} {"\u25C8"}{p.avgSignal} {"\u00b7"} {p.totalSmart}sw</div>
+                  <div style={{ fontSize:"9px", color:"#8899bb", marginTop:2, display:"flex", flexWrap:"wrap", gap:"4px" }}>{p.tokens.map(function(t, j){return <TokName key={j} name={t.name} addr={t.addr} toks={toks} onSelect={onSelectToken} />;})}</div>
+                  <div style={{ fontSize:"8px", color:"#667799", marginTop:1 }}>avg {fmtK(p.avgMcap)} {"\u00b7"} {"\u25C8"}{p.avgSignal} {"\u00b7"} {p.totalSmart}sw</div>
                 </div>
               );
             })}
@@ -765,8 +777,8 @@ export default function ClaudeRoom({
               return (
                 <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"3px 0", borderBottom:"1px solid rgba(255,255,255,0.03)" }}>
                   <div>
-                    <div style={{ fontSize:"10px", color:"#c0c0e0" }}>{t.name}</div>
-                    <div style={{ fontSize:"8px", color:"#333355" }}>{fmtK(t.mcap)} {"\u00b7"} {"\u25C8"}{t.signal}</div>
+                    <TokName name={t.name} addr={t.addr} toks={toks} onSelect={onSelectToken} />
+                    <div style={{ fontSize:"8px", color:"#667799" }}>{fmtK(t.mcap)} {"\u00b7"} {"\u25C8"}{t.signal}</div>
                   </div>
                   <span style={{ fontFamily:"Orbitron,sans-serif", fontSize:"12px", color:"#39ff14", fontWeight:900 }}>{t.hits}{"\u00D7"}</span>
                 </div>
@@ -781,7 +793,7 @@ export default function ClaudeRoom({
                 <div style={{ fontFamily:"Orbitron,sans-serif", fontSize:"16px", color:"#ffd700", fontWeight:900 }}>
                   {fmtK(intel.snipeWindow.low)} {"\u2013"} {fmtK(intel.snipeWindow.high)}
                 </div>
-                <div style={{ fontSize:"8px", color:"#333355", marginTop:2 }}>
+                <div style={{ fontSize:"8px", color:"#667799", marginTop:2 }}>
                   {intel.snipeWindow.count||0} winners {"\u00b7"} {(intel.snipeWindow.avgMultiple||0).toFixed(1)}x avg
                 </div>
               </div>
@@ -796,7 +808,7 @@ export default function ClaudeRoom({
               if (!tok) return null;
               return (
                 <div key={i} style={{ display:"flex", justifyContent:"space-between", padding:"2px 0", fontSize:"10px" }}>
-                  <span style={{ color:"#8888aa", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:140 }}>{tok.name||addr.slice(0,8)}</span>
+                  <TokName name={tok.name||addr.slice(0,8)} addr={addr} toks={toks} onSelect={onSelectToken} />
                   <span style={{ color:"#ff00ff", fontFamily:"Orbitron,sans-serif", fontSize:"9px", fontWeight:700 }}>{fmtK(tok.mcap)}</span>
                 </div>
               );
@@ -806,14 +818,14 @@ export default function ClaudeRoom({
           {/* TOKEN DNA */}
           {intel?.tokenDNA?.winnerFingerprints?.length > 0 && (
             <Side title="TOKEN DNA" color="#ffd700">
-              <div style={{ fontSize:"9px", color:"#555577", marginBottom:4 }}>{intel.tokenDNA.winnerFingerprints.length} winner fingerprints loaded</div>
+              <div style={{ fontSize:"9px", color:"#8899bb", marginBottom:4 }}>{intel.tokenDNA.winnerFingerprints.length} winner fingerprints loaded</div>
               {intel.tokenDNA.matches && Object.entries(intel.tokenDNA.matches).slice(0, 5).map(function(entry, i) {
                 var addr = entry[0], match = entry[1];
                 var tok = toks.find(function(t) { return t.addr === addr; });
                 if (!tok) return null;
                 return (
                   <div key={i} style={{ display:"flex", justifyContent:"space-between", padding:"2px 0", borderBottom:"1px solid rgba(255,255,255,0.03)" }}>
-                    <span style={{ fontSize:"10px", color:"#c0c0e0" }}>{tok.name||addr.slice(0,8)}</span>
+                    <TokName name={tok.name||addr.slice(0,8)} addr={addr} toks={toks} onSelect={onSelectToken} />
                     <span style={{ fontFamily:"Orbitron,sans-serif", fontSize:"9px", color:"#ffd700", fontWeight:700 }}>{Math.round(match.similarity||match.score||0)}%</span>
                   </div>
                 );
@@ -862,10 +874,22 @@ function Empty({ children }) {
   return <div style={{ fontSize:"9px", color:"#1e1e3a", textAlign:"center", padding:"8px 0" }}>{children}</div>;
 }
 
+function TokName({ name, addr, toks, onSelect }) {
+  return (
+    <span onClick={function() {
+      if (!onSelect || !addr) return;
+      var tok = (toks || []).find(function(t) { return t.addr === addr; });
+      if (tok) onSelect(tok);
+    }}
+    style={{ cursor: onSelect && addr ? "pointer" : "default", fontSize:"10px", color:"#c0c0e0", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", borderBottom: onSelect && addr ? "1px dotted rgba(0,255,255,0.2)" : "none" }}
+    title={addr || ""}>{name}</span>
+  );
+}
+
 function Btn({ children, onClick, color, active }) {
   return (
     <button onClick={onClick}
-      style={{ background:active?"rgba(57,255,20,0.08)":"rgba(255,255,255,0.02)", border:"1px solid "+(color||"#333355")+"40", color:color||"#333355", fontSize:"9px", padding:"3px 8px", borderRadius:"3px", cursor:"pointer", fontFamily:"Orbitron,sans-serif", fontWeight:700, letterSpacing:"1px" }}>
+      style={{ background:active?"rgba(57,255,20,0.08)":"rgba(255,255,255,0.02)", border:"1px solid "+(color||"#667799")+"40", color:color||"#667799", fontSize:"9px", padding:"3px 8px", borderRadius:"3px", cursor:"pointer", fontFamily:"Orbitron,sans-serif", fontWeight:700, letterSpacing:"1px" }}>
       {children}
     </button>
   );
