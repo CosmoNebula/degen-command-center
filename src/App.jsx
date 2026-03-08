@@ -320,7 +320,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
   
   useEffect(()=>{
     const lockedAddrs=new Set((lockedRef.current||[]).map(l=>l.addr));
-    tokens.filter(t=>t.qualified||t.migrated||lockedAddrs.has(t.addr)).forEach(t=>{
+    tokens.filter(t=>(t.qualified||t.migrated||lockedAddrs.has(t.addr))&&((t.mcap||0)>=3200||lockedAddrs.has(t.addr))).forEach(t=>{
       const existing=tokensRef.current.find(e=>e.id===t.id);
       if(!existing){
         const copy={...t};
@@ -5645,13 +5645,13 @@ export default function DegenCommandCenter(){
         const next = prev.map(t => {
           if (!t.inHoldingBay) return t;
           const age = now - (t.holdingEnteredAt || now);
-          // Incinerate: mcap = 0 after 30s (never got data) or mcap < $500
-          if (age > 30000 && (t.mcap || 0) < 500) {
+          // Incinerate: dead tokens (mcap < $3200 after 20s, or no data after 30s)
+          if (age > 20000 && (t.mcap || 0) < 3200) {
             changed = true;
             return {...t, alive:false, inHoldingBay:false, health:0, deathTime:now};
           }
-          // Release: stagger by addr hash, 15-60s window
-          const releaseAfter = 15000 + (parseInt(t.addr?.slice(-4) || '0', 16) % 45000);
+          // Release: stagger by addr hash, 10-30s window
+          const releaseAfter = 10000 + (parseInt(t.addr?.slice(-4) || '0', 16) % 20000);
           if (age >= releaseAfter) {
             changed = true;
             return {...t, inHoldingBay:false, warpIn:true,
