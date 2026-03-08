@@ -7,6 +7,17 @@ import { RARITIES } from "./HunterData.js";
 import { useIntelligence, ARCHETYPES } from "./useIntelligence";
 import ClaudeRoom from "./ClaudeRoom";
 
+// ═══ MOBILE DETECTION HOOK ═══
+function useIsMobile(breakpoint=768){
+  const [isMobile,setIsMobile]=useState(()=>typeof window!=="undefined"&&window.innerWidth<breakpoint);
+  useEffect(()=>{
+    const onResize=()=>setIsMobile(window.innerWidth<breakpoint);
+    window.addEventListener("resize",onResize);
+    return()=>window.removeEventListener("resize",onResize);
+  },[breakpoint]);
+  return isMobile;
+}
+
 var NEON = {
   magenta:"#ff00ff",cyan:"#00ffff",green:"#39ff14",red:"#ff073a",
   orange:"#ff6600",yellow:"#ffe600",purple:"#bf00ff",pink:"#ff6eb4",
@@ -4954,6 +4965,8 @@ function LeaderboardPanel({ SB_URL, SB_KEY, onSelectToken, onSelectWallet, onKil
 }
 
 export default function DegenCommandCenter(){
+  var isMobile=useIsMobile();
+  const [mobileView,setMobileView]=useState("BATTLE"); // BATTLE, LEFT, RIGHT
   const [tokens,setTokens]=useState([]);const [radarPings,setRadarPings]=useState([]);
   const [killStreak,setKillStreak]=useState(0);
   const [dbStatus,setDbStatus]=useState({msg:"",type:"info",ts:0});
@@ -4975,7 +4988,7 @@ export default function DegenCommandCenter(){
   useEffect(()=>{tokens.forEach(t=>{if(t.alive&&(t.mcap||0)>sessionBestAppRef.current.mcap){sessionBestAppRef.current={id:t.id,name:t.name,mcap:t.mcap};}});},[tokens]); // same pattern for dolphin pods
   const [filter,setFilter]=useState("ALL");const [selectedToken,setSelectedToken]=useState(null);
   const [radarTab,setRadarTab]=useState("RADAR");
-  const selectToken=(t)=>{setSelectedToken(t);};
+  const selectToken=(t)=>{setSelectedToken(t);if(isMobile)setMobileView("BATTLE");};
   const enrichAndSelect = useCallback(async (addr, stub) => {
     console.log("[enrichAndSelect] addr=", addr, "stub=", stub?.name);
     setSelectedToken({...stub, addr, _loading: true});
@@ -6391,6 +6404,11 @@ export default function DegenCommandCenter(){
           border-radius:4px;cursor:pointer;display:flex;align-items:center;justify-content:center;
           font-size:10px;transition:all 0.15s;flex-shrink:0}
         .tgl:hover{background:rgba(255,0,255,0.1);color:${NEON.magenta};border-color:rgba(255,0,255,0.3)}
+        @media(max-width:768px){
+          .token-row{padding:8px 10px !important}
+          .btn-f{padding:5px 10px !important;font-size:10px !important}
+          body{-webkit-text-size-adjust:none;overscroll-behavior:none}
+        }
       `}</style>
 
       {/* Scanline overlay */}
@@ -6401,16 +6419,16 @@ export default function DegenCommandCenter(){
 
       {/* ═══ HEADER — fixed height, no bounce ═══ */}
       <div style={{background:"linear-gradient(180deg,rgba(20,10,35,0.6),rgba(5,3,14,0.4))",
-        borderBottom:"1px solid rgba(255,255,255,0.04)",padding:"6px 20px",height:52,
+        borderBottom:"1px solid rgba(255,255,255,0.04)",padding:isMobile?"4px 10px":"6px 20px",height:isMobile?42:52,
         display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0,position:"relative",zIndex:10,
         backdropFilter:"blur(10px)",overflow:"hidden"}}>
         <div style={{position:"absolute",top:0,left:"5%",right:"5%",height:1,
           background:"linear-gradient(90deg,transparent,rgba(255,0,255,0.3),rgba(0,255,255,0.2),rgba(255,0,255,0.3),transparent)",
           animation:"headerPulse 4s ease-in-out infinite"}}/>
-        <div style={{flexShrink:0,minWidth:220}}>
-          <h1 style={{fontFamily:"'Orbitron',sans-serif",fontSize:16,fontWeight:900,lineHeight:1.2,
+        <div style={{flexShrink:0,minWidth:isMobile?0:220}}>
+          <h1 style={{fontFamily:"'Orbitron',sans-serif",fontSize:isMobile?11:16,fontWeight:900,lineHeight:1.2,
             background:`linear-gradient(90deg,${NEON.magenta},${NEON.pink},${NEON.cyan})`,
-            WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",letterSpacing:3}}>◈ DEGEN COMMAND CENTER</h1>
+            WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",letterSpacing:isMobile?1:3}}>◈ DEGEN COMMAND CENTER</h1>
           {(()=>{
             const rankIdx=HUNTER_RANKS.indexOf(hunterRank);
             const nextRank=HUNTER_RANKS[rankIdx+1];
@@ -6418,8 +6436,8 @@ export default function DegenCommandCenter(){
             const xpNeeded=nextRank?(nextRank.min-hunterRank.min):xpInRank||1;
             const rankPct=Math.min(100,Math.round((xpInRank/xpNeeded)*100));
             return(
-            <div style={{display:"flex",alignItems:"center",gap:6,marginTop:2,width:"100%",minWidth:220}}>
-              <span style={{fontSize:13,flexShrink:0}}>{hunterRank.icon}</span>
+            <div style={{display:"flex",alignItems:"center",gap:isMobile?3:6,marginTop:isMobile?1:2,width:"100%",minWidth:isMobile?0:220}}>
+              <span style={{fontSize:isMobile?10:13,flexShrink:0}}>{hunterRank.icon}</span>
               <div style={{flex:1,minWidth:0}}>
                 <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:1}}>
                   <span style={{fontSize:9,fontWeight:900,color:hunterRank.color,fontFamily:"'Orbitron',sans-serif",letterSpacing:1}}>{hunterRank.label}</span>
@@ -6434,14 +6452,16 @@ export default function DegenCommandCenter(){
             </div>);
           })()}
         </div>
-                <div style={{display:"flex",gap:14,alignItems:"center",flexShrink:0}}>
-          {[{l:"SCANNED",v:totalScanned,c:NEON.cyan},{l:"DEPLOYED",v:deployed,c:NEON.green},
+                <div style={{display:"flex",gap:isMobile?6:14,alignItems:"center",flexShrink:isMobile?1:0,
+          ...(isMobile?{overflow:"auto",WebkitOverflowScrolling:"touch",maxWidth:"55vw"}:{})}}>
+          {(isMobile?[{l:"SCAN",v:totalScanned,c:NEON.cyan},{l:"DEPL",v:deployed,c:NEON.green},{l:"LOCK",v:lockedTokens.length,c:NEON.yellow}]
+            :[{l:"SCANNED",v:totalScanned,c:NEON.cyan},{l:"DEPLOYED",v:deployed,c:NEON.green},
             {l:"REJECTED",v:rejected,c:NEON.red},{l:"QUAL%",v:qualRate+"%",c:parseInt(qualRate)>40?NEON.green:NEON.orange},
-            {l:"LOCKED",v:lockedTokens.length,c:NEON.yellow},
-            ].map(s=>(
+            {l:"LOCKED",v:lockedTokens.length,c:NEON.yellow}]
+            ).map(s=>(
             <StatChip key={s.l} label={s.l} value={s.v} color={s.c}/>))}
           {/* ── MARKET TEMPERATURE GAUGE ── */}
-          {intel && intel.marketTemp && (() => {
+          {!isMobile && intel && intel.marketTemp && (() => {
             const mt = intel.marketTemp;
             return (
               <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1,
@@ -6458,23 +6478,41 @@ export default function DegenCommandCenter(){
             );
           })()}
           {/* LIVE FLASH moved to battlefield bottom-right */}
-          <div style={{display:"flex",alignItems:"center",gap:5,marginLeft:6}}>
+          <div style={{display:"flex",alignItems:"center",gap:isMobile?3:5,marginLeft:isMobile?2:6}}>
             <div style={{width:6,height:6,borderRadius:"50%",background:NEON.green,
               boxShadow:`0 0 8px ${NEON.green}`,animation:"blink 1s infinite"}}/>
-            <span style={{fontSize:14,color:NEON.green,letterSpacing:2}}>LIVE</span></div>
+            <span style={{fontSize:isMobile?10:14,color:NEON.green,letterSpacing:isMobile?1:2}}>{isMobile?"●":"LIVE"}</span></div>
         </div>
       </div>
 
-      {/* ═══ 3-COLUMN LAYOUT ═══ */}
-      <div style={{display:"grid",gridTemplateColumns:"260px 1fr 260px",
-        flex:1,overflow:"hidden",gap:6,padding:"6px"}}>
+      {/* ═══ MOBILE BOTTOM NAV ═══ */}
+      {isMobile&&<div style={{display:"flex",flexShrink:0,borderTop:"1px solid rgba(255,0,255,0.15)",
+        background:"rgba(5,3,14,0.97)",backdropFilter:"blur(10px)",zIndex:50}}>
+        {[{id:"LEFT",icon:"◉",label:"SCAN",color:NEON.magenta},
+          {id:"BATTLE",icon:"⚔",label:"MAP",color:NEON.cyan},
+          {id:"RIGHT",icon:"🎯",label:"INTEL",color:NEON.yellow}].map(t=>(
+          <button key={t.id} onClick={()=>setMobileView(t.id)} style={{
+            flex:1,padding:"8px 2px 6px",fontSize:9,fontWeight:700,cursor:"pointer",border:"none",
+            fontFamily:"'Orbitron',sans-serif",letterSpacing:0.5,
+            background:mobileView===t.id?`${t.color}15`:"transparent",
+            color:mobileView===t.id?t.color:NEON.dimText,
+            borderTop:mobileView===t.id?`2px solid ${t.color}`:"2px solid transparent",
+            transition:"all 0.15s"}}>
+            <div style={{fontSize:16,marginBottom:2}}>{t.icon}</div>{t.label}
+          </button>))}
+      </div>}
+
+      {/* ═══ 3-COLUMN LAYOUT (desktop) / SINGLE VIEW (mobile) ═══ */}
+      <div style={{display:isMobile?"flex":"grid",
+        ...(isMobile?{flexDirection:"column"}:{gridTemplateColumns:"260px 1fr 260px"}),
+        flex:1,overflow:"hidden",gap:isMobile?0:6,padding:isMobile?"0":"6px"}}>
 
         {/* LEFT: 6-TAB COMMAND PANEL */}
-        <GlassPanel accent={
+        {(!isMobile||mobileView==="LEFT")&&<GlassPanel accent={
           leftTab==="SCANNER"?NEON.magenta:leftTab==="WARLOG"?NEON.orange:
           leftTab==="LEADERS"?"#ffd740":leftTab==="HISTORY"?"#8b5cf6":leftTab==="AI"?"#00c8ff":leftTab==="REPORT"?"#ffa500":
           NEON.cyan
-        } style={{display:"flex",flexDirection:"column",overflow:"hidden"}}>
+        } style={{display:"flex",flexDirection:"column",overflow:"hidden",flex:isMobile?1:undefined}}>
           {/* 2x3 Tab Grid */}
           <div style={{borderBottom:"1px solid rgba(255,255,255,0.06)",flexShrink:0}}>
             {[[{id:"SCANNER",icon:"◉",label:"SCANNER",color:NEON.magenta,count:deployed},
@@ -7244,10 +7282,10 @@ export default function DegenCommandCenter(){
 
 
           </div>
-        </GlassPanel>
+        </GlassPanel>}
 
         {/* CENTER: BATTLEFIELD + FOOTER BAR */}
-        <div style={{display:"flex",flexDirection:"column",gap:4,overflow:"hidden"}}>
+        {(!isMobile||mobileView==="BATTLE")&&<div style={{display:"flex",flexDirection:"column",gap:4,overflow:"hidden",flex:1}}>
         <GlassPanel accent={NEON.cyan} style={{position:"relative",overflow:"hidden",flex:1}}>
           <BattlefieldMap tokens={tokens} lockedTokens={lockedTokens} onSelect={selectToken} tradeDataRef={live.tradeDataRef}
             selectedId={selectedToken?.id} onKillFeed={addKillFeed} onAlienUpdate={setAlienStats}
@@ -7484,12 +7522,12 @@ export default function DegenCommandCenter(){
                     background:ch.pass?"rgba(57,255,20,0.06)":"rgba(255,7,58,0.06)",
                     color:ch.pass?NEON.green:NEON.red}}>{ch.pass?"✓":"✗"} {ch.name}</span>))}
               </div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:2,marginBottom:4}}>
+              <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(3,1fr)":"repeat(6,1fr)",gap:2,marginBottom:4}}>
                 {stats.map(s=>(<div key={s.l} style={{background:"rgba(255,255,255,0.02)",borderRadius:3,padding:"2px 4px",textAlign:"center"}}>
-                  <div style={{fontSize:8,color:NEON.dimText,letterSpacing:1}}>{s.l}</div>
-                  <div style={{fontSize:12,color:s.c,fontWeight:700}}>{s.v}</div></div>))}
+                  <div style={{fontSize:isMobile?7:8,color:NEON.dimText,letterSpacing:1}}>{s.l}</div>
+                  <div style={{fontSize:isMobile?10:12,color:s.c,fontWeight:700}}>{s.v}</div></div>))}
               </div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:2}}>
+              <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(3,1fr)":"repeat(5,1fr)",gap:2}}>
                 {edgeStats.map(s=>(<div key={s.l} style={{padding:"1px 3px"}}>
                   <span style={{fontSize:9,color:NEON.dimText}}>{s.l} </span>
                   <span style={{fontSize:11,color:s.c,fontWeight:700}}>{s.v}</span></div>))}
@@ -7506,7 +7544,7 @@ export default function DegenCommandCenter(){
           const top5m = live.flashBoard5m?.[0];
           return (
             <div style={{
-              height:54, flexShrink:0, minHeight:54, maxHeight:54,
+              height:isMobile?40:54, flexShrink:0, minHeight:isMobile?40:54, maxHeight:isMobile?40:54,
               display:"flex", gap:4, overflow:"hidden",
             }}>
 
@@ -7570,7 +7608,7 @@ export default function DegenCommandCenter(){
               })()}
 
               {/* ── BUILDING SLOT — future expansion ── */}
-              <div style={{
+              {!isMobile&&<div style={{
                 width:80, flexShrink:0,
                 background:"rgba(5,2,14,0.85)",
                 border:"1px dashed rgba(255,255,255,0.06)",
@@ -7580,13 +7618,13 @@ export default function DegenCommandCenter(){
               }}>
                 <span style={{fontSize:16}}>🏗</span>
                 <span style={{fontSize:7,color:"rgba(255,255,255,0.3)",fontFamily:"'Orbitron'",letterSpacing:1}}>SOON</span>
-              </div>
+              </div>}
 
             </div>
           );
         })()}
-        </div>{/* end center flex-column */}
-        <div style={{display:"flex",flexDirection:"column",gap:6,overflow:"hidden"}}>
+        </div>}{/* end center flex-column */}
+        {(!isMobile||mobileView==="RIGHT")&&<div style={{display:"flex",flexDirection:"column",gap:6,overflow:"hidden",flex:1}}>
           {/* RADAR + FLEET tabs */}
           <GlassPanel accent={radarTab==="FLEET"?"#ff00ff":radarTab==="CHARACTER"?"#ffd740":NEON.cyan} style={{flexShrink:0}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"2px 8px",gap:2}}>
@@ -8054,11 +8092,11 @@ export default function DegenCommandCenter(){
               </>}
             </div>
           </GlassPanel>
-        </div>
+        </div>}
       </div>
       {/* ── DB SYNC STATUS PILL ── */}
       {dbStatus.msg&&(Date.now()-dbStatus.ts)<8000&&<div style={{
-        position:"fixed",bottom:12,left:"50%",transform:"translateX(-50%)",
+        position:"fixed",bottom:isMobile?56:12,left:"50%",transform:"translateX(-50%)",
         zIndex:9999,pointerEvents:"none",
         background:"rgba(5,3,20,0.92)",border:`1px solid ${dbStatus.type==="success"?"#39ff14":dbStatus.type==="error"?"#ff073a":"#00e5ff"}40`,
         borderRadius:20,padding:"4px 14px",
