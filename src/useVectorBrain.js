@@ -3,8 +3,8 @@
 // Free: no embedding API. Uses keyword/recency retrieval — works great for trading data.
 // Heartbeat system shows friends when Cosmo is live vs offline.
 
-var SB_URL = import.meta.env.VITE_SUPABASE_URL;
-var SB_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+var SB_URL = "https://yrmjphhfgduysoftnuxv.supabase.co";
+var SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlybWpwaGhmZ2R1eXNvZnRudXh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3MzI5MzAsImV4cCI6MjA4ODMwODkzMH0.scHhvTGiABJDybgbjgjilw8XuxOfmWPsqo4iytMZmio";
 
 var SB_HEADERS = {
   'Content-Type': 'application/json',
