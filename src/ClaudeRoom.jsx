@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useVectorBrain, queryMemories, formatMemoriesForContext, getBrainStatusDisplay } from "./useVectorBrain";
 
 // ─────────────────────────────────────────────
 // PURE HELPER FUNCTIONS
@@ -240,6 +241,7 @@ function generateMockResponse(snap) {
 // ─────────────────────────────────────────────
 export default function ClaudeRoom({
   tokensRef,
+  tokens,
   lockedTokens,
   tradeDataRef,
   signalScoresRef,
@@ -256,6 +258,9 @@ export default function ClaudeRoom({
   var BUDGET_USD            = 50;
   var MOCK_CALL_COST_CENTS  = 1.935;
   var IS_MOCK_MODE          = claudeGetKeyStatus(ANTHROPIC_KEY) !== "ready";
+
+  var { brainStatus, memCount } = useVectorBrain({ tokens: tokens || [] });
+  var brainDisplay = getBrainStatusDisplay(brainStatus.status, brainStatus.lastSeen);
 
   var SYSTEM_PROMPT = `You are the intelligence officer embedded inside degen-LIVE — a real-time Solana memecoin trading dashboard built by Cosmo. You have a dedicated office inside the dashboard and watch live token data to diagnose problems, identify patterns, and suggest improvements.
 
@@ -504,6 +509,10 @@ Rules:
   const callClaude = useCallback(async (userMessage, isAuto = false) => {
     setIsLoading(true);
 
+    // ── BRAIN MEMORY RETRIEVAL ──────────────────────────────────────────────
+    var memories = await queryMemories(userMessage, 15);
+    var brainContext = formatMemoriesForContext(memories);
+
     // ── MOCK PATH — no API, uses generateMockResponse ──────────────────────
     if (IS_MOCK_MODE || offlineStatus) {
       await new Promise(r => setTimeout(r, 900 + Math.random() * 900)); // fake latency
@@ -566,7 +575,7 @@ Rules:
           "anthropic-version": "2023-06-01",
           "anthropic-dangerous-direct-browser-access": "true",
         },
-        body: JSON.stringify({ model: CLAUDE_MODEL, max_tokens: 1000, system: SYSTEM_PROMPT, messages }),
+        body: JSON.stringify({ model: CLAUDE_MODEL, max_tokens: 1000, system: SYSTEM_PROMPT + brainContext, messages }),
       });
 
       if (res.status === 529 || res.status === 402) {
@@ -694,12 +703,12 @@ Rules:
     });
 
   // ─── TELEMETRY DERIVED VALUES ──────────────
-  const tokens       = tokensRef?.current || [];
+  const toks         = tokensRef?.current || [];
   const locked       = lockedTokens || [];
   const sigScores    = signalScoresRef?.current || {};
-  const parked       = tokens.filter(t => t.isParked).length;
-  const field        = tokens.filter(t => !t.isParked && !locked.find(l => l.mint === t.mint)).length;
-  const fromDB       = tokens.filter(t => t.fromDB).length;
+  const parked       = toks.filter(t => t.isParked).length;
+  const field        = toks.filter(t => !t.isParked && !locked.find(l => l.mint === t.mint)).length;
+  const fromDB       = toks.filter(t => t.fromDB).length;
   const sessionMin   = Math.round((Date.now() - sessionStartRef.current) / 60000);
   const topCyclers   = Object.entries(parkCycleRef.current).sort(([,a],[,b]) => b.count - a.count).slice(0, 8);
   const recentLocks  = Object.values(lockHistoryRef.current).sort((a,b) => (b.lockedAt||0)-(a.lockedAt||0)).slice(0, 10);
@@ -713,7 +722,7 @@ Rules:
 
   // signal score distribution
   const sigBuckets = [0,0,0,0,0]; // <25, 25-50, 50-70, 70-88, 88+
-  tokens.forEach(t => {
+  toks.forEach(t => {
     const s = sigScores[t.mint] || 0;
     if (s >= 88) sigBuckets[4]++;
     else if (s >= 70) sigBuckets[3]++;
@@ -722,7 +731,7 @@ Rules:
     else sigBuckets[0]++;
   });
   const sigMax = Math.max(1, ...sigBuckets);
-  const sigAvg  = tokens.length ? Math.round(tokens.reduce((a,t) => a + (sigScores[t.mint]||0), 0) / tokens.length) : 0;
+  const sigAvg  = toks.length ? Math.round(toks.reduce((a,t) => a + (sigScores[t.mint]||0), 0) / toks.length) : 0;
 
   // lock outcomes
   const lockVals  = Object.values(lockHistoryRef.current);
@@ -770,6 +779,11 @@ Rules:
           <div style={{ display:"flex", alignItems:"center", gap:"4px", padding:"3px 7px", background:IS_MOCK_MODE?"rgba(255,7,58,0.06)":"rgba(57,255,20,0.06)", border:`1px solid ${IS_MOCK_MODE?"rgba(255,7,58,0.2)":"rgba(57,255,20,0.2)"}`, borderRadius:"3px" }}>
             <div style={{ width:5, height:5, borderRadius:"50%", background:IS_MOCK_MODE?"#ff073a":"#39ff14", boxShadow:`0 0 5px ${IS_MOCK_MODE?"#ff073a":"#39ff14"}`, animation:"pulse 1.8s ease-in-out infinite" }} />
             <span style={{ fontFamily:"Orbitron,sans-serif", fontSize:"8px", fontWeight:700, letterSpacing:"1px", color:IS_MOCK_MODE?"#ff073a":"#39ff14" }}>{IS_MOCK_MODE?"MOCK":"LIVE"}</span>
+          </div>
+          <div style={{ display:"flex", alignItems:"center", gap:"4px", padding:"3px 7px", background:"rgba(255,255,255,0.02)", border:`1px solid ${brainDisplay.color}30`, borderRadius:"3px" }}>
+            <div style={{ width:5, height:5, borderRadius:"50%", background:brainDisplay.color, boxShadow:`0 0 5px ${brainDisplay.color}`, animation:"pulse 1.8s ease-in-out infinite" }} />
+            <span style={{ fontFamily:"Orbitron,sans-serif", fontSize:"8px", fontWeight:700, letterSpacing:"1px", color:brainDisplay.color }}>{brainDisplay.label}</span>
+            <span style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:"8px", color:"#333355" }}>{memCount}mem</span>
           </div>
         </div>
       </div>
@@ -868,10 +882,10 @@ Rules:
           <TileBlock title="TOKEN FLOW" color="#00ffff">
             <div style={{ display:"flex", flexDirection:"column", gap:"6px", padding:"4px 0" }}>
               {[
-                { label:"FIELD",  val:field,           max:tokens.length||1, color:"#00ffff" },
-                { label:"LOCKED", val:locked.length,   max:tokens.length||1, color:"#39ff14" },
-                { label:"PARKED", val:parked,           max:tokens.length||1, color:"#ffd700" },
-                { label:"DB",     val:fromDB,           max:tokens.length||1, color:"#444466" },
+                { label:"FIELD",  val:field,           max:toks.length||1, color:"#00ffff" },
+                { label:"LOCKED", val:locked.length,   max:toks.length||1, color:"#39ff14" },
+                { label:"PARKED", val:parked,           max:toks.length||1, color:"#ffd700" },
+                { label:"DB",     val:fromDB,           max:toks.length||1, color:"#444466" },
               ].map(({label,val,max,color}) => (
                 <div key={label}>
                   <div style={{ display:"flex", justifyContent:"space-between", marginBottom:2 }}>
@@ -885,7 +899,7 @@ Rules:
               ))}
               <div style={{ marginTop:4, padding:"4px 6px", background:"rgba(255,255,255,0.02)", borderRadius:3, display:"flex", justifyContent:"space-between" }}>
                 <span style={{ fontSize:"9px", color:"#1e1e3a" }}>TOTAL</span>
-                <span style={{ fontFamily:"Orbitron,sans-serif", fontSize:"11px", color:"#c0c0e0", fontWeight:900 }}>{tokens.length}</span>
+                <span style={{ fontFamily:"Orbitron,sans-serif", fontSize:"11px", color:"#c0c0e0", fontWeight:900 }}>{toks.length}</span>
               </div>
             </div>
           </TileBlock>
@@ -1089,7 +1103,7 @@ Rules:
           <SideBlock title="HOT CLUSTER TOKENS" color="#ff00ff">
             {intel?.hotClusterTokens?.size > 0
               ? [...intel.hotClusterTokens].slice(0,6).map((mint,i) => {
-                  const tok = tokens.find(t => t.mint===mint);
+                  const tok = toks.find(t => t.mint===mint);
                   return tok ? (
                     <div key={i} style={{ display:"flex", justifyContent:"space-between", padding:"2px 0", fontSize:"10px" }}>
                       <span style={{ color:"#8888aa", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:140 }}>{tok.name||mint.slice(0,8)}</span>

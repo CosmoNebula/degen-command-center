@@ -6808,6 +6808,7 @@ export default function DegenCommandCenter(){
           {leftTab==="AI"&&<div style={{height:"100%",display:"flex",flexDirection:"column",overflow:"hidden"}}>
             <ClaudeRoom
               tokensRef={mainTokensRef}
+              tokens={tokens}
               lockedTokens={lockedTokens}
               tradeDataRef={live.tradeDataRef}
               signalScoresRef={live.signalScoresRef}
@@ -6845,6 +6846,7 @@ export default function DegenCommandCenter(){
             <div style={{flex:1,overflow:"hidden"}}>
               <ClaudeRoom
                 tokensRef={mainTokensRef}
+                tokens={tokens}
                 lockedTokens={lockedTokens}
                 tradeDataRef={live.tradeDataRef}
                 signalScoresRef={live.signalScoresRef}
