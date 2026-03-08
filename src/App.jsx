@@ -6855,7 +6855,7 @@ export default function DegenCommandCenter(){
                 flashBoard30s={live.flashBoard30s}
                 flashBoard1m={live.flashBoard1m}
                 marketTemp={intel?.marketTemp}
-                onSelectToken={(t)=>{selectToken(t);setLeftTab("SCANNER");}}
+                onSelectToken={selectToken}
                 isActive={true}
               />
             </div>
@@ -7580,6 +7580,9 @@ export default function DegenCommandCenter(){
                 <button onClick={()=>lockToken(token)} style={{background:`linear-gradient(135deg,${NEON.yellow}18,${NEON.yellow}08)`,
                   border:`1px solid ${NEON.yellow}30`,color:NEON.yellow,padding:"2px 10px",borderRadius:4,cursor:"pointer",
                   fontFamily:"'Share Tech Mono',monospace",fontSize:12}}>🎯 LOCK</button>
+                <button onClick={()=>window.dispatchEvent(new CustomEvent("degen-portfolio-add",{detail:token}))} style={{background:"linear-gradient(135deg,rgba(57,255,20,0.08),rgba(57,255,20,0.03))",
+                  border:"1px solid rgba(57,255,20,0.3)",color:"#39ff14",padding:"2px 10px",borderRadius:4,cursor:"pointer",
+                  fontFamily:"'Share Tech Mono',monospace",fontSize:12}}>📊 PORTFOLIO</button>
                 <button onClick={()=>{setSelectedToken(null)}} style={{marginLeft:"auto",background:"none",border:"none",
                   color:NEON.dimText,cursor:"pointer",fontSize:16,padding:"2px 6px"}}>✕</button>
               </div>
