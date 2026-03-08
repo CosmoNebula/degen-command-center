@@ -528,21 +528,16 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
       aliveAll.forEach(t=>{
         const isLocked=!!lockedRef.current.find(l=>l.id===t.id);
         const td=tradeData.current[t.addr];
-        // DB tokens with no live trade data: measure silence from session load time so it grows naturally
-        const lastTrade=td?.lastTradeTime||(t.fromDB?t.sessionLoadTime:t.timestamp)||0;
+        const lastTrade=td?.lastTradeTime||t.timestamp||0;
         const silentMs=now_vs-lastTrade;
-        // DB-loaded tokens get a 3min grace on session start before any park rules apply
-        const sessionAge = now_vs - (t.sessionLoadTime || t.timestamp || now_vs);
-        const dbGrace = t.fromDB && sessionAge < 180000;
         const staleHigh=(t.mcap||0)>=40000&&silentMs>150000; // >=$40K, silent 2.5min
-        const staleMid=(t.mcap||0)<40000&&silentMs>180000&&!t.fromDB; // <$40K live tokens, silent 3min
-        const staleDB=t.fromDB&&(t.mcap||0)<40000&&silentMs>240000&&sessionAge>180000; // DB tokens under $40K silent 4min after grace
+        const staleMid=(t.mcap||0)<40000&&silentMs>180000; // <$40K, silent 3min
         // preMigration: either explicit bondingPct>80 OR mcap proxy ($30K-$75K non-migrated = near pump.fun ceiling)
         const mcapForPark=t.mcap||0;
         // nearMigrationMcap: in bonding ceiling range AND silent — don't park active traders
         const nearMigrationMcap=mcapForPark>=22000&&mcapForPark<=85000&&!t.migrated&&silentMs>90000;
-        const preMigration=((t.bondingPct||0)>80||nearMigrationMcap)&&!t.migrated&&(!t.fromDB||sessionAge>180000);
-        const shouldKillStale=(staleHigh||staleMid||staleDB||preMigration)&&!isLocked&&!t.laserIn&&!t.accelerating&&!dbGrace;
+        const preMigration=((t.bondingPct||0)>80||nearMigrationMcap)&&!t.migrated;
+        const shouldKillStale=(staleHigh||staleMid||preMigration)&&!isLocked&&!t.laserIn&&!t.accelerating;
         if(shouldKillStale){
           // Only drain once per second (every 30 frames) — 3-6hp/s = ~15-30s to die
           if(f%30===0){
@@ -575,7 +570,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
       const hotSet=new Set(aliveAll.slice(0,60).map(t=>t.id)); // top 60 = full effects
 
       tokensRef.current.forEach(t=>{
-        if(!t.alive)return;if(t.inHoldingBay)return; // held for audit
+        if(!t.alive)return;
         t.age++;
         const isVisual=visualSet.has(t.id);
         if(t.warpIn){t.warpIn=false;t.by=0.95;t.bx=rand(0.08,0.92);}
@@ -5363,7 +5358,7 @@ export default function DegenCommandCenter(){
   const viewWalletDetail=(walletAddr)=>{setLeftTab("REPORT");setSelectedWallet(walletAddr);setReportView("detail");};
   const [leftTab,setLeftTab]=useState("SCANNER");
   const [showMenu,setShowMenu]=useState(false);
-  const [bayExpanded,setBayExpanded]=useState(false);
+  // bayExpanded state removed — holding bay eliminated
   const [dangerTab,setDangerTab]=useState("30s");
   const [flashDangerTab,setFlashDangerTab]=useState("30s");
   const [intelEvents,setIntelEvents]=useState([]);
@@ -5546,16 +5541,10 @@ export default function DegenCommandCenter(){
     }
   }, [!!live.walletScoresRef]);
 
-  // Pipe live tokens into state — preserve ALL DB tokens (holding OR released) that aren't in live feed
+  // Pipe live tokens into state — clean sessions, no DB token carryover
   useEffect(() => {
     if (live.tokens.length > 0) {
-      setTokens(prev => {
-        // Keep any DB-originated token that is still alive and NOT already in live feed
-        // This includes: still-holding tokens AND already-released DB tokens on the battlefield
-        const liveAddrs = new Set(live.tokens.map(t => t.addr));
-        const dbSurvivors = prev.filter(t => t.fromDB && t.alive && !liveAddrs.has(t.addr));
-        return [...live.tokens, ...dbSurvivors];
-      });
+      setTokens(live.tokens);
       mainTokensRef.current=live.tokens;
       setTotalScanned(live.stats.scanned);
       setDeployed(live.stats.deployed);
@@ -5563,107 +5552,10 @@ export default function DegenCommandCenter(){
     }
   }, [live.tokens, live.stats]);
 
-  // ═══ TOKEN HYDRATION FROM DB ═══
-  const tokenHydrationDone = useRef(false);
-  useEffect(() => {
-    if (tokenHydrationDone.current) return;
-    tokenHydrationDone.current = true;
-    const mcapToY = (mc) => {
-      const zz=[[5000,0.95],[10000,0.63],[20000,0.47],[50000,0.32],[100000,0.20],[300000,0.10]];
-      if(mc>=300000) return 0.08; if(mc<5000) return 0.95;
-      for(let i=0;i<zz.length-1;i++){
-        if(mc>=zz[i][0]&&mc<zz[i+1][0]){const pct=(mc-zz[i][0])/(zz[i+1][0]-zz[i][0]);return zz[i][1]+(zz[i+1][1]-zz[i][1])*pct;}
-      } return 0.5;
-    };
-    const hydrate = async () => {
-      const rows = await supabase.loadTokensFromDB(6);
-      if (!rows.length) return;
-      const CC=[{bg:"#ff6b35",fg:"#fff",rim:"#cc5528"},{bg:"#00d4aa",fg:"#fff",rim:"#00a885"},{bg:"#7c4dff",fg:"#fff",rim:"#6237cc"},{bg:"#ffd740",fg:"#222",rim:"#ccac33"},{bg:"#39ff14",fg:"#111",rim:"#2dcc10"},{bg:"#00e5ff",fg:"#111",rim:"#00b7cc"}];
-      const pick=arr=>arr[Math.floor(Math.random()*arr.length)];
-      const spawnBatch = [];
-      for (let i = 0; i < Math.min(rows.length, 80); i++) {
-        const row = rows[i];
-        if (!row.addr || !row.name) continue;
-        if (row.death_time && Date.now() - row.death_time > 1800000) continue;
-        try {
-          await new Promise(r => setTimeout(r, 100));
-          const res = await fetch(`https://api.dexscreener.com/tokens/v1/solana/${row.addr}`);
-          const data = await res.json();
-          const allPairs = data?.pairs || (Array.isArray(data) ? data : []);
-          // Prefer non-pumpfun pair (Raydium) then highest liquidity
-          const isPump = d => (d.dexId||'').toLowerCase().includes('pump');
-          const pair = allPairs.reduce((a,b)=>{
-            if(!a)return b;
-            if(isPump(a)&&!isPump(b))return b;
-            if(!isPump(a)&&isPump(b))return a;
-            return (b.liquidity?.usd||0)>(a.liquidity?.usd||0)?b:a;
-          }, null);
-          const liveMcap = pair?.marketCap || pair?.fdv || 0;
-          const peakMcap = row.peak_mcap || 0;
-          const isDead = !pair || liveMcap < 1000 || (peakMcap > 5000 && liveMcap < peakMcap * 0.15);
-          if (isDead) { if(!row.death_time) supabase.upsertToken({addr:row.addr,name:row.name,mcap:liveMcap,peakMcap,alive:false,timestamp:row.first_seen,migrated:row.graduated}); continue; }
-          const targetY = mcapToY(liveMcap);
-          spawnBatch.push({
-            id: row.addr+"_db_"+Date.now(), addr: row.addr, name: row.name, fullName: row.name,
-            platform: row.graduated?"Raydium":(row.platform||"PumpFun"), mcap: liveMcap,
-            vol: pair?.volume?.h24||0, priceUsd: parseFloat(pair?.priceUsd||0),
-            liquidity: pair?.liquidity?.usd||0, holders:row.holders||0, devWallet:0,
-            buys: pair?.txns?.h1?.buys||0, sells: pair?.txns?.h1?.sells||0,
-            riskScore:50, qualified:true, qualScore:5, qualChecks:[],
-            threat:"ACTIVE", threatColor:"#39ff14", bundleDetected:false, bundleSize:0,
-            mintAuth:false, topHolderPct:0, dupeCount:0,
-            bx:0.2+Math.random()*0.6, by:targetY, targetY,
-            vx:(Math.random()-0.5)*0.0004, health:60, alive:true, age:0, trail:[],
-            warpIn:true, warpProgress:0, warpStartX:Math.random(), warpStartY:Math.random()*0.2-0.1,
-            bobOffset:Math.random()*Math.PI*2, initials:row.name.slice(0,2).toUpperCase(),
-            coinColor:pick(CC), timestamp:row.first_seen||Date.now(),
-            deployer:"", imageUri:"", migrated:row.graduated||false,
-            fromDB:true, peakMcap:row.peak_mcap||liveMcap, sessionLoadTime:Date.now(),
-            inHoldingBay:true, holdingMcap:liveMcap, holdingEnteredAt:Date.now(),
-          });
-        } catch(e) { /* skip */ }
-      }
-      if (spawnBatch.length > 0) {
-        setTokens(prev => {
-          const existing = new Set(prev.map(t => t.addr));
-          const fresh = spawnBatch.filter(t => !existing.has(t.addr));
-          console.log(`[DB] 🪙 Spawned ${fresh.length} tokens from history`);
-          return [...prev, ...fresh];
-        });
-        setDbStatus({msg:`🪙 Loaded ${spawnBatch.length} active tokens from history`,type:"success",ts:Date.now()});
-      }
-    };
-    setTimeout(hydrate, 3000);
-  }, []);
-
-  // ── HOLDING BAY AUDIT — stagger DB tokens, incinerate dead ones ──
-  useEffect(() => {
-    const iv = setInterval(() => {
-      const now = Date.now();
-      setTokens(prev => {
-        let changed = false;
-        const next = prev.map(t => {
-          if (!t.inHoldingBay) return t;
-          const age = now - (t.holdingEnteredAt || now);
-          // Incinerate: dead tokens (mcap < $3200 after 20s, or no data after 30s)
-          if (age > 20000 && (t.mcap || 0) < 3200) {
-            changed = true;
-            return {...t, alive:false, inHoldingBay:false, health:0, deathTime:now};
-          }
-          // Release: stagger by addr hash, 10-30s window
-          const releaseAfter = 10000 + (parseInt(t.addr?.slice(-4) || '0', 16) % 20000);
-          if (age >= releaseAfter) {
-            changed = true;
-            return {...t, inHoldingBay:false, warpIn:true,
-              bx:0.15+Math.random()*0.7, by:0.9};
-          }
-          return t;
-        });
-        return changed ? next : prev;
-      });
-    }, 3000); // check every 3s
-    return () => clearInterval(iv);
-  }, []);
+  // ═══ TOKEN HYDRATION REMOVED ═══
+  // Clean sessions: no DB token loading. Wallets load via supabase.loadFromDB().
+  // Coins only enter the field from live WebSocket feeds.
+  // If tracked wallets trade a coin, it naturally appears via the live pipeline.
 
   useEffect(() => {
     if (live.whaleAlerts.length > 0) {
@@ -7609,97 +7501,14 @@ export default function DegenCommandCenter(){
 
         {/* ── COMMAND STRIP — footer bar ── */}
         {(()=>{
-          const holdingTokens = tokens.filter(t => t.inHoldingBay && t.alive);
           const top30 = live.flashBoard30s?.[0];
           const top1m = live.flashBoard1m?.[0];
           const top5m = live.flashBoard5m?.[0];
           return (
             <div style={{
-              height: bayExpanded ? 150 : 54, flexShrink:0, minHeight: bayExpanded ? 150 : 54, maxHeight: bayExpanded ? 150 : 54,
+              height:54, flexShrink:0, minHeight:54, maxHeight:54,
               display:"flex", gap:4, overflow:"hidden",
-              transition:"height 0.2s ease, min-height 0.2s ease, max-height 0.2s ease",
             }}>
-
-              {/* ── HOLDING BAY BUILDING ── */}
-              <div style={{
-                width:220, flexShrink:0,
-                background:"rgba(12,6,28,0.96)",
-                border:"1px solid rgba(130,60,255,0.35)",
-                borderRadius:6, overflow:"hidden",
-                display:"flex", flexDirection:"column",
-              }}>
-                {/* Header row */}
-                <div onClick={()=>setBayExpanded(p=>!p)} style={{
-                  display:"flex", alignItems:"center", justifyContent:"space-between",
-                  padding:"5px 8px", cursor:"pointer",
-                  borderBottom: bayExpanded ? "1px solid rgba(130,60,255,0.2)" : "none",
-                  background:"rgba(90,40,200,0.08)",
-                }}>
-                  <div style={{display:"flex", alignItems:"center", gap:6}}>
-                    <span style={{fontSize:10}}>▣</span>
-                    <span style={{fontSize:9,fontFamily:"'Orbitron'",letterSpacing:2,color:"rgba(200,140,255,0.9)",fontWeight:700}}>HOLDING BAY</span>
-                    {holdingTokens.length > 0 && (
-                      <span style={{fontSize:8,background:"rgba(130,60,255,0.25)",border:"1px solid rgba(130,60,255,0.4)",
-                        borderRadius:3,padding:"0 4px",color:"rgba(210,160,255,0.9)",fontFamily:"'Orbitron'"}}>
-                        {holdingTokens.length}
-                      </span>
-                    )}
-                  </div>
-                  <div style={{display:"flex",alignItems:"center",gap:6}}>
-                    {holdingTokens.length === 0 && <span style={{fontSize:8,color:"rgba(60,30,100,0.6)"}}>— EMPTY —</span>}
-                    <span style={{fontSize:8,color:"rgba(130,60,255,0.5)",transform:bayExpanded?"rotate(180deg)":"none",display:"inline-block",transition:"transform 0.2s"}}>▾</span>
-                  </div>
-                </div>
-                {/* Token list when expanded */}
-                {bayExpanded && (
-                  <div style={{flex:1,overflow:"auto",padding:"4px 6px",display:"flex",flexDirection:"column",gap:2}}>
-                    {holdingTokens.length === 0 ? (
-                      <div style={{fontSize:9,color:"rgba(80,40,160,0.5)",textAlign:"center",paddingTop:8}}>No tokens in audit queue</div>
-                    ) : holdingTokens.map(t => {
-                      const age = Math.round((Date.now() - (t.holdingEnteredAt||Date.now())) / 1000);
-                      const releaseAfter = 15000 + (parseInt(t.addr?.slice(-4) || '0', 16) % 45000); const pct = Math.min(100, age / releaseAfter * 100);
-                      const col = pct > 75 ? "#ff073a" : pct > 40 ? "#ffd700" : "rgba(130,60,255,0.8)";
-                      return (
-                        <div key={t.id} style={{display:"flex",alignItems:"center",gap:6,padding:"2px 0",
-                          borderBottom:"1px solid rgba(130,60,255,0.08)"}}>
-                          <div style={{width:16,height:16,borderRadius:"50%",flexShrink:0,
-                            background:`radial-gradient(circle at 35% 30%,${t.coinColor?.bg},${t.coinColor?.rim})`,
-                            border:`1px solid ${t.coinColor?.rim}`,display:"flex",alignItems:"center",
-                            justifyContent:"center",fontSize:8,fontWeight:900,color:t.coinColor?.fg}}>
-                            {t.initials?.charAt(0)}
-                          </div>
-                          <span style={{fontSize:9,fontWeight:700,color:"rgba(200,160,255,0.85)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.name}</span>
-                          <span style={{fontSize:8,color:"rgba(140,100,200,0.6)"}}>${(t.mcap/1000).toFixed(1)}K</span>
-                          {/* Audit timer bar */}
-                          <div style={{width:36,height:3,background:"rgba(60,20,120,0.4)",borderRadius:2,flexShrink:0}}>
-                            <div style={{width:pct+"%",height:"100%",background:col,borderRadius:2,transition:"width 1s"}}/>
-                          </div>
-                          <span style={{fontSize:7,color:col,width:18,textAlign:"right",flexShrink:0}}>{age}s</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-                {/* Bottom micro-status when collapsed */}
-                {!bayExpanded && holdingTokens.length > 0 && (
-                  <div style={{padding:"0 8px 3px",display:"flex",gap:3,overflow:"hidden"}}>
-                    {holdingTokens.slice(0,6).map(t => {
-                      const age = Math.round((Date.now() - (t.holdingEnteredAt||Date.now())) / 1000);
-                      const releaseAfter = 15 + (parseInt(t.addr?.slice(-4) || '0', 16) % 45); const pct = Math.min(100, age / releaseAfter * 100);
-                      return (
-                        <div key={t.id} title={`${t.name} — ${age}s`}
-                          style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1,minWidth:22}}>
-                          <div style={{width:4,height:14,background:"rgba(60,20,120,0.4)",borderRadius:2,overflow:"hidden",display:"flex",flexDirection:"column",justifyContent:"flex-end"}}>
-                            <div style={{width:"100%",height:pct+"%",background:pct>75?"#ff073a":pct>40?"#ffd700":"rgba(130,60,255,0.8)",transition:"height 1s"}}/>
-                          </div>
-                          <span style={{fontSize:6,color:"rgba(160,100,255,0.6)",whiteSpace:"nowrap",overflow:"hidden",maxWidth:20,textOverflow:"ellipsis"}}>{t.name.slice(0,3)}</span>
-                        </div>
-                      );
-                    })}
-                    {holdingTokens.length > 6 && <span style={{fontSize:7,color:"rgba(100,60,200,0.5)",alignSelf:"center"}}>+{holdingTokens.length-6}</span>}
-                  </div>
-                )}
-              </div>
 
               {/* ── NEURAL RADAR — scrolling marquee of coins with signal score > 75 ── */}
               {(()=>{
