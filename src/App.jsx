@@ -230,7 +230,7 @@ function RadarScope({pings}){
 }
 
 // ═══════════════ BATTLEFIELD ═══════════════
-function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAlienUpdate,onMenuToggle,whaleTrigger,dolphinTrigger,tradeDataRef,signalScoresRef,hotClusterRef,flashSnapsRef}){
+function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAlienUpdate,onMenuToggle,whaleTrigger,dolphinTrigger,tradeDataRef,signalScoresRef,hotClusterRef,flashSnapsRef,fmGaugeRef,jcGaugeRef}){
   const tradeData = tradeDataRef || {current:{}};
   const sigScores = signalScoresRef || {current:{}};
   const hotClusters = hotClusterRef || {current: new Set()};
@@ -289,7 +289,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
     crewBubble:null,crewTimer:0,crewName:null,crewSlot:0,
     chatCooldown:0,morphMode:"normal",morphFrame:0,
   });
-  const fatMonkeyRef=useRef({active:false,x:-0.1,frame:0,smokeRings:[],musicNotes:[],nextSpawn:Date.now()+rand(180,420)*1000,walkDir:1,smokeTimer:0,
+  const fatMonkeyRef=useRef({active:false,x:-0.1,frame:0,smokeRings:[],musicNotes:[],gaugeStart:Date.now(),gaugeDuration:30*60*1000,ready:false,walkDir:1,smokeTimer:0,
     tripActive:false,tripFrame:0,tripMsg:false,tripMsgFrame:0,
     phase:"walk", // walk → meetConvo → swirlSetup → swirlEvent → done
     meetFrame:0, convoLine:0,
@@ -306,7 +306,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
     claudeConfusedFrame:0,
     claudeShowConfused:false,
   });
-  const jaycShipRef=useRef({active:false,y:-0.3,frame:0,bills:[],aliens:[],nextSpawn:Date.now()+rand(240,480)*1000,opacity:0});
+  const jaycShipRef=useRef({active:false,y:-0.3,frame:0,bills:[],aliens:[],gaugeStart:Date.now(),gaugeDuration:30*60*1000,ready:false,opacity:0});
   const jayCRef=useRef({onGround:false,beamPhase:0,x:0.55,y:0.95,flexPhase:0,targetY:0.95,beamUp:false,opacity:0,beltHolder:"claude"});
   const lightModeRef=useRef({active:false,frame:0,maxFrames:180});
   const titleFlashRef=useRef({active:false,frame:0});
@@ -1259,8 +1259,17 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
 
       // ═══════════ EASTER EGG: FAT MONKEY ═══════════
       const fm=fatMonkeyRef.current;const now2=Date.now();
-      if(!fm.active&&now2>fm.nextSpawn&&!jaycShipRef.current.active){
-        fm.active=true;fm.x=-0.12;fm.frame=0;fm.smokeRings=[];fm.walkDir=1;
+      // Gauge fills over 30 min — user clicks to spawn
+      if(!fm.active&&!fm.ready){
+        const elapsed=now2-fm.gaugeStart;
+        if(elapsed>=fm.gaugeDuration)fm.ready=true;
+      }
+      // Sync shared gauge ref for header UI
+      if(fmGaugeRef)fmGaugeRef.current={gaugeStart:fm.gaugeStart,gaugeDuration:fm.gaugeDuration,ready:fm.ready,active:fm.active};
+      // Check if parent triggered spawn via gauge click
+      if(fm.ready&&fmGaugeRef&&fmGaugeRef.current.spawn&&!fm.active&&!jaycShipRef.current.active){
+        fmGaugeRef.current.spawn=false;
+        fm.ready=false;fm.active=true;fm.x=-0.12;fm.frame=0;fm.smokeRings=[];fm.walkDir=1;
         fm.smokeTimer=0;fm.startTime=now2;fm.musicNotes=[];
         fm.phase="walk";fm.meetFrame=0;fm.convoLine=randInt(0,10);
         fm.vortexActive=false;fm.vortexFrame=0;
@@ -1380,7 +1389,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
 
         // ── PHASE: DONE / WALK OUT ──
         else if(fm.phase==="walk"&&fm.x>1.15){
-          fm.active=false;fm.nextSpawn=now2+rand(900,1500)*1000;
+          fm.active=false;fm.ready=false;fm.gaugeStart=Date.now();
           onKillFeedRef.current?.({type:"system",text:"🐒 Fat Monkey has left the battlefield... 💨✌️🎶"});
         }
         // 8-BIT PIXEL ART MONKEY — side profile, slim, retro style
@@ -2067,7 +2076,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
         }
 
         if(fm.phase==="walk"&&fm.active&&!fm.tripActive&&(fm.x>1.15||now2-fm.startTime>90000)){
-          fm.active=false;fm.nextSpawn=now2+rand(900,1500)*1000;
+          fm.active=false;fm.ready=false;fm.gaugeStart=Date.now();
           if(fm.x>1.15)onKillFeedRef.current?.({type:"system",text:"🐒 Fat Monkey has left the battlefield... 💨✌️🎶"});
         }
       }
@@ -2104,9 +2113,18 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
 
       // ═══════════ EASTER EGG: J-Ai-C MOTHERSHIP (8-BIT) ═══════════
       const jc=jaycShipRef.current;
-      if(!jc.active&&now2>jc.nextSpawn&&!fatMonkeyRef.current.active&&!fatMonkeyRef.current.tripMsg){
-        jc.active=true;jc.y=-0.6;jc.frame=0;jc.bills=[];jc.opacity=0;jc.startTime=now2;jc.phase="descend";
-        for(let i=0;i<5;i++){jc.aliens.push({blink:randInt(0,200),lookDir:Math.random()>0.5?1:-1});}
+      // Gauge fills over 30 min — user clicks to spawn
+      if(!jc.active&&!jc.ready){
+        const elapsedJC=now2-jc.gaugeStart;
+        if(elapsedJC>=jc.gaugeDuration)jc.ready=true;
+      }
+      // Sync shared gauge ref for header UI
+      if(jcGaugeRef)jcGaugeRef.current={gaugeStart:jc.gaugeStart,gaugeDuration:jc.gaugeDuration,ready:jc.ready,active:jc.active};
+      // Check if parent triggered spawn via gauge click
+      if(jc.ready&&jcGaugeRef&&jcGaugeRef.current.spawn&&!jc.active&&!fatMonkeyRef.current.active&&!fatMonkeyRef.current.tripMsg){
+        jcGaugeRef.current.spawn=false;
+        jc.ready=false;jc.active=true;jc.y=-0.6;jc.frame=0;jc.bills=[];jc.opacity=0;jc.startTime=now2;jc.phase="descend";
+        jc.aliens=[];for(let i=0;i<5;i++){jc.aliens.push({blink:randInt(0,200),lookDir:Math.random()>0.5?1:-1});}
         onKillFeedRef.current?.({type:"system",text:"👾 J-Ai-C DREADNOUGHT INCOMING... 6 LEGENDS. 1 SHIP. NO SURVIVORS. 💀💰⚡"});
       }
       if(jc.active){
@@ -2119,7 +2137,7 @@ function BattlefieldMap({tokens,lockedTokens,onSelect,selectedId,onKillFeed,onAl
           if(now2-jc.startTime>90000)jc.phase="ascend";
         }else if(jc.phase==="ascend"){
           jc.y-=0.003;jc.opacity=Math.max(0,jc.opacity-0.01);
-          if(jc.opacity<=0){jc.active=false;jc.nextSpawn=now2+rand(900,1500)*1000;
+          if(jc.opacity<=0){jc.active=false;jc.ready=false;jc.gaugeStart=Date.now();
             jayCRef.current={onGround:false,beamPhase:0,x:0.55,y:0.95,flexPhase:0,targetY:0.95,beamUp:false,opacity:0,beltHolder:"claude"};
             onKillFeedRef.current?.({type:"system",text:"👾 J-Ai-C Dreadnought has departed... 💸"});}
         }
@@ -4984,6 +5002,11 @@ export default function DegenCommandCenter(){
   const deployerRepRef=useRef({}); // {deployer_addr: {launches:N,rugs:N,runners:N,tokens:[]}}
   const whaleTriggerRef=useRef(false); // shared: App sets true, BattlefieldMap reads & spawns
   const dolphinTriggerRef=useRef(false);
+  // ═══ EASTER EGG GAUGE REFS — shared with BattlefieldMap ═══
+  const fmGaugeRef=useRef({gaugeStart:Date.now(),gaugeDuration:30*60*1000,ready:false,active:false});
+  const jcGaugeRef=useRef({gaugeStart:Date.now(),gaugeDuration:30*60*1000,ready:false,active:false});
+  const [gaugeT,setGaugeT]=useState(0);
+  useEffect(()=>{const iv=setInterval(()=>setGaugeT(t=>t+1),1000);return()=>clearInterval(iv);},[]);
   const sessionBestAppRef=useRef({id:null,name:"",mcap:0});
   useEffect(()=>{tokens.forEach(t=>{if(t.alive&&(t.mcap||0)>sessionBestAppRef.current.mcap){sessionBestAppRef.current={id:t.id,name:t.name,mcap:t.mcap};}});},[tokens]); // same pattern for dolphin pods
   const [filter,setFilter]=useState("ALL");const [selectedToken,setSelectedToken]=useState(null);
@@ -6477,6 +6500,53 @@ export default function DegenCommandCenter(){
               </div>
             );
           })()}
+          {/* ── EASTER EGG SPAWN GAUGES ── */}
+          {!isMobile && (() => {
+            const now=Date.now();
+            const fmG=fmGaugeRef.current;
+            const jcG=jcGaugeRef.current;
+            const fmPct=fmG.active?-1:Math.min(100,((now-fmG.gaugeStart)/fmG.gaugeDuration)*100);
+            const jcPct=jcG.active?-1:Math.min(100,((now-jcG.gaugeStart)/jcG.gaugeDuration)*100);
+            const gaugeStyle=(pct,color,activeNow)=>({
+              display:"flex",flexDirection:"column",alignItems:"center",gap:1,
+              background:activeNow?`${color}20`:pct>=100?`${color}18`:`${color}08`,
+              border:`1px solid ${pct>=100?color+"60":color+"25"}`,
+              borderRadius:5,padding:"2px 6px",minWidth:52,
+              cursor:pct>=100&&!activeNow?"pointer":"default",
+              transition:"all 0.3s",
+              ...(pct>=100&&!activeNow?{boxShadow:`0 0 8px ${color}40`}:{}),
+            });
+            const spawnFM=()=>{if(fmPct>=100&&!fmG.active){fmGaugeRef.current.spawn=true;}};
+            const spawnJC=()=>{if(jcPct>=100&&!jcG.active){jcGaugeRef.current.spawn=true;}};
+            return (<>
+              <div style={gaugeStyle(fmPct,"#ff9900",fmG.active)} onClick={spawnFM}
+                title={fmG.active?"Fat Monkey is active!":fmPct>=100?"Click to summon Fat Monkey!":
+                  `Fat Monkey charging... ${Math.round(fmPct)}%`}>
+                <div style={{fontSize:7,color:fmPct>=100?"#ff9900":NEON.dimText,letterSpacing:1,fontFamily:"'Orbitron'",whiteSpace:"nowrap"}}>
+                  {fmG.active?"ACTIVE":fmPct>=100?"READY!":"FM"}</div>
+                <div style={{width:"100%",height:3,background:"rgba(255,255,255,0.06)",borderRadius:2,overflow:"hidden"}}>
+                  <div style={{width:`${fmG.active?100:Math.max(0,fmPct)}%`,height:"100%",
+                    background:fmG.active?"#ff990088":fmPct>=100?
+                      "linear-gradient(90deg,#ff9900,#ffcc00)":"linear-gradient(90deg,#ff990044,#ff990088)",
+                    borderRadius:2,transition:"width 1s linear",
+                    ...(fmPct>=100&&!fmG.active?{animation:"headerPulse 1s ease-in-out infinite"}:{})}}/>
+                </div>
+              </div>
+              <div style={gaugeStyle(jcPct,"#8b5cf6",jcG.active)} onClick={spawnJC}
+                title={jcG.active?"Jay C is active!":jcPct>=100?"Click to summon Jay C!":
+                  `Jay C charging... ${Math.round(jcPct)}%`}>
+                <div style={{fontSize:7,color:jcPct>=100?"#8b5cf6":NEON.dimText,letterSpacing:1,fontFamily:"'Orbitron'",whiteSpace:"nowrap"}}>
+                  {jcG.active?"ACTIVE":jcPct>=100?"READY!":"JC"}</div>
+                <div style={{width:"100%",height:3,background:"rgba(255,255,255,0.06)",borderRadius:2,overflow:"hidden"}}>
+                  <div style={{width:`${jcG.active?100:Math.max(0,jcPct)}%`,height:"100%",
+                    background:jcG.active?"#8b5cf688":jcPct>=100?
+                      "linear-gradient(90deg,#8b5cf6,#a78bfa)":"linear-gradient(90deg,#8b5cf644,#8b5cf688)",
+                    borderRadius:2,transition:"width 1s linear",
+                    ...(jcPct>=100&&!jcG.active?{animation:"headerPulse 1s ease-in-out infinite"}:{})}}/>
+                </div>
+              </div>
+            </>);
+          })()}
           {/* LIVE FLASH moved to battlefield bottom-right */}
           <div style={{display:"flex",alignItems:"center",gap:isMobile?3:5,marginLeft:isMobile?2:6}}>
             <div style={{width:6,height:6,borderRadius:"50%",background:NEON.green,
@@ -7290,7 +7360,8 @@ export default function DegenCommandCenter(){
           <BattlefieldMap tokens={tokens} lockedTokens={lockedTokens} onSelect={selectToken} tradeDataRef={live.tradeDataRef}
             selectedId={selectedToken?.id} onKillFeed={addKillFeed} onAlienUpdate={setAlienStats}
             onMenuToggle={()=>setShowMenu(p=>!p)} whaleTrigger={whaleTriggerRef} dolphinTrigger={dolphinTriggerRef}
-            signalScoresRef={live.signalScoresRef} hotClusterRef={hotClusterRef} flashSnapsRef={live.flashSnapsRef}/>
+            signalScoresRef={live.signalScoresRef} hotClusterRef={hotClusterRef} flashSnapsRef={live.flashSnapsRef}
+            fmGaugeRef={fmGaugeRef} jcGaugeRef={jcGaugeRef}/>
           <KillFeed events={killFeed} onSelectByName={selectByName}/>
 
           {/* ── NEURAL SURFACE AUTO-POP — fires when score ≥ 88 (elite tier) ── */}
